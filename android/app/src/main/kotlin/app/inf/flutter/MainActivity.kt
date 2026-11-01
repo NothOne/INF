@@ -32,11 +32,51 @@ class MainActivity : FlutterActivity() {
 
     private val channelName = "app.inf.flutter/native"
 
+    /** The link an `inf://open?url=…` intent brought, until Dart takes it. */
+    private var pendingLink: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Run before the engine so Dart's first cookie read sees a seeded session.
         if (BuildConfig.DEBUG) seedCookies()
+        pendingLink = linkOf(intent)
         super.onCreate(savedInstanceState)
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        linkOf(intent)?.let { pendingLink = it }
+    }
+
+    /**
+     * Any link a page or a post hands over, `intent://` included. Such an intent may only name a
+     * browsable activity, never a component; when nothing takes it, its browser_fallback_url does.
+     */
+    private fun openExternal(url: String, target: String? = null): Boolean {
+        val intent = if (url.startsWith("intent:", ignoreCase = true)) {
+            try {
+                Intent.parseUri(url, Intent.URI_INTENT_SCHEME).apply {
+                    component = null
+                    selector = null
+                }
+            } catch (error: Exception) {
+                return false
+            }
+        } else {
+            Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        }
+        intent.addCategory(Intent.CATEGORY_BROWSABLE)
+        if (target != null) intent.setPackage(target)
+        return try {
+            startActivity(intent)
+            true
+        } catch (error: ActivityNotFoundException) {
+            val fallback = intent.getStringExtra("browser_fallback_url")
+            target == null && fallback != null && fallback.startsWith("http") && openExternal(fallback)
+        }
+    }
+
+    private fun linkOf(intent: Intent?): String? =
+        intent?.data?.takeIf { it.scheme == "inf" && it.host == "open" }?.getQueryParameter("url")
 
     private fun seedCookies() {
         intent?.getStringExtra("seedCookie")?.takeIf { it.isNotBlank() }?.let { raw ->
@@ -55,6 +95,10 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 try {
                     when (call.method) {
+                        "takeLink" -> {
+                            result.success(pendingLink)
+                            pendingLink = null
+                        }
                         "getCookies" -> {
                             val url = call.argument<String>("url") ?: "https://m.weibo.cn/"
                             val manager = CookieManager.getInstance()
@@ -104,14 +148,8 @@ class MainActivity : FlutterActivity() {
                             if (url.isNullOrBlank()) {
                                 result.success(false)
                             } else {
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                    .addCategory(Intent.CATEGORY_BROWSABLE)
-                                try {
-                                    startActivity(intent)
-                                    result.success(true)
-                                } catch (error: ActivityNotFoundException) {
-                                    result.success(false)
-                                }
+                                val target = call.argument<String>("package")
+                                result.success(target != null && openExternal(url, target) || openExternal(url))
                             }
                         }
                         "isMetered" -> {

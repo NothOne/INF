@@ -47,6 +47,34 @@ class AppOnlyTarget extends LinkTarget {
   const AppOnlyTarget(this.url);
 }
 
+/// A web address whose page only works inside the Weibo app: a wbox mini program (medals, match
+/// ratings) or an article column. In a browser it just asks for the app.
+class ClientPageTarget extends LinkTarget {
+  final String url;
+
+  /// The same page as the Weibo app opens it.
+  final String appUrl;
+  const ClientPageTarget(this.url, this.appUrl);
+}
+
+/// The Weibo app's own browser, which runs wbox pages.
+String weiboAppBrowserUrl(String url) => 'sinaweibo://browser?url=${Uri.encodeComponent(url)}';
+
+/// The 文章专栏 wbox app; a column is the app opened on its `cid`.
+ClientPageTarget _column(String cid) {
+  final url = 'https://m.weibo.cn/c/wbox?id=wqh75bb2ni&cid=$cid';
+  return ClientPageTarget(url, weiboAppBrowserUrl(url));
+}
+
+/// An article column's id from `weibo.com/a/hot/<cid>_1.html` or `m.weibo.cn/p/232718<cid>`.
+String? _columnId(List<String> parts) {
+  if (parts.length == 3 && parts[0] == 'a' && parts[1] == 'hot') {
+    return RegExp(r'^(\d+)_\d+\.html$').firstMatch(parts[2])?.group(1);
+  }
+  if (parts.length == 2 && parts[0] == 'p' && parts[1].startsWith('232718')) return parts[1].substring(6);
+  return null;
+}
+
 const _weiboHosts = {'m.weibo.cn', 'weibo.cn', 'weibo.com', 'www.weibo.com', 'm.weibo.com', 'd.weibo.com'};
 final _numeric = RegExp(r'^\d+$');
 final _bid = RegExp(r'^[0-9A-Za-z]{8,10}$');
@@ -68,6 +96,11 @@ LinkTarget linkTargetOf(String raw) {
 
   final parts = uri.pathSegments.where((part) => part.isNotEmpty).toList();
   final first = parts.isEmpty ? '' : parts[0];
+  if (host == 'm.weibo.cn' && parts.length == 2 && first == 'c' && parts[1] == 'wbox') {
+    return ClientPageTarget(url, weiboAppBrowserUrl(url));
+  }
+  final column = _columnId(parts);
+  if (column != null && column.isNotEmpty) return _column(column);
   if (parts.length >= 2) {
     if ((first == 'detail' || first == 'status') && parts.length == 2) return StatusTarget(parts[1]);
     if ((first == 'u' || first == 'profile') && _numeric.hasMatch(parts[1])) return UserTarget(parts[1]);
@@ -137,6 +170,89 @@ String _superTopicName(Uri uri) {
   return name.split('|').first.replaceAll('#', '').trim();
 }
 
+const _appNames = {
+  'sinaweibo': '微博',
+  'bilibili': '哔哩哔哩',
+  'cctvnews': '央视新闻',
+  'yangshipin': '央视频',
+  'zhihu': '知乎',
+  'snssdk1128': '抖音',
+  'snssdk141': '今日头条',
+  'kwai': '快手',
+  'ksnebula': '快手',
+  'xhsdiscover': '小红书',
+  'douban': '豆瓣',
+  'weixin': '微信',
+  'mqq': 'QQ',
+  'taobao': '淘宝',
+  'tbopen': '淘宝',
+  'openapp.jdmobile': '京东',
+  'pinduoduo': '拼多多',
+  'imeituan': '美团',
+  'dianping': '大众点评',
+  'alipays': '支付宝',
+  'alipay': '支付宝',
+  'orpheus': '网易云音乐',
+  'qqmusic': 'QQ 音乐',
+  'tenvideo': '腾讯视频',
+  'iqiyi': '爱奇艺',
+  'youku': '优酷',
+  'baiduboxapp': '百度',
+};
+
+const _siteNames = {
+  'bilibili.com': '哔哩哔哩',
+  'b23.tv': '哔哩哔哩',
+  'zhihu.com': '知乎',
+  'douyin.com': '抖音',
+  'xiaohongshu.com': '小红书',
+  'xhslink.com': '小红书',
+  'mp.weixin.qq.com': '微信公众号',
+  'v.qq.com': '腾讯视频',
+  'cctv.com': '央视网',
+  'cctvnews.cctv.com': '央视新闻',
+  'douban.com': '豆瓣',
+  'youtube.com': 'YouTube',
+  'youtu.be': 'YouTube',
+  'github.com': 'GitHub',
+  'music.163.com': '网易云音乐',
+  'taobao.com': '淘宝',
+  'tmall.com': '天猫',
+  'jd.com': '京东',
+};
+
+/// The site a link card points at, by its host or a parent domain; null for others.
+String? siteNameOf(String url) {
+  var host = Uri.tryParse(unwrapWeiboRedirect(url))?.host.toLowerCase() ?? '';
+  while (host.isNotEmpty) {
+    final name = _siteNames[host];
+    if (name != null) return name;
+    final dot = host.indexOf('.');
+    if (dot < 0) break;
+    host = host.substring(dot + 1);
+  }
+  return null;
+}
+
+/// Which app a page's jump (`bilibili://…`, `intent://…#Intent;scheme=bilibili;…`) is for. Null
+/// when it is not one INF knows by name.
+String? appNameOf(String url) {
+  var scheme = Uri.tryParse(url)?.scheme.toLowerCase() ?? url.split(':').first.toLowerCase();
+  if (scheme == 'intent') {
+    scheme = RegExp(r'[#;]scheme=([^;]+)').firstMatch(url)?.group(1)?.toLowerCase() ?? '';
+  }
+  return _appNames[scheme];
+}
+
+/// The link in something pasted: a bare address, or the text the Weibo app copies when sharing
+/// (`【标题】… https://weibo.com/…`). Null when there is none, so the text is a search.
+String? linkInText(String text) {
+  final match = RegExp(r'(?:https?|sinaweibo)://[^\s，。！？、）)\]】>"“”]+', caseSensitive: false).firstMatch(text);
+  if (match != null) return match.group(0);
+  final bare = RegExp(r'^(?:t\.cn|(?:m\.)?weibo\.(?:cn|com))/\S+$', caseSensitive: false).firstMatch(text.trim());
+  return bare == null ? null : 'https://${bare.group(0)}';
+}
+
 /// weibo.cn/sinaurl?u=… is Weibo's warning page in front of an outside link.
 String unwrapWeiboRedirect(String url) {
   final uri = Uri.tryParse(url);
@@ -167,6 +283,9 @@ LinkKind linkKindOf(String url, {String? iconUrl}) {
   if (host == 'vote.weibo.com') return LinkKind.vote;
   if (host == 'lottery.media.weibo.com') return LinkKind.lottery;
   if (host == 'card.weibo.com' || path.startsWith('/ttarticle') || host == 'media.weibo.cn') return LinkKind.article;
+  if (path.startsWith('/a/hot/') || container.startsWith('232718') || uri.queryParameters['id'] == 'wqh75bb2ni') {
+    return LinkKind.article;
+  }
   if (isSuperTopicContainer(container) || host == 'huati.weibo.com') return LinkKind.superTopic;
   if (container.startsWith('100101')) return LinkKind.place;
   if (container.startsWith('230491')) return LinkKind.group;

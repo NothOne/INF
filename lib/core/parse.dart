@@ -691,6 +691,8 @@ String? _pageUrlOf(Map<String, dynamic> pageInfo) {
 /// that is in the text) are left out; everything else gets the generic card.
 LinkCard? _linkCard(Map<String, dynamic>? pageInfo) {
   if (pageInfo == null || _videoFrom(pageInfo) != null || _articleCard(pageInfo) != null) return null;
+  final banner = _bannerCard(pageInfo);
+  if (banner != null) return banner;
   final type = textOf(pageInfo['type']) ?? '';
   final objectType = textOf(pageInfo['object_type']) ?? '';
   if (const {'video', 'place', 'topic', 'search_topic', 'article'}.contains(type) || objectType == 'video') return null;
@@ -714,7 +716,7 @@ LinkCard? _linkCard(Map<String, dynamic>? pageInfo) {
     'book' => '书籍',
     'goods' || 'shop' => '商品',
     'event' || 'activity' => '活动',
-    _ => kind == LinkKind.web ? '网页' : linkKindLabel(kind),
+    _ => kind == LinkKind.web ? siteNameOf(url) ?? '网页' : linkKindLabel(kind),
   };
   return LinkCard(
     url: url,
@@ -723,6 +725,39 @@ LinkCard? _linkCard(Map<String, dynamic>? pageInfo) {
     imageUrl: image == null || image.isEmpty ? null : image,
     typeLabel: typeLabel,
     kind: kind,
+  );
+}
+
+/// The birthday and medal posts: a transparent picture over a background, and often no text.
+/// m.weibo.cn sends `type: bigPic` (the address, when there is one, in `page_pic.scheme`);
+/// weibo.com sends a `card_info` of `card_type` 107.
+LinkCard? _bannerCard(Map<String, dynamic> pageInfo) {
+  String? foreground;
+  String? background;
+  String? url;
+  String? title;
+  final cardInfo = asMap(pageInfo['card_info']);
+  if (textOf(pageInfo['type']) == 'bigPic') {
+    final pagePic = asMap(pageInfo['page_pic']);
+    foreground = textOf(pagePic?['url']);
+    background = textOf(pageInfo['media_pic_url']);
+    url = textOf(pagePic?['scheme']) ?? textOf(pageInfo['page_url']);
+    title = textOf(pageInfo['title']);
+  } else if (cardInfo != null && textOf(cardInfo['card_type']) == '107') {
+    foreground = textOf(cardInfo['pic_url']);
+    background = textOf(asMap(asMap(asMap(cardInfo['page_info'])?['pic_info'])?['pic_big'])?['url']);
+    url = textOf(pageInfo['page_url']) ?? textOf(cardInfo['scheme']);
+    title = textOf(cardInfo['title']);
+  } else {
+    return null;
+  }
+  if (foreground == null || foreground.isEmpty) return null;
+  return LinkCard(
+    url: url ?? '',
+    title: title ?? '',
+    imageUrl: foreground,
+    backgroundUrl: background == null || background.isEmpty ? null : background,
+    banner: true,
   );
 }
 

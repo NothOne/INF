@@ -12,10 +12,16 @@ String secureUrl(String? value) {
   return url;
 }
 
-Map<String, String> weiboImageHeaders() => {
-      'Referer': 'https://m.weibo.cn/',
-      'User-Agent': Session.instance.userAgent,
-    };
+/// sinaimg wants Weibo as the referrer; other sites' covers in link cards (Bilibili's hdslb.com)
+/// refuse exactly that one, so they get none.
+Map<String, String> weiboImageHeaders([String? url]) {
+  final host = url == null ? null : Uri.tryParse(sanitizeImageUrl(url))?.host.toLowerCase();
+  final weibo = host == null || host.endsWith('sinaimg.cn') || host.endsWith('weibo.com') || host.endsWith('weibo.cn');
+  return {
+    if (weibo) 'Referer': 'https://m.weibo.cn/',
+    'User-Agent': Session.instance.userAgent,
+  };
+}
 
 final RegExp _sinaimg = RegExp(r'^(https://[^/]*sinaimg\.cn/)([A-Za-z0-9_.]+)/([^/]+)$');
 

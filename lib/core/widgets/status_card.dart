@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/api.dart';
 import '../../core/motion.dart';
 import '../../core/chrome.dart';
 import '../../core/container_route.dart';
@@ -237,6 +238,8 @@ class _StatusCardState extends State<StatusCard> {
             children: [
               _Header(status: status, detail: widget.detail, onOpenUser: widget.onOpenUser),
               const SizedBox(height: 9),
+              // A birthday or medal post is only its card; an empty line would leave a gap.
+              if (status.text.trim().isNotEmpty || status.isLongText)
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: widget.detail ? null : () => _openSelf(status.id),
@@ -271,7 +274,7 @@ class _StatusCardState extends State<StatusCard> {
               ],
               if (status.card != null) ...[
                 const SizedBox(height: 9),
-                _LinkCardView(card: status.card!, onOpen: () => widget.onOpenUrl?.call(status.card!.url)),
+                _LinkCardView(card: status.card!, onOpen: () => _openCard(context, status, widget.onOpenUrl)),
               ],
               if (status.media.isNotEmpty) ...[
                 const SizedBox(height: 9),
@@ -455,6 +458,23 @@ class _ArticleCard extends StatelessWidget {
   }
 }
 
+/// A card without an address asks weibo.com's copy of the post for it; failing that, the post
+/// can still be opened outside. Banners ask first even with one: m.weibo.cn's copy drops the
+/// `mid` the birthday page needs, and that page is then empty.
+Future<void> _openCard(BuildContext context, Status status, ValueChanged<String>? open) async {
+  final card = status.card;
+  if (card == null || open == null) return;
+  if (card.url.isNotEmpty && !card.banner) return open(card.url);
+  String? url;
+  try {
+    url = await WeiboApi.instance.cardUrl(status.id);
+  } catch (_) {}
+  if (!context.mounted) return;
+  url ??= card.url.isEmpty ? null : card.url;
+  if (url != null) return open(url);
+  await openLinkFallback(context, 'https://m.weibo.cn/detail/${status.id}', title: '没有找到这张卡片的链接');
+}
+
 /// A vote, a web page, a group and any other card m.weibo.cn attaches: picture, title, a line of
 /// description and what kind of thing it is.
 class _LinkCardView extends StatelessWidget {
@@ -465,6 +485,7 @@ class _LinkCardView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (card.banner) return _banner(context);
     final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
     return Material(
@@ -510,6 +531,50 @@ class _LinkCardView extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Both layers are drawn for a white page, so the card stays white in the dark theme too; the
+  /// title goes in the blank band the foreground leaves under its picture.
+  Widget _banner(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onOpen,
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: LayoutBuilder(
+            builder: (context, constraints) => Stack(
+              fit: StackFit.expand,
+              children: [
+                if (card.backgroundUrl != null)
+                  SmartImage(url: card.backgroundUrl, fit: BoxFit.cover, placeholderColor: Colors.transparent),
+                SmartImage(url: card.imageUrl, fit: BoxFit.cover, placeholderColor: Colors.transparent),
+                if (card.title.isNotEmpty)
+                  Align(
+                    alignment: const Alignment(0, 0.42),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Text(
+                        card.title,
+                        maxLines: 2,
+                        textAlign: TextAlign.center,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: const Color(0xFF333333),
+                          fontSize: constraints.maxWidth * 0.042,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -588,7 +653,7 @@ class _RepostBlock extends StatelessWidget {
               ],
               if (original.card != null) ...[
                 const SizedBox(height: 8),
-                _LinkCardView(card: original.card!, onOpen: () => onOpenUrl?.call(original.card!.url)),
+                _LinkCardView(card: original.card!, onOpen: () => _openCard(context, original, onOpenUrl)),
               ],
               if (original.media.isNotEmpty) ...[
                 const SizedBox(height: 8),

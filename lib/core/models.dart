@@ -141,12 +141,18 @@ class WeiboLink {
 /// The card under a post for anything that is not a picture, a video or an article: a vote, a web
 /// page, a group, a Q&A and whatever Weibo adds next.
 class LinkCard {
+  /// Empty when the feed left it out, as m.weibo.cn does for some banners; see [WeiboApi.cardUrl].
   final String url;
   final String title;
   final String? summary;
   final String? imageUrl;
   final String typeLabel;
   final LinkKind kind;
+
+  /// A 16:9 banner (a birthday, a medal) drawn as [imageUrl] over this picture, instead of a row.
+  final String? backgroundUrl;
+  final bool banner;
+
   const LinkCard({
     required this.url,
     required this.title,
@@ -154,6 +160,8 @@ class LinkCard {
     this.imageUrl,
     this.typeLabel = '',
     this.kind = LinkKind.web,
+    this.backgroundUrl,
+    this.banner = false,
   });
 }
 

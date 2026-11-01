@@ -29,9 +29,18 @@ class _WebPageState extends State<WebPage> {
         if (_bouncesBack(url)) return;
         if (mounted && _failed) setState(() => _failed = false);
       },
-      onPageFinished: (_) {
+      onPageFinished: (url) async {
         _loadedOnce = true;
-        if (mounted) setState(() => _progress = 1);
+        final host = Uri.tryParse(url)?.host;
+        if (mounted) {
+          setState(() {
+            _progress = 1;
+            if (host != null && host.isNotEmpty) _host = host;
+          });
+        }
+        _web.runJavaScript(upgradeSinaimgScript).catchError((_) {});
+        final title = (await _web.getTitle())?.trim();
+        if (mounted && title != _title) setState(() => _title = title);
       },
       onWebResourceError: (error) {
         if (error.isForMainFrame == true && mounted) setState(() => _failed = true);
@@ -49,6 +58,10 @@ class _WebPageState extends State<WebPage> {
         final uri = Uri.tryParse(request.url);
         final scheme = uri?.scheme.toLowerCase() ?? '';
         if (request.isMainFrame && _bouncesBack(request.url)) return NavigationDecision.prevent;
+        if (request.isMainFrame && _loadedOnce && linkTargetOf(request.url) is ClientPageTarget) {
+          openLink(context, request.url);
+          return NavigationDecision.prevent;
+        }
         if (request.isMainFrame && (scheme == 'http' || scheme == 'https')) _target = request.url;
         if (scheme == 'http') {
           if (request.isMainFrame) _web.loadRequest(Uri.parse(secureUrl(request.url)));
@@ -56,14 +69,17 @@ class _WebPageState extends State<WebPage> {
         }
         const loadable = {'https', 'about', 'data', 'blob', 'javascript'};
         if (loadable.contains(scheme)) return NavigationDecision.navigate;
-        // A tap on 在微博中查看 and the like: a post, a person or a topic opens on INF's own
-        // page. Before the first load it is the page pushing the app on everyone, so ignored.
-        if (scheme == 'sinaweibo' && _loadedOnce && mounted) {
+        // Before the first load an app link is the page pushing its app on everyone: ignored.
+        if (!_loadedOnce || !mounted) return NavigationDecision.prevent;
+        // A tap on 在微博中查看 and the like: a post, a person or a topic opens on INF's own page.
+        if (scheme == 'sinaweibo') {
           final target = linkTargetOf(request.url);
           if (target is StatusTarget || target is UserTarget || target is TopicTarget || target is SuperTopicTarget) {
             openLink(context, request.url);
+            return NavigationDecision.prevent;
           }
         }
+        _offerApp(request.url);
         return NavigationDecision.prevent;
       },
     ))
@@ -72,6 +88,48 @@ class _WebPageState extends State<WebPage> {
   double _progress = 0;
   bool _failed = false;
   bool _loadedOnce = false;
+  String? _title;
+  late String _host = Uri.tryParse(widget.url)?.host ?? '';
+
+  /// When each app was last offered: a page retrying its jump on a timer is asked about once,
+  /// a tap a few seconds later again.
+  final Map<String, DateTime> _offered = {};
+  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>? _offer;
+
+  /// The page wants another app (哔哩哔哩's 打开App, a news site's 打开): say which, and open it
+  /// only if the reader asks.
+  void _offerApp(String url) {
+    final name = appNameOf(url);
+    final key = name ?? Uri.tryParse(url)?.scheme ?? url;
+    final now = DateTime.now();
+    final last = _offered[key];
+    if (last != null && now.difference(last) < const Duration(seconds: 3)) return;
+    _offered[key] = now;
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+    _offer = messenger.showSnackBar(SnackBar(
+        content: Text(name == null ? '网页想打开其他应用' : '网页想打开「$name」'),
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: '打开',
+          onPressed: () async {
+            final weibo = url.toLowerCase().startsWith('sinaweibo:');
+            final opened = await Native.openUrl(url, package: weibo ? 'com.sina.weibo' : null);
+            if (!opened && mounted) showMessage(context, name == null ? '没有可以打开它的应用' : '没有安装$name');
+          },
+        ),
+      ));
+    final offer = _offer!;
+    offer.closed.then((_) {
+      if (identical(_offer, offer)) _offer = null;
+    });
+  }
+
+  /// The prompt belongs to this page; the messenger would keep it over the post underneath.
+  @override
+  void dispose() {
+    _offer?.close();
+    super.dispose();
+  }
 
   /// The address as the post or page gave it, before the HTTPS upgrade: a site that only speaks
   /// HTTP fails here but still opens in a browser.
@@ -133,7 +191,6 @@ class _WebPageState extends State<WebPage> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final host = Uri.tryParse(widget.url)?.host ?? '';
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
@@ -142,7 +199,7 @@ class _WebPageState extends State<WebPage> {
       child: Scaffold(
         backgroundColor: scheme.surface,
         appBar: AppBar(
-          title: Text(host.isEmpty ? '网页' : host, maxLines: 1, overflow: TextOverflow.ellipsis),
+          title: _WebTitle(title: _title, host: _host),
           titleSpacing: 0,
           leadingWidth: 96,
           leading: Row(
@@ -208,6 +265,35 @@ class _WebPageState extends State<WebPage> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// The page's own title once it has one, over its host; until then just the host.
+class _WebTitle extends StatelessWidget {
+  const _WebTitle({required this.title, required this.host});
+
+  final String? title;
+  final String host;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final name = host.isEmpty ? '网页' : host;
+    final heading = title == null || title!.isEmpty || title!.startsWith('http') || title == host ? null : title;
+    if (heading == null) return Text(name, maxLines: 1, overflow: TextOverflow.ellipsis);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(heading, maxLines: 1, overflow: TextOverflow.ellipsis, style: text.titleMedium),
+        Text(
+          name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: text.labelSmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+      ],
     );
   }
 }

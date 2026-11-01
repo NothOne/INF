@@ -7,6 +7,7 @@ import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/haptics.dart';
 import '../../core/hot_search_store.dart';
+import '../../core/links.dart';
 import '../../core/models.dart';
 import '../../core/navigation.dart';
 import '../../core/paging.dart';
@@ -145,6 +146,11 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
     final query = (value ?? _input.text).trim();
     if (query.isEmpty) return;
     _focus.unfocus();
+    final link = linkInText(query);
+    if (link != null) {
+      await openLink(context, link);
+      return;
+    }
     await Prefs.instance.addSearch(query);
     if (!mounted) return;
     setState(() {
@@ -222,7 +228,7 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
             onSubmitted: (_) => _submit(),
             style: const TextStyle(fontSize: 14.5),
             decoration: InputDecoration(
-              hintText: '搜索微博、用户',
+              hintText: '搜索微博、用户，或粘贴微博链接',
               filled: false,
               border: InputBorder.none,
               isDense: true,

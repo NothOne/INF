@@ -19,7 +19,7 @@ Future<void> openChatLink(BuildContext context, String url) async {
   switch (linkTargetOf(target)) {
     case StatusTarget() || UserTarget() || TopicTarget() || SuperTopicTarget():
       await openLink(context, target);
-    case WebTarget() || AppOnlyTarget() || ShortLinkTarget():
+    case WebTarget() || AppOnlyTarget() || ClientPageTarget() || ShortLinkTarget():
       await showChatLinkSheet(context, target);
   }
 }

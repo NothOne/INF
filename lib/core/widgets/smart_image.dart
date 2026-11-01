@@ -8,7 +8,7 @@ import '../image_url.dart';
 ImageProvider weiboImageProvider(String url, {int? cacheWidth}) => ResizeImage.resizeIfNeeded(
       cacheWidth,
       null,
-      CachedNetworkImageProvider(sanitizeImageUrl(url), headers: weiboImageHeaders()),
+      CachedNetworkImageProvider(sanitizeImageUrl(url), headers: weiboImageHeaders(url)),
     );
 
 /// Whether [url] is already decoded in memory, i.e. would paint on the very first frame.

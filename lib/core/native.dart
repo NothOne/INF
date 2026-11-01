@@ -58,10 +58,21 @@ class Native {
     }
   }
 
-  /// Hands [url] to the system browser. False when nothing on the device can open it.
-  static Future<bool> openUrl(String url) async {
+  /// The link the app was last opened with (`inf://open?url=…`), once; null when there is none.
+  static Future<String?> takeLink() async {
     try {
-      return await _channel.invokeMethod<bool>('openUrl', {'url': url}).timeout(
+      return await _channel.invokeMethod<String>('takeLink').timeout(const Duration(seconds: 2), onTimeout: () => null);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Hands [url] to the system browser, or to the app that handles it. [package] picks that app
+  /// over others claiming the scheme (Android; anything else is asked as without it). False when
+  /// nothing on the device can open it.
+  static Future<bool> openUrl(String url, {String? package}) async {
+    try {
+      return await _channel.invokeMethod<bool>('openUrl', {'url': url, 'package': package}).timeout(
             const Duration(seconds: 3),
             onTimeout: () => false,
           ) ??

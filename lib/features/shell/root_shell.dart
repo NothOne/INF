@@ -5,6 +5,7 @@ import '../../core/haptics.dart';
 import '../../core/layout.dart';
 import '../../core/liquid_glass.dart';
 import '../../core/look.dart';
+import '../../core/native.dart';
 import '../../core/navigation.dart';
 import '../../core/pane.dart';
 import '../../core/shell_tabs.dart';
@@ -22,7 +23,7 @@ class RootShell extends StatefulWidget {
   State<RootShell> createState() => _RootShellState();
 }
 
-class _RootShellState extends State<RootShell> with SingleTickerProviderStateMixin {
+class _RootShellState extends State<RootShell> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   int _index = 0;
   int? _previous;
   DateTime? _lastHomeAction;
@@ -79,11 +80,24 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _openIncomingLink());
     // Build the other tabs offstage once the feed has had its start: they open on their cached
     // pages with avatars already decoded, and only touch the network once shown.
     Future<void>.delayed(const Duration(milliseconds: 1200), () {
       if (mounted) setState(() => _visited.addAll([1, 2, 3]));
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _openIncomingLink();
+  }
+
+  /// A link handed over as `inf://open?url=…`, by a browser bookmarklet or adb.
+  Future<void> _openIncomingLink() async {
+    final url = await Native.takeLink();
+    if (url != null && url.isNotEmpty && mounted) await openLink(context, url);
   }
 
   void _select(int index, {bool tapped = true}) {
@@ -190,6 +204,7 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _tabFade.dispose();
     for (final open in _paneOpen) {
       open.dispose();

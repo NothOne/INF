@@ -94,4 +94,88 @@ void main() {
     expect(place.card, isNull);
     expect(place.place!.url, 'http://weibo.com/p/100101B2');
   });
+
+  group('pages only the Weibo app shows', () {
+    test('a wbox mini program opens in the app’s browser', () {
+      const award = 'https://m.weibo.cn/c/wbox?id=c0p9sg9tw9&page=pages/fieldscore/playerdetail&match_id=32910';
+      final target = linkTargetOf(award) as ClientPageTarget;
+      expect(target.url, award);
+      expect(target.appUrl, 'sinaweibo://browser?url=${Uri.encodeComponent(award)}');
+    });
+
+    test('an article column, by either of its addresses', () {
+      const wbox = 'https://m.weibo.cn/c/wbox?id=wqh75bb2ni&cid=4650846149408163';
+      expect((linkTargetOf('http://weibo.com/a/hot/4650846149408163_1.html?type=new') as ClientPageTarget).url, wbox);
+      expect((linkTargetOf('http://m.weibo.cn/p/2327184650846149408163?luicode=20000061') as ClientPageTarget).url, wbox);
+      expect(linkKindOf('http://weibo.com/a/hot/4650846149408163_1.html?type=new'), LinkKind.article);
+    });
+  });
+
+  test('linkInText finds the link in a paste, or says it is a search', () {
+    expect(linkInText('https://m.weibo.cn/detail/5360381883319974'), 'https://m.weibo.cn/detail/5360381883319974');
+    expect(linkInText('【国乒包揽女单四强】 https://weibo.com/2656274875/QaBcDeFgH 来自微博'),
+        'https://weibo.com/2656274875/QaBcDeFgH');
+    expect(linkInText('weibo.com/5051815423/Rk576FuEr'), 'https://weibo.com/5051815423/Rk576FuEr');
+    expect(linkInText('孙颖莎'), isNull);
+  });
+
+  test('app and site names', () {
+    expect(appNameOf('bilibili://video/BV1fNxp6tEaq'), '哔哩哔哩');
+    expect(appNameOf('intent://video/1#Intent;scheme=bilibili;package=tv.danmaku.bili;end'), '哔哩哔哩');
+    expect(appNameOf('foo://bar'), isNull);
+    expect(siteNameOf('https://weibo.cn/sinaurl?u=https%3A%2F%2Fshare.b23.tv%2FBV1fNxp6tEaq'), '哔哩哔哩');
+    expect(siteNameOf('https://m.bilibili.com/video/BV1'), '哔哩哔哩');
+    expect(siteNameOf('https://example.com/'), isNull);
+  });
+
+  test('a birthday or medal post becomes a banner card', () {
+    final mobile = toStatus({
+      'id': '5355159049996178',
+      'text': ' ',
+      'user': {'id': '1', 'screen_name': '甲'},
+      'page_info': {
+        'type': 'bigPic',
+        'page_pic': {'url': 'https://pc.us.sinaimg.cn/fg.png', 'scheme': 'https://new.vip.weibo.cn/birthday/index?uid=1'},
+        'media_pic_url': 'https://pc.us.sinaimg.cn/bg.png',
+        'title': '今天是我的生日10月18日，来祝福我吧~',
+      },
+    })!;
+    expect(mobile.card!.banner, isTrue);
+    expect(mobile.card!.imageUrl, 'https://pc.us.sinaimg.cn/fg.png');
+    expect(mobile.card!.backgroundUrl, 'https://pc.us.sinaimg.cn/bg.png');
+    expect(mobile.card!.url, 'https://new.vip.weibo.cn/birthday/index?uid=1');
+    expect(mobile.card!.title, '今天是我的生日10月18日，来祝福我吧~');
+
+    final medal = toStatus({
+      'id': '5347862209889275',
+      'text': '',
+      'user': {'id': '1', 'screen_name': '甲'},
+      'page_info': {'type': 'bigPic', 'page_pic': {'url': 'https://wx1.sinaimg.cn/large/fg.jpg'}},
+    })!;
+    expect(medal.card!.banner, isTrue);
+    expect(medal.card!.url, isEmpty);
+
+    final web = toStatus({
+      'id': '5347862209889275',
+      'text': 'http://t.cn/AXWGrmDM',
+      'user': {'id': '1', 'screen_name': '甲'},
+      'page_info': {
+        'type': '23',
+        'object_type': 'webpage',
+        'page_title': '祝贺孙颖莎获得乒乓球女单亚军',
+        'page_url': 'https://m.weibo.cn/c/wbox?id=c0p9sg9tw9',
+        'card_info': {
+          'card_type': '107',
+          'pic_url': 'https://wx1.sinaimg.cn/large/fg.jpg',
+          'title': '',
+          'page_info': {
+            'pic_info': {'pic_big': {'url': 'https://d.sinaimg.cn/bg.png'}},
+          },
+        },
+      },
+    })!;
+    expect(web.card!.banner, isTrue);
+    expect(web.card!.backgroundUrl, 'https://d.sinaimg.cn/bg.png');
+    expect(web.card!.url, 'https://m.weibo.cn/c/wbox?id=c0p9sg9tw9');
+  });
 }

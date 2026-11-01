@@ -263,6 +263,24 @@ class WeiboApi {
     return PageResult(items, items.isEmpty || page >= 30 ? null : '${page + 1}');
   }
 
+  /// Where a post's card goes when the feed left the address out: weibo.com's copy of the post
+  /// still has it. Null when it does not either.
+  Future<String?> cardUrl(String statusId) async {
+    final json = await _asVisitor((cookie) async => asMap(await _getPublic(
+          'https://weibo.com/ajax/statuses/show',
+          query: {'id': statusId},
+          cookie: cookie,
+          whole: true,
+        )));
+    final pageUrl = textOf(asMap(json?['page_info'])?['page_url']);
+    if (pageUrl != null && pageUrl.isNotEmpty) return pageUrl;
+    for (final entry in asList(json?['url_struct'])) {
+      final url = textOf(asMap(entry)?['h5_target_url']);
+      if (url != null && url.isNotEmpty) return url;
+    }
+    return null;
+  }
+
   /// A weibo.com request behind the visitor wall; a refused or [accept]-failing answer gets one
   /// more try with a new visitor cookie.
   Future<T> _asVisitor<T>(Future<T> Function(String cookie) request, {bool Function(T result)? accept}) async {

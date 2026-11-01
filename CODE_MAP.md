@@ -94,14 +94,14 @@ main()
 | 文件 | 主要符号 | 职责 |
 |---|---|---|
 | `models.dart` | `User` `Status` `Media` `Comment` `NotificationItem` `Conversation` `DirectMessage` `UserProfile` `FeedSource` `Draft` `ViewedStatus` `PageResult<T>` 等 | 纯数据模型和枚举，不依赖任何其他文件 |
-| `parse.dart` | `parseWeiboResult` `toStatus` `toUser` `toComment` `parseXxx` `weiboHtmlToText` `parseWeiboTime` `relativeTime` `compactCount` `textOf/idOf/intOf` | 把微博 JSON 转成模型，外加时间、计数、HTML 文本工具。**所有 JSON 字段解析都放这里** |
-| `api.dart` | `WeiboApi.instance` `ApiException` `LoginRequiredException` | 所有 m.weibo.cn 请求（Dio）。按注释分节：feeds / statuses / notifications and messages / relationships and people / comments / writes / plumbing。拦截器统一注入 UA、XSRF，Cookie 只发给 m.weibo.cn。另有几个免登录的公开接口走 `_getPublic`：热搜榜 `weibo.com/ajax/statuses/hot_band`、文娱/社会/科技/生活/体育/ACG 榜 `weibo.com/ajax/statuses/{entertainment,social,technology,life,sport,acg}`、推荐频道 `weibo.com/ajax/feed/allGroups`（type 1 分组）与频道流 `weibo.com/ajax/feed/hottimeline`（每次随机一批，`max_id` 只当页码）（这些要带 passport `genvisitor2` 换来的游客 SUB/SUBP，统一走 `_asVisitor`，失效时重取一次）、搜索提示 `weibo.com/ajax/side/search`、话题卡片与阅读趋势 `m.s.weibo.com/ajax_topic/detail|trend`（必须带对应 vtopic 页面作 Referer） |
+| `parse.dart` | `parseWeiboResult` `toStatus` `toUser` `toComment` `parseXxx` `weiboHtmlToText` `parseWeiboTime` `relativeTime` `compactCount` `textOf/idOf/intOf` | 把微博 JSON 转成模型，外加时间、计数、HTML 文本工具。**所有 JSON 字段解析都放这里**。`page_info` 为 `bigPic`（m.weibo.cn）或 `card_info.card_type == '107'`（weibo.com）时是生日祝福、运动会奖牌这类图片横幅，解析成 `LinkCard(banner: true)`，前景透明图叠在背景图上，地址可能为空 |
+| `api.dart` | `WeiboApi.instance` `ApiException` `LoginRequiredException` | 所有 m.weibo.cn 请求（Dio）。按注释分节：feeds / statuses / notifications and messages / relationships and people / comments / writes / plumbing。拦截器统一注入 UA、XSRF，Cookie 只发给 m.weibo.cn。另有几个免登录的公开接口走 `_getPublic`：热搜榜 `weibo.com/ajax/statuses/hot_band`、文娱/社会/科技/生活/体育/ACG 榜 `weibo.com/ajax/statuses/{entertainment,social,technology,life,sport,acg}`、推荐频道 `weibo.com/ajax/feed/allGroups`（type 1 分组）与频道流 `weibo.com/ajax/feed/hottimeline`（每次随机一批，`max_id` 只当页码）（这些要带 passport `genvisitor2` 换来的游客 SUB/SUBP，统一走 `_asVisitor`，失效时重取一次）、搜索提示 `weibo.com/ajax/side/search`、话题卡片与阅读趋势 `m.s.weibo.com/ajax_topic/detail|trend`（必须带对应 vtopic 页面作 Referer）、`cardUrl` 用 `weibo.com/ajax/statuses/show` 补出横幅卡片的完整地址（m.weibo.cn 给的生日页缺 `mid`，打开是空白） |
 | `session.dart` | `Session.instance` `SessionState` `WeiboConfig` | 登录态：从原生 CookieManager 读 m.weibo.cn 的 Cookie，判断 SUB 是否为访客，维护 `uid`、`st`、`xsrf`、`cacheScope` |
 | `page_cache.dart` | `PageCache.instance` | 磁盘缓存若干列表的第一页原始 JSON（按账号隔离），启动时全部读入内存 |
 | `prefs.dart` | `Prefs.instance` `AccentTheme` `VisualStyle` `HapticLevel` `ImagePreload` | SharedPreferences 封装：外观、触感档位、搜索历史、草稿、浏览记录、首页来源、推荐频道、热搜榜单顺序（`hotBoards`）、本机屏蔽名单（`blockedUsers`/`isBlocked`，信息流和 `PagedStatusList` 跳过，用户主页不跳过）、表情 |
 | `emoji.dart` | `EmojiStore.instance` | 表情短码 → 图片 URL，从接口返回中学习并持久化 |
-| `image_url.dart` | `sanitizeImageUrl` `secureUrl` `sinaimgSized` `weiboImageHeaders` | 图片 URL 规范化、http→https、sinaimg 尺寸替换、防盗链请求头。不含 Widget，状态层也可以用 |
-| `links.dart` | `linkTargetOf` `LinkTarget` `linkKindOf` `linkKindLabel` `expandShortLink` `unwrapWeiboRedirect` | 链接归类：任意 http(s) / `sinaweibo://` 地址 → 微博、用户、话题、超话、t.cn 短链、网页、仅客户端可开；`linkKindOf` 按地址和 `timeline_card_small_*` 图标判断位置/超话/投票/抽奖/群聊等。纯逻辑，有测试 |
+| `image_url.dart` | `sanitizeImageUrl` `secureUrl` `sinaimgSized` `weiboImageHeaders` | 图片 URL 规范化、http→https、sinaimg 尺寸替换、防盗链请求头（Referer 只发给微博自己的域名，B 站等图床带了会 403）。不含 Widget，状态层也可以用 |
+| `links.dart` | `linkTargetOf` `LinkTarget` `linkKindOf` `linkKindLabel` `expandShortLink` `unwrapWeiboRedirect` `weiboAppBrowserUrl` `appNameOf` `siteNameOf` `linkInText` | 链接归类：任意 http(s) / `sinaweibo://` 地址 → 微博、用户、话题、超话、t.cn 短链、网页、仅客户端可开（`ClientPageTarget`：m.weibo.cn 的 wbox 小程序页、文章专栏 `a/hot/<cid>_1.html` / `p/232718<cid>`，网页版只显示「打开微博客户端体验」，兜底页经 `sinaweibo://browser?url=` 交给微博客户端）；`appNameOf` / `siteNameOf` 给网页想唤起的 App 和卡片站点起名；`linkInText` 从一段粘贴文字里找出链接；`linkKindOf` 按地址和 `timeline_card_small_*` 图标判断位置/超话/投票/抽奖/群聊等。纯逻辑，有测试 |
 
 ### 3.3 `lib/core/` —— 状态与服务（L2）
 
@@ -132,7 +132,7 @@ main()
 
 | 文件 | 主要符号 | 用途 |
 |---|---|---|
-| `status_card.dart` | `StatusCard` `showStatusActions` | 信息流微博卡片（头部、正文、转发块、文章卡、操作栏；头部 IP 不被来源挤掉；正文里「…的微博视频」链接直接播放本条视频）；`showStatusActions` 是长按菜单，详情页右上角共用：长图、收藏（`api/statuses/createfav|destroyfav`）、复制、浏览器打开、本机屏蔽此人、投诉（`statusReportLink` 打开网页版举报页） |
+| `status_card.dart` | `StatusCard` `showStatusActions` | 信息流微博卡片（头部、正文、转发块、文章卡、操作栏；头部 IP 不被来源挤掉；正文里「…的微博视频」链接直接播放本条视频）；`showStatusActions` 是长按菜单，详情页右上角共用：（卡片点击走 `_openCard`：横幅或无地址的卡片先 `cardUrl` 补地址，再不行打开兜底页）长图、收藏（`api/statuses/createfav|destroyfav`）、复制、浏览器打开、本机屏蔽此人、投诉（`statusReportLink` 打开网页版举报页） |
 | `share_sheet.dart` | `showStatusShare` | 详情页分享：最近私信联系人头像（点一下把微博链接发进私信）+ 系统分享、复制链接、长图 |
 | `hot_board_bar.dart` | `HotBoardChips` `showHotBoardEditor` `shownBoard` | 热搜榜单切换条（长按拖动排序、+ 打开榜单管理：排序/移除/添加），首页热搜页与搜索页共用，顺序存 `Prefs.hotBoards` |
 | `app_logo.dart` | `InfLogo` | 按启动图标路径画的两个渐变环，背景透明（长图左上角） |
@@ -149,7 +149,7 @@ main()
 | `transitions.dart` | `StateSwitcher` `RefreshingBar` `AppearIn` `RowListSkeleton` | 状态切换、后台刷新条、入场动画、骨架 |
 | `common.dart` | `showMessage` `ErrorRetry` `EmptyHint` `CountBadge` `SectionHeader` `SkeletonBox` `StatusListSkeleton` `LoadingFooter` `KeepAlivePage` `formatBytes` | 杂项基础控件 |
 | `paper.dart` | `PaperBackground` | 页面背景，`RootShell` 外层统一提供，内容由 `InfChrome.backdrop` 决定：经典是纸感渐变，毛玻璃是顶部两团极淡的主色/第三色光晕；页面直接用 `Scaffold` |
-| `web_view.dart` | `InfWebView` | 统一 WebView（hybrid composition，规避 Impeller 白屏） |
+| `web_view.dart` | `InfWebView` `upgradeSinaimgScript` | 统一 WebView（hybrid composition，规避 Impeller 白屏）；`upgradeSinaimgScript` 页面加载后把 `http://*.sinaimg.cn` 图片改成 https（Android 不加载明文图片，生日页的礼物图就是这种） |
 
 ### 3.6 `lib/core/` —— 路由（L4）与平台（L0）
 
@@ -162,7 +162,7 @@ main()
 | `version.dart` | `appVersion`，设置页和「我的」显示用；须与 `pubspec.yaml`、`ohos/AppScope/app.json5` 一致，`test/version_test.dart` 检查 |
 | `cast.dart` | 纯 Dart 的 SSDP 发现 + DLNA AVTransport 投屏 |
 
-原生方法一览（`Native` ↔ `MainActivity`）：`getCookies` `setCookie` `clearCookies` `clearAuthCookies` `userAgent` `openUrl` `isMetered` `isPipAvailable` `enterPip` `saveImage` `saveVideo` `peakRefreshRate` `haptic`。新增原生能力时两边同时改，Dart 侧只通过 `Native` 调用。
+原生方法一览（`Native` ↔ `MainActivity`）：`getCookies` `setCookie` `clearCookies` `clearAuthCookies` `userAgent` `openUrl`（可指定包名，`sinaweibo://` 指定 `com.sina.weibo`，避免被其他声明了该 scheme 的 App 截走；支持 `intent:` 地址）`takeLink`（取外部传入的 `inf://open?url=<编码后的地址>`，`RootShell` 启动和回到前台时读取并 `openLink`）`isMetered` `isPipAvailable` `enterPip` `saveImage` `saveVideo` `peakRefreshRate` `haptic`。新增原生能力时两边同时改，Dart 侧只通过 `Native` 调用。
 
 鸿蒙端（`NativePlugin.ets`）实现同一组方法，另加 `share`（share_plus 没有鸿蒙实现，`share.dart` 在鸿蒙上走它）。差异：画中画、`setVolume` 返回 false，`peakRefreshRate` 返回 null；存图存视频走系统保存弹窗，每次需用户确认；实况照片只存静态图。
 
@@ -181,7 +181,7 @@ main()
 | `compose/` | `ComposePage` | 发博/转发、多图、草稿 | `openCompose` |
 | `user/` | `UserPage` | 他人主页 + 时间线 | `openUser` |
 | `topic/` | `HotTopicPage` `TopicPage` `SuperTopicsPage` | 热搜/话题详情：头部只留排名与标签、两行导语、主持人、一行热度摘要（点开「热点数据」面板看热度/阅读/讨论、24 小时阅读趋势、上榜记录、贡献者/媒体）、单行相关搜索、相关用户和「参与讨论/全站搜索」，下方吸顶「综合/实时/热门/视频」；`TopicPage` 用于赞过、container 流和话题内关键词搜索 | `openTopic` `openHotTopic` `openLiked` `openTopicFeed` `openSuperTopics` |
-| `search/` | `SearchPage` | 输入时的搜索提示（联想词 + 用户）、热搜（与首页同款榜单切换条和详细行）、历史、微博/用户结果 | `openSearch` |
+| `search/` | `SearchPage` | 搜索框里粘贴微博/网页链接直接打开；输入时的搜索提示（联想词 + 用户）、热搜（与首页同款榜单切换条和详细行）、历史、微博/用户结果 | `openSearch` |
 | `relations/` | `RelationsPage` | 关注/粉丝 | `openRelations` |
 | `friends/` | `FriendsPage` | 好友 | `openFriends` |
 | `history/` | `DraftsPage` `ViewedPage` | 草稿箱、浏览记录 | `openDrafts` `openViewed` |
@@ -189,7 +189,7 @@ main()
 | `longimage/` | `LongImagePage` | 长图截图分享：底色随主题 `surface`、无外边距，左上角 `InfLogo`，底部保留「长图由 INF 生成」 | `openLongImage` |
 | `login/` | `LoginPage` | WebView SSO 登录 | `openLogin` |
 | `settings/` | `SettingsPage` | 外观、毛玻璃调节、触感、缓存 | `openSettings` |
-| `web/` | `WebPage` `LinkFallbackPage` | 通用网页（http 升级 https、加载失败页、用浏览器打开；左上角返回 + 关闭，返回后 2 秒内又跳回刚离开的地址视为跳转页回弹，直接关闭；页内 `sinaweibo://` 的微博/用户/话题跳回 INF）；兜底页给只有微博客户端能开的链接 | `openLink`（所有正文链接、卡片的统一入口）`openWeb` `openLinkFallback` |
+| `web/` | `WebPage` `LinkFallbackPage` | 通用网页（http 升级 https、加载失败页、用浏览器打开；左上角返回 + 关闭，返回后 2 秒内又跳回刚离开的地址视为跳转页回弹，直接关闭；页内 `sinaweibo://` 的微博/用户/话题跳回 INF，其他 App 跳转弹出「网页想打开「X」」由用户决定；标题栏显示网页标题和域名）；兜底页给只有微博客户端能开的链接和找不到地址的卡片：说明原因，提供在微博客户端打开 / 浏览器打开 / 复制链接 | `openLink`（所有正文链接、卡片的统一入口）`openWeb` `openLinkFallback` |
 
 功能页之间现有的直接依赖（除 `RootShell` 引用 4 个 Tab 外）：
 

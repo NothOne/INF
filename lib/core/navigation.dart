@@ -193,13 +193,15 @@ Future<void> openLink(BuildContext context, String url, {String? title}) async {
       return openWeb(context, url);
     case AppOnlyTarget(:final url):
       return openLinkFallback(context, url, title: title);
+    case ClientPageTarget(:final url, :final appUrl):
+      return openLinkFallback(context, url, appUrl: appUrl, title: title);
     case ShortLinkTarget(:final url):
       return openWeb(context, url);
   }
 }
 
-Future<void> openLinkFallback(BuildContext context, String url, {String? title}) =>
-    pushInf(context, LinkFallbackPage(url: url, title: title));
+Future<void> openLinkFallback(BuildContext context, String url, {String? appUrl, String? title}) =>
+    pushInf(context, LinkFallbackPage(url: url, appUrl: appUrl, title: title));
 
 Future<void> openVideo(BuildContext context, String url, {String? coverUrl}) =>
     pushInf(context, VideoPage(url: url, coverUrl: coverUrl), overlay: true);

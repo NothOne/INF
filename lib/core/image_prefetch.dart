@@ -73,7 +73,7 @@ class ImagePrefetcher {
     if (!_requested.add(url)) return;
     if (_requested.length > _rememberLimit) _requested.remove(_requested.first);
     try {
-      await DefaultCacheManager().getSingleFile(url, headers: weiboImageHeaders());
+      await DefaultCacheManager().getSingleFile(url, headers: weiboImageHeaders(url));
     } catch (_) {
       _requested.remove(url);
     }
