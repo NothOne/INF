@@ -7,6 +7,10 @@ import '../../core/container_route.dart';
 import '../../core/haptics.dart';
 import '../../core/models.dart';
 import '../../core/parse.dart';
+import '../../core/native.dart';
+import '../../core/navigation.dart';
+import '../../core/prefs.dart';
+import '../../core/session.dart';
 import '../../core/share.dart';
 import '../../core/status_store.dart';
 import '../../core/touches.dart';
@@ -14,6 +18,115 @@ import 'avatar.dart';
 import 'common.dart';
 import 'image_grid.dart';
 import 'rich_text.dart';
+import 'smart_image.dart';
+
+/// What can be done with a post: the card's long press and the detail page's menu. Sharing has
+/// its own sheet, [showStatusShare].
+Future<void> showStatusActions(BuildContext context, Status status, {VoidCallback? onLongImage}) {
+  final own = status.author.id == Session.instance.uid;
+  return showActionSheet<void>(
+    context: context,
+    frosted: false,
+    builder: (sheetContext) {
+      void run(VoidCallback action) {
+        Navigator.pop(sheetContext);
+        action();
+      }
+
+      void copy(String text) => run(() {
+            Clipboard.setData(ClipboardData(text: text));
+            Haptic.success.play();
+            showMessage(context, '已复制');
+          });
+
+      return SafeArea(
+        child: AnimatedBuilder(
+          animation: StatusStore.instance,
+          builder: (context, _) {
+            final current = StatusStore.instance.apply(status);
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (onLongImage != null)
+                  _ActionTile(icon: Icons.article_outlined, label: '生成长图', onTap: () => run(onLongImage)),
+                _ActionTile(
+                  icon: current.favorited ? Icons.star_rounded : Icons.star_outline_rounded,
+                  label: current.favorited ? '取消收藏' : '收藏',
+                  onTap: () => run(() async {
+                    final message = await StatusStore.instance.toggleFavorite(current);
+                    if (context.mounted) showMessage(context, message);
+                  }),
+                ),
+                _ActionTile(icon: Icons.copy_rounded, label: '复制文本', onTap: () => copy(status.text)),
+                _ActionTile(icon: Icons.link_rounded, label: '复制链接', onTap: () => copy(statusLink(status.id))),
+                _ActionTile(
+                  icon: Icons.open_in_browser_rounded,
+                  label: '在浏览器中打开',
+                  onTap: () => run(() async {
+                    if (!await Native.openUrl(statusLink(status.id)) && context.mounted) {
+                      showMessage(context, '没有可以打开链接的浏览器');
+                    }
+                  }),
+                ),
+                if (!own && status.author.id.isNotEmpty) ...[
+                  _ActionTile(
+                    icon: Icons.block_rounded,
+                    label: '屏蔽 @${status.author.screenName}',
+                    onTap: () => run(() => _confirmBlock(context, status.author)),
+                  ),
+                  _ActionTile(
+                    icon: Icons.report_outlined,
+                    label: '投诉',
+                    onTap: () => run(() => openWeb(context, statusReportLink(status.id))),
+                  ),
+                ],
+                const SizedBox(height: 4),
+              ],
+            );
+          },
+        ),
+      );
+    },
+  );
+}
+
+Future<void> _confirmBlock(BuildContext context, User user) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text('屏蔽 @${user.screenName}？'),
+      content: const Text('列表里将不再显示 TA 的微博，进入 TA 的主页仍可查看。屏蔽只保存在本机，可在「设置 · 已屏蔽的用户」里解除。'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('取消')),
+        FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('屏蔽')),
+      ],
+    ),
+  );
+  if (ok != true) return;
+  await Prefs.instance.setBlocked(user, true);
+  Haptic.success.play();
+  if (context.mounted) showMessage(context, '已屏蔽 @${user.screenName}');
+}
+
+class _ActionTile extends StatelessWidget {
+  const _ActionTile({required this.icon, required this.label, required this.onTap});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      dense: true,
+      visualDensity: const VisualDensity(vertical: -2),
+      minLeadingWidth: 24,
+      leading: Icon(icon, size: 21),
+      title: Text(label, style: Theme.of(context).textTheme.bodyLarge),
+      onTap: onTap,
+    );
+  }
+}
 
 /// One post, in a list or at the top of its own page. The card is the shared element between those
 /// two places: the same widget grows into the detail page instead of a page sliding over a list.
@@ -70,6 +183,22 @@ class _StatusCardState extends State<StatusCard> {
     open(id);
   }
 
+  /// A 「…的微博视频」 link in the text is the video the post already carries: it plays here
+  /// instead of opening the video's web page.
+  ValueChanged<String>? _urlHandler(Status status) {
+    final open = widget.onOpenUrl;
+    final openMedia = widget.onOpenMedia;
+    if (open == null) return null;
+    return (url) {
+      final index = status.media.indexWhere((media) => media.kind == MediaKind.video);
+      if (openMedia != null && index >= 0 && status.links[url]?.kind == LinkKind.video) {
+        openMedia(status.media, index, null);
+      } else {
+        open(url);
+      }
+    };
+  }
+
   Future<void> _toggleLike(Status status) async {
     if (widget.onToggleLike != null) {
       widget.onToggleLike!();
@@ -82,54 +211,7 @@ class _StatusCardState extends State<StatusCard> {
   Future<void> _openMenu(Status status) async {
     if (Touches.multiTouch) return;
     Haptic.longPress.play();
-    await showActionSheet<void>(
-      context: context,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (widget.onLongImage != null)
-              ListTile(
-                leading: const Icon(Icons.article_outlined),
-                title: const Text('生成长图'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  widget.onLongImage!();
-                },
-              ),
-            ListTile(
-              leading: const Icon(Icons.copy_rounded),
-              title: const Text('复制文本'),
-              onTap: () {
-                Clipboard.setData(ClipboardData(text: status.text));
-                Haptic.success.play();
-                Navigator.pop(sheetContext);
-                showMessage(context, '已复制');
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.link_rounded),
-              title: const Text('复制链接'),
-              onTap: () {
-                Clipboard.setData(ClipboardData(text: statusLink(status.id)));
-                Haptic.success.play();
-                Navigator.pop(sheetContext);
-                showMessage(context, '已复制');
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.ios_share_rounded),
-              title: const Text('分享…'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                shareText(statusShareText(status));
-              },
-            ),
-            const SizedBox(height: 6),
-          ],
-        ),
-      ),
-    );
+    await showStatusActions(context, status, onLongImage: widget.onLongImage);
   }
 
   @override
@@ -161,11 +243,12 @@ class _StatusCardState extends State<StatusCard> {
                 onLongPress: () => _openMenu(status),
                 child: RichStatusText(
                   text: status.text,
+                  links: status.links,
                   style: Theme.of(context).textTheme.bodyLarge,
                   maxLines: widget.detail ? 1000 : (status.isLongText ? 6 : 1000),
                   onMention: widget.onOpenUser,
                   onTopic: widget.onOpenTopic,
-                  onUrl: widget.onOpenUrl,
+                  onUrl: _urlHandler(status),
                   inlineImages: status.repostOf == null,
                   onOpenImage: widget.onOpenMedia == null
                       ? null
@@ -186,6 +269,10 @@ class _StatusCardState extends State<StatusCard> {
                 const SizedBox(height: 9),
                 _ArticleCard(article: status.article!, onOpen: () => widget.onOpenUrl?.call(status.article!.url)),
               ],
+              if (status.card != null) ...[
+                const SizedBox(height: 9),
+                _LinkCardView(card: status.card!, onOpen: () => widget.onOpenUrl?.call(status.card!.url)),
+              ],
               if (status.media.isNotEmpty) ...[
                 const SizedBox(height: 9),
                 StatusImageGrid(
@@ -205,26 +292,30 @@ class _StatusCardState extends State<StatusCard> {
                   onOpen: () => widget.onOpenStatus?.call(status.repostOf!.id),
                   onOpenUser: widget.onOpenUser,
                   onOpenTopic: widget.onOpenTopic,
-                  onOpenUrl: widget.onOpenUrl,
+                  onOpenUrl: _urlHandler(status.repostOf!),
                   onOpenMedia: widget.onOpenMedia,
                   heroEnabled: widget.enableImageHeroes,
                 ),
               ],
               if (status.place != null) ...[
                 const SizedBox(height: 7),
-                Row(
-                  children: [
-                    Icon(Icons.place_outlined, size: 15, color: scheme.onSurfaceVariant),
-                    const SizedBox(width: 3),
-                    Flexible(
-                      child: Text(
-                        status.place!.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: status.place!.url == null ? null : () => widget.onOpenUrl?.call(status.place!.url!),
+                  child: Row(
+                    children: [
+                      Icon(Icons.place_outlined, size: 15, color: scheme.onSurfaceVariant),
+                      const SizedBox(width: 3),
+                      Flexible(
+                        child: Text(
+                          status.place!.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
               const SizedBox(height: 2),
@@ -257,8 +348,11 @@ class _Header extends StatelessWidget {
     final author = status.author;
     final time = relativeTime(status.createdAt);
     final source = (status.source == null || status.source!.isEmpty) ? time : '$time 来自 ${status.source}';
-    final visibleRegion = detail ? status.region : null;
-    final subtitle = (visibleRegion == null || visibleRegion.isEmpty) ? source : '$source · $visibleRegion';
+    final region = status.region?.trim() ?? '';
+    final subtitleStyle = Theme.of(context).textTheme.labelMedium?.copyWith(
+          color: scheme.onSurfaceVariant,
+          fontSize: 11.5,
+        );
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -297,17 +391,11 @@ class _Header extends StatelessWidget {
                     ),
                     const SizedBox(width: 5),
                   ],
+                  // A long client name gives way; the region always shows.
                   Flexible(
-                    child: Text(
-                      subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                            fontSize: 11.5,
-                          ),
-                    ),
+                    child: Text(source, maxLines: 1, overflow: TextOverflow.ellipsis, style: subtitleStyle),
                   ),
+                  if (region.isNotEmpty) Text(' · $region', maxLines: 1, style: subtitleStyle),
                 ],
               ),
             ],
@@ -361,6 +449,67 @@ class _ArticleCard extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A vote, a web page, a group and any other card m.weibo.cn attaches: picture, title, a line of
+/// description and what kind of thing it is.
+class _LinkCardView extends StatelessWidget {
+  const _LinkCardView({required this.card, required this.onOpen});
+
+  final LinkCard card;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    return Material(
+      color: InfChrome.of(context).fill(scheme, scheme.surfaceContainerHigh, 0.65),
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onOpen,
+        child: Row(
+          children: [
+            if (card.imageUrl != null)
+              SizedBox(
+                width: 72,
+                height: 72,
+                child: SmartImage(url: card.imageUrl, fit: BoxFit.cover),
+              ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(card.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: text.titleSmall),
+                    if (card.summary != null && card.summary!.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        card.summary!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                      ),
+                    ],
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(linkKindIcon(card.kind), size: 13, color: scheme.onSurfaceVariant),
+                        const SizedBox(width: 3),
+                        Text(card.typeLabel, style: text.labelSmall?.copyWith(color: scheme.onSurfaceVariant)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -421,6 +570,7 @@ class _RepostBlock extends StatelessWidget {
                 onTap: open,
                 child: RichStatusText(
                   text: '$prefix${original.text}',
+                  links: original.links,
                   style: Theme.of(context).textTheme.bodyMedium,
                   maxLines: detail ? 1000 : (original.isLongText ? 6 : 1000),
                   onMention: onOpenUser,
@@ -435,6 +585,10 @@ class _RepostBlock extends StatelessWidget {
               if (original.article != null) ...[
                 const SizedBox(height: 8),
                 _ArticleCard(article: original.article!, onOpen: () => onOpenUrl?.call(original.article!.url)),
+              ],
+              if (original.card != null) ...[
+                const SizedBox(height: 8),
+                _LinkCardView(card: original.card!, onOpen: () => onOpenUrl?.call(original.card!.url)),
               ],
               if (original.media.isNotEmpty) ...[
                 const SizedBox(height: 8),

@@ -123,7 +123,38 @@ class Topic {
 
 class Place {
   final String name;
-  const Place(this.name);
+  final String? url;
+  const Place(this.name, {this.url});
+}
+
+/// What a link in a post points at, as far as its address and Weibo's little icon tell.
+enum LinkKind { web, video, article, place, superTopic, vote, lottery, group }
+
+/// A link as the post shows it: the address, and the words and kind Weibo draws in its place.
+class WeiboLink {
+  final String url;
+  final String label;
+  final LinkKind kind;
+  const WeiboLink({required this.url, this.label = '', this.kind = LinkKind.web});
+}
+
+/// The card under a post for anything that is not a picture, a video or an article: a vote, a web
+/// page, a group, a Q&A and whatever Weibo adds next.
+class LinkCard {
+  final String url;
+  final String title;
+  final String? summary;
+  final String? imageUrl;
+  final String typeLabel;
+  final LinkKind kind;
+  const LinkCard({
+    required this.url,
+    required this.title,
+    this.summary,
+    this.imageUrl,
+    this.typeLabel = '',
+    this.kind = LinkKind.web,
+  });
 }
 
 class Status {
@@ -138,9 +169,14 @@ class Status {
   final int commentsCount;
   final int likesCount;
   final bool liked;
+  final bool favorited;
   final List<Topic> topics;
   final Place? place;
   final Article? article;
+  final LinkCard? card;
+
+  /// The links in [text], by address.
+  final Map<String, WeiboLink> links;
   final bool isLongText;
   final String? region;
   final bool pinned;
@@ -157,9 +193,12 @@ class Status {
     this.commentsCount = 0,
     this.likesCount = 0,
     this.liked = false,
+    this.favorited = false,
     this.topics = const [],
     this.place,
     this.article,
+    this.card,
+    this.links = const {},
     this.isLongText = false,
     this.region,
     this.pinned = false,
@@ -168,11 +207,13 @@ class Status {
   Status copyWith({
     String? text,
     bool? liked,
+    bool? favorited,
     int? likesCount,
     int? repostsCount,
     int? commentsCount,
     bool? isLongText,
     String? source,
+    Map<String, WeiboLink>? links,
   }) =>
       Status(
         id: id,
@@ -186,9 +227,12 @@ class Status {
         commentsCount: commentsCount ?? this.commentsCount,
         likesCount: likesCount ?? this.likesCount,
         liked: liked ?? this.liked,
+        favorited: favorited ?? this.favorited,
         topics: topics,
         place: place,
         article: article,
+        card: card,
+        links: links ?? this.links,
         isLongText: isLongText ?? this.isLongText,
         region: region,
         pinned: pinned,
@@ -406,17 +450,61 @@ class SearchSuggestions {
 }
 
 /// weibo.com's boards; [path] follows `ajax/statuses/`. All but the hot-search board refuse a
-/// request without at least a visitor cookie.
+/// request without at least a visitor cookie. weibo.com's 我的, 流量 and 飙升 boards need a
+/// weibo.com account or a 大V badge, so they are not here.
 enum HotBoard {
   realtime('热搜', 'hot_band'),
   entertainment('文娱', 'entertainment'),
   social('社会', 'social'),
+  tech('科技', 'technology'),
   life('生活', 'life'),
-  sport('体育', 'sport');
+  sport('体育', 'sport'),
+  acg('ACG', 'acg');
 
   final String label;
   final String path;
   const HotBoard(this.label, this.path);
+
+  static HotBoard? named(String name) => values.where((board) => board.name == name).firstOrNull;
+}
+
+/// One of the 推荐 page's channels. [personal] is 热门 as m.weibo.cn draws it for the signed-in
+/// account; every other channel (推荐, 同城, 搞笑, 科技 …) is weibo.com's `feed/hottimeline`, the
+/// same for everyone.
+class RecommendChannel {
+  final String gid;
+  final String containerId;
+  final String title;
+
+  /// In weibo.com's 我的频道 rather than 频道推荐.
+  final bool featured;
+  final bool personal;
+
+  const RecommendChannel({
+    required this.gid,
+    required this.containerId,
+    required this.title,
+    this.featured = true,
+    this.personal = false,
+  });
+
+  static const hot = RecommendChannel(gid: '102803', containerId: '102803', title: '热门', personal: true);
+  static const everyone = RecommendChannel(gid: '102803', containerId: '102803', title: '推荐');
+
+  /// 热门 and 推荐 share weibo's group id.
+  String get key => personal ? 'personal' : gid;
+
+  Map<String, dynamic> toJson() => {'gid': gid, 'containerid': containerId, 'title': title, 'personal': personal};
+
+  static RecommendChannel? fromJson(Map<String, dynamic>? json) {
+    final gid = json?['gid'];
+    final container = json?['containerid'];
+    final title = json?['title'];
+    if (gid is! String || container is! String || title is! String) return null;
+    // Saved before 推荐 split from 热门: that 热门 is now the personal one.
+    if (json?['personal'] == true || (json?['personal'] == null && gid == hot.gid && title == hot.title)) return hot;
+    return RecommendChannel(gid: gid, containerId: container, title: title);
+  }
 }
 
 /// The streams m.weibo.cn's search container offers for one query; [type] goes into its id.
@@ -436,7 +524,11 @@ class TopicBoardStint {
   final String board;
   final int? bestRank;
   final int minutes;
-  const TopicBoardStint({required this.board, this.bestRank, this.minutes = 0});
+  final DateTime? onAt;
+
+  /// Null while it is still on the board.
+  final DateTime? offAt;
+  const TopicBoardStint({required this.board, this.bestRank, this.minutes = 0, this.onAt, this.offAt});
 }
 
 /// What Weibo says about a topic or a hot-search keyword: its head on m.weibo.cn and its card on
@@ -468,6 +560,9 @@ class TopicInfo {
   final List<User> media;
   final DateTime? createdAt;
 
+  /// The post the topic was started with.
+  final String? firstStatusId;
+
   const TopicInfo({
     this.title,
     this.lead,
@@ -486,6 +581,7 @@ class TopicInfo {
     this.contributors = const [],
     this.media = const [],
     this.createdAt,
+    this.firstStatusId,
   });
 
   bool get isEmpty =>
@@ -519,6 +615,7 @@ class TopicInfo {
           contributors: contributors.isNotEmpty ? contributors : other.contributors,
           media: media.isNotEmpty ? media : other.media,
           createdAt: createdAt ?? other.createdAt,
+          firstStatusId: firstStatusId ?? other.firstStatusId,
         );
 }
 
@@ -588,7 +685,6 @@ class FeedSource {
   static const private = FeedSource(FeedKind.private, '悄悄关注');
   static const liked = FeedSource(FeedKind.liked, '我赞过的');
   static const favorites = FeedSource(FeedKind.favorites, '我的收藏');
-  static const hot = FeedSource(FeedKind.card, '热门', '102803');
 
   String get key => '${kind.name}\u001F${id.isEmpty ? kind.name : id}';
 

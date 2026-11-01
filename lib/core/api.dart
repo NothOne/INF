@@ -52,6 +52,13 @@ class WeiboApi {
         }
         handler.next(options);
       },
+      onResponse: (response, handler) {
+        final setCookies = response.headers.map['set-cookie'];
+        if (setCookies != null && response.requestOptions.uri.host == 'm.weibo.cn') {
+          session.absorbSetCookies(setCookies);
+        }
+        handler.next(response);
+      },
     ));
   }
 
@@ -150,11 +157,13 @@ class WeiboApi {
     return toStatus(data);
   }
 
-  Future<String?> longText(String id) async {
+  Future<({String text, Map<String, WeiboLink> links})?> longText(String id) async {
     final data = await _get('statuses/extend', query: {'id': id});
     final raw = textOf(asMap(data)?['longTextContent']);
-    final text = raw == null ? null : weiboHtmlToText(raw).trim();
-    return (text != null && text.isNotEmpty) ? text : null;
+    if (raw == null) return null;
+    final rich = weiboHtmlToRichText(raw);
+    final text = rich.text.trim();
+    return text.isEmpty ? null : (text: text, links: rich.links);
   }
 
   Future<PageResult<Status>> userTimeline(String uid, String? cursor) async {
@@ -208,10 +217,59 @@ class WeiboApi {
   Future<List<HotSearch>> hotBoard(HotBoard board) async {
     if (board == HotBoard.realtime) return hotSearch();
     final url = 'https://weibo.com/ajax/statuses/${board.path}';
+    return _asVisitor(
+      (cookie) async => parseHotBand(await _getPublic(url, cookie: cookie), board: board),
+      accept: (band) => band.isNotEmpty,
+    );
+  }
+
+  /// weibo.com's 推荐 channels. They are the same for every visitor, so no account is needed.
+  Future<List<RecommendChannel>> recommendChannels() => _asVisitor(
+        (cookie) async => parseRecommendChannels(await _getPublic(
+          'https://weibo.com/ajax/feed/allGroups',
+          query: {'is_new_segment': '1', 'fetch_hot': '1'},
+          cookie: cookie,
+          whole: true,
+        )),
+        accept: (channels) => channels.isNotEmpty,
+      );
+
+  /// One channel's posts; 热门 signed in is m.weibo.cn's, tuned to the account. weibo.com draws a fresh batch on every call and its `max_id` stays 1,
+  /// so the cursor is only a page count; the pager drops the repeats.
+  Future<PageResult<Status>> recommendFeed(RecommendChannel channel, String? cursor) async {
+    if (channel.personal && session.uid != null) {
+      final page = int.tryParse(cursor ?? '') ?? 1;
+      return _parseFeed(FeedKind.card, await _cardFeed(channel.containerId, page), page);
+    }
+    final page = int.tryParse(cursor ?? '') ?? 0;
+    final items = await _asVisitor(
+      (cookie) async => parseHotTimeline(await _getPublic(
+        'https://weibo.com/ajax/feed/hottimeline',
+        query: {
+          'since_id': '0',
+          'refresh': page == 0 ? '1' : '0',
+          'group_id': channel.gid,
+          'containerid': channel.containerId,
+          'extparam': 'discover|new_feed',
+          'max_id': '$page',
+          'count': '10',
+        },
+        referer: 'https://weibo.com/hot/weibo/${channel.gid}',
+        cookie: cookie,
+        whole: true,
+      )),
+      accept: (items) => items.isNotEmpty,
+    );
+    return PageResult(items, items.isEmpty || page >= 30 ? null : '${page + 1}');
+  }
+
+  /// A weibo.com request behind the visitor wall; a refused or [accept]-failing answer gets one
+  /// more try with a new visitor cookie.
+  Future<T> _asVisitor<T>(Future<T> Function(String cookie) request, {bool Function(T result)? accept}) async {
     for (var attempt = 0;; attempt++) {
       try {
-        final band = parseHotBand(await _getPublic(url, cookie: await _visitorCookie()), board: board);
-        if (band.isNotEmpty || attempt > 0) return band;
+        final result = await request(await _visitorCookie());
+        if (attempt > 0 || (accept?.call(result) ?? true)) return result;
       } catch (_) {
         if (attempt > 0) rethrow;
       }
@@ -538,6 +596,12 @@ class WeiboApi {
     }, referer: '${_web}/detail/$statusId');
   }
 
+  /// m.weibo.cn's own menu posts these; the path names are its own.
+  Future<void> setFavorited(String statusId, bool favorited) async {
+    final path = favorited ? 'api/statuses/createfav' : 'api/statuses/destroyfav';
+    await _post(path, {'id': statusId}, referer: '$_web/detail/$statusId');
+  }
+
   Future<String> uploadImage(File file) async {
     final st = await _token(refresh: true);
     final response = await _dio.post(
@@ -625,7 +689,14 @@ class WeiboApi {
 
   /// An anonymous weibo.com endpoint: no m.weibo.cn cookie, and a refusal is just an error, never
   /// a sign the session ended.
-  Future<dynamic> _getPublic(String url, {Map<String, String>? query, String? referer, String? cookie}) async {
+  /// [whole] is for the endpoints that answer without a `data` wrapper.
+  Future<dynamic> _getPublic(
+    String url, {
+    Map<String, String>? query,
+    String? referer,
+    String? cookie,
+    bool whole = false,
+  }) async {
     try {
       final response = await _dio.get(
         url,
@@ -640,7 +711,7 @@ class WeiboApi {
       if (map == null || (intOf(map['ok']) != 1 && textOf(map['code']) != '100000')) {
         throw ApiException(textOf(map?['msg']) ?? '接口返回格式错误');
       }
-      return map['data'];
+      return whole ? map : map['data'];
     } on DioException catch (error) {
       throw _dioError(error);
     } on FormatException {
@@ -736,7 +807,7 @@ class WeiboApi {
     }
     final code = envelope.errno ?? envelope.ok;
     if (emptyIsOk && (code == 0 || code == 100011)) return null;
-    throw ApiException(envelope.message ?? '微博接口错误', code: code);
+    throw ApiException(envelope.message ?? '微博接口错误（$code）', code: code);
   }
 
   Future<String> _token({bool refresh = false}) async {

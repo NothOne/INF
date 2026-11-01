@@ -11,19 +11,38 @@ class _LikeState {
   const _LikeState(this.liked, this.count);
 }
 
-/// The one place a post's like state lives. The feed, the detail page and search results all read
+/// The one place a post's like and favourite state lives. The feed, the detail page and search results all read
 /// through [apply], so a tap on one screen is the same number everywhere.
 class StatusStore extends ChangeNotifier {
   StatusStore._();
   static final StatusStore instance = StatusStore._();
 
   final Map<String, _LikeState> _likes = {};
+  final Map<String, bool> _favorites = {};
   final ValueNotifier<int> feedRevision = ValueNotifier(0);
 
   Status apply(Status status) {
     final state = _likes[status.id];
-    if (state == null) return status;
-    return status.copyWith(liked: state.liked, likesCount: state.count);
+    final favorited = _favorites[status.id];
+    if (state == null && favorited == null) return status;
+    return status.copyWith(liked: state?.liked, likesCount: state?.count, favorited: favorited);
+  }
+
+  /// Completes with the message to show.
+  Future<String> toggleFavorite(Status status) async {
+    final next = !apply(status).favorited;
+    _favorites[status.id] = next;
+    notifyListeners();
+    try {
+      await WeiboApi.instance.setFavorited(status.id, next);
+      Haptic.success.play();
+      return next ? '已收藏' : '已取消收藏';
+    } catch (error) {
+      _favorites[status.id] = !next;
+      notifyListeners();
+      Haptic.error.play();
+      return error is ApiException ? error.message : '操作失败';
+    }
   }
 
   void seed(Status status) {

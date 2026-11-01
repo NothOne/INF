@@ -38,8 +38,8 @@ class FeedController extends ChangeNotifier {
     final cached = WeiboApi.instance.cachedFeed();
     if (cached == null) return;
     final (cachedSource, page) = cached;
-    // 热门 has its own page beside the feed now; a feed last left on it starts on 全部关注.
-    if (cachedSource.key == FeedSource.hot.key) return;
+    // 热门 moved to the 推荐 page beside the feed; a feed last left on it starts on 全部关注.
+    if (cachedSource.kind == FeedKind.card) return;
     final saved = Prefs.instance.feedSourceKey;
     if (saved == null ? cachedSource.kind != FeedKind.all : cachedSource.key != saved) return;
     source = cachedSource;
@@ -48,6 +48,7 @@ class FeedController extends ChangeNotifier {
     pager = PagingController<Status>(
       fetch: (cursor) => WeiboApi.instance.feed(cachedSource, Session.instance.uid ?? '', cursor),
       id: (status) => status.id,
+      keepTailOnRefresh: true,
     )..seed(page);
   }
 
@@ -140,7 +141,7 @@ class FeedController extends ChangeNotifier {
     }
     pager?.dispose();
     _pagerKey = key;
-    final controller = PagingController<Status>(fetch: fetch, id: (status) => status.id);
+    final controller = PagingController<Status>(fetch: fetch, id: (status) => status.id, keepTailOnRefresh: true);
     pager = controller;
     controller.refresh();
   }

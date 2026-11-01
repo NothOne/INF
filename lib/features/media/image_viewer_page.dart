@@ -1,9 +1,9 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/motion.dart';
@@ -11,7 +11,7 @@ import '../../core/haptics.dart';
 import '../../core/image_url.dart';
 import '../../core/models.dart';
 import '../../core/native.dart';
-import '../../core/session.dart';
+import '../../core/share.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/image_grid.dart';
 import '../../core/widgets/smart_image.dart';
@@ -51,6 +51,10 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
   /// listen, so a drag does not rebuild the pager.
   final ValueNotifier<double> _backdrop = ValueNotifier<double>(1);
 
+  /// Bumped by the 实况 chip; the visible live page plays its clip again.
+  final ValueNotifier<int> _liveReplay = ValueNotifier<int>(0);
+  final ValueNotifier<bool> _livePlaying = ValueNotifier<bool>(false);
+
   @override
   void initState() {
     super.initState();
@@ -64,6 +68,8 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
   void dispose() {
     _pages.dispose();
     _backdrop.dispose();
+    _liveReplay.dispose();
+    _livePlaying.dispose();
     super.dispose();
   }
 
@@ -154,7 +160,7 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
     setState(() => _sharing = true);
     try {
       final file = await _exportFile(index);
-      await SharePlus.instance.share(ShareParams(files: [XFile(file.path, mimeType: file.mime, name: file.name)]));
+      await shareFile(file.path, mime: file.mime, name: file.name);
     } catch (_) {
       Haptic.error.play();
       if (mounted) showMessage(context, '图片分享失败');
@@ -163,22 +169,44 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
     }
   }
 
-  Future<void> _saveImage(int index) async {
+  /// The live photo's motion clip, from the same disk cache its playback reads.
+  Future<File> _liveClip(int index) => DefaultCacheManager().getSingleFile(
+        sanitizeImageUrl(widget.images[index].liveUrl!),
+        headers: weiboImageHeaders(),
+      );
+
+  /// A live photo saves as a Motion Photo unless [as] asks for one half of it.
+  Future<void> _saveImage(int index, {_SaveAs? as}) async {
     if (_saving) return;
+    final kind = as ?? (widget.images[index].isLive ? _SaveAs.motionPhoto : _SaveAs.picture);
     setState(() => _saving = true);
     try {
-      final file = await _exportFile(index);
-      final saved = await Native.saveImageToGallery(file.path, file.name, mime: file.mime);
-      if (!mounted) return;
-      if (saved != null) {
-        Haptic.success.play();
-        showMessage(context, '已保存到相册：' + saved);
-      } else {
-        await SharePlus.instance.share(ShareParams(files: [XFile(file.path, mimeType: file.mime)]));
+      final String? saved;
+      switch (kind) {
+        case _SaveAs.picture:
+          final file = await _exportFile(index);
+          saved = await Native.saveImageToGallery(file.path, file.name, mime: file.mime);
+          if (saved == null) {
+            await shareFile(file.path, mime: file.mime);
+            return;
+          }
+        case _SaveAs.motionPhoto:
+          final file = await _exportFile(index);
+          final clip = await _liveClip(index);
+          final name = file.name.replaceFirst(RegExp(r'\.\w+$'), '.jpg');
+          saved = await Native.saveMotionPhoto(file.path, clip.path, name);
+        case _SaveAs.clip:
+          final clip = await _liveClip(index);
+          final name = 'INF-' + DateTime.now().millisecondsSinceEpoch.toString() + '.mp4';
+          saved = await Native.saveVideoToGallery(clip.path, name, remux: true);
       }
+      if (!mounted) return;
+      if (saved == null) throw StateError('not saved');
+      Haptic.success.play();
+      showMessage(context, kind.done + saved);
     } catch (_) {
       Haptic.error.play();
-      if (mounted) showMessage(context, '图片保存失败');
+      if (mounted) showMessage(context, kind.failed);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -189,43 +217,53 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
     final scheme = Theme.of(context).colorScheme;
     final original = _originalOf(index);
     final loading = _loadingOriginal == index;
+    final live = widget.images[index].isLive;
     await showActionSheet<void>(
       context: context,
       backgroundColor: scheme.surface,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.download_rounded),
-              title: const Text('保存图片'),
+      builder: (sheetContext) {
+        Widget save(IconData icon, String title, _SaveAs as, {String? subtitle}) => ListTile(
+              leading: Icon(icon),
+              title: Text(title),
+              subtitle: subtitle == null ? null : Text(subtitle),
               onTap: () {
                 Navigator.of(sheetContext).pop();
-                _saveImage(index);
+                _saveImage(index, as: as);
               },
-            ),
-            ListTile(
-              leading: const Icon(Icons.ios_share_rounded),
-              title: const Text('分享图片'),
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                _shareImage(index);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.hd_outlined),
-              title: const Text('查看原图'),
-              subtitle: original != null || loading ? null : const Text('当前已是原图'),
-              enabled: original != null && !loading,
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                _loadOriginal(index);
-              },
-            ),
-            const SizedBox(height: 6),
-          ],
-        ),
-      ),
+            );
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (live) ...[
+                save(Icons.motion_photos_on_rounded, '保存实况照片', _SaveAs.motionPhoto, subtitle: '图片与动态视频合为一张'),
+                save(Icons.image_outlined, '仅保存图片', _SaveAs.picture),
+                save(Icons.movie_outlined, '仅保存视频', _SaveAs.clip),
+              ] else
+                save(Icons.download_rounded, '保存图片', _SaveAs.picture),
+              ListTile(
+                leading: const Icon(Icons.ios_share_rounded),
+                title: const Text('分享图片'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _shareImage(index);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.hd_outlined),
+                title: const Text('查看原图'),
+                subtitle: original != null || loading ? null : const Text('当前已是原图'),
+                enabled: original != null && !loading,
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _loadOriginal(index);
+                },
+              ),
+              const SizedBox(height: 6),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -264,6 +302,7 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
             itemCount: widget.images.length,
             onPageChanged: (index) {
               setState(() => _index = index);
+              _livePlaying.value = false;
               _precacheAround(index);
             },
             itemBuilder: (context, index) {
@@ -271,6 +310,9 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
               return _ZoomableImage(
                 image: image,
                 url: _urlAt(index),
+                active: index == _index,
+                liveReplay: _liveReplay,
+                onLivePlaying: (playing) => _livePlaying.value = playing,
                 // Only the visible page may fly home; a neighbour the pager keeps alive would
                 // otherwise launch from off screen.
                 heroTag: index == _index ? _heroTagFor(index) : null,
@@ -320,6 +362,14 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
                           onPressed: () => Navigator.of(context).maybePop(),
                           icon: const Icon(Icons.close_rounded, color: Colors.white),
                         ),
+                        if (widget.images[_index].isLive)
+                          _LiveChip(
+                            playing: _livePlaying,
+                            onTap: () {
+                              Haptic.selection.play();
+                              _liveReplay.value++;
+                            },
+                          ),
                         const Spacer(),
                         if (widget.images.length > 1)
                           Text(
@@ -373,6 +423,9 @@ class _ZoomableImage extends StatefulWidget {
   const _ZoomableImage({
     required this.image,
     required this.url,
+    required this.active,
+    required this.liveReplay,
+    required this.onLivePlaying,
     required this.heroTag,
     required this.onLongPress,
     required this.onToggleTools,
@@ -385,6 +438,11 @@ class _ZoomableImage extends StatefulWidget {
 
   /// What to draw: [image]'s own URL, or its original once that has been loaded.
   final String url;
+
+  /// The page on screen; only it plays a live clip.
+  final bool active;
+  final ValueListenable<int> liveReplay;
+  final ValueChanged<bool> onLivePlaying;
   final String? heroTag;
   final VoidCallback onLongPress;
   final VoidCallback onToggleTools;
@@ -646,12 +704,19 @@ class _ZoomableImageState extends State<_ZoomableImage> with TickerProviderState
       alignment: Alignment.topCenter,
       placeholderColor: Colors.black,
     );
-    if (widget.image.liveUrl != null) {
+    if (widget.image.isLive) {
       picture = Stack(
         fit: StackFit.passthrough,
         children: [
           picture,
-          Positioned.fill(child: _LiveOverlay(url: widget.image.liveUrl!)),
+          Positioned.fill(
+            child: _LiveOverlay(
+              url: widget.image.liveUrl!,
+              active: widget.active,
+              replay: widget.liveReplay,
+              onPlaying: widget.onLivePlaying,
+            ),
+          ),
         ],
       );
     }
@@ -840,85 +905,173 @@ class _OriginalProgress extends StatelessWidget {
   }
 }
 
+enum _SaveAs {
+  picture('已保存到相册：', '图片保存失败'),
+  motionPhoto('已保存实况照片：', '实况照片保存失败'),
+  clip('已保存实况视频：', '实况视频保存失败');
+
+  const _SaveAs(this.done, this.failed);
+
+  final String done;
+  final String failed;
+}
+
+/// Plays a live photo's motion clip once over the still, then fades back to it, like the
+/// camera roll does. It starts when the page settles on screen and again on [replay].
 class _LiveOverlay extends StatefulWidget {
-  const _LiveOverlay({required this.url});
+  const _LiveOverlay({required this.url, required this.active, required this.replay, required this.onPlaying});
 
   final String url;
+  final bool active;
+  final ValueListenable<int> replay;
+  final ValueChanged<bool> onPlaying;
 
   @override
   State<_LiveOverlay> createState() => _LiveOverlayState();
 }
 
 class _LiveOverlayState extends State<_LiveOverlay> {
-  late final VideoPlayerController _controller;
-  bool _ready = false;
+  VideoPlayerController? _controller;
+  bool _loading = false;
+  bool _showing = false;
 
   @override
   void initState() {
     super.initState();
-    final headers = <String, String>{
-      'Referer': 'https://m.weibo.cn/',
-      'User-Agent': Session.instance.userAgent,
-    };
-    if (Session.instance.cookieHeader.isNotEmpty) {
-      headers['Cookie'] = Session.instance.cookieHeader;
+    widget.replay.addListener(_onReplay);
+    if (widget.active) _playSoon();
+  }
+
+  @override
+  void didUpdateWidget(_LiveOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.replay != widget.replay) {
+      oldWidget.replay.removeListener(_onReplay);
+      widget.replay.addListener(_onReplay);
     }
-    _controller = VideoPlayerController.networkUrl(
-      Uri.parse(sanitizeImageUrl(widget.url)),
-      httpHeaders: headers,
-    );
-    _controller.initialize().then((_) async {
-      await _controller.setLooping(true);
-      await _controller.setVolume(0);
-      await _controller.play();
-      if (mounted) setState(() => _ready = true);
-    }).catchError((Object _) {
-      // The still image stays visible when a live clip cannot be played.
-    });
+    if (widget.active && !oldWidget.active) _playSoon();
+    if (!widget.active && oldWidget.active) {
+      _controller?.pause();
+      _showing = false;
+    }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    widget.replay.removeListener(_onReplay);
+    _controller?.removeListener(_onTick);
+    _controller?.dispose();
     super.dispose();
+  }
+
+  /// After the opening flight or the page swipe has settled, not during it.
+  void _playSoon() {
+    Future<void>.delayed(const Duration(milliseconds: 360), () {
+      if (mounted && widget.active) _play();
+    });
+  }
+
+  void _onReplay() {
+    if (widget.active) _play();
+  }
+
+  Future<void> _play() async {
+    var controller = _controller;
+    if (controller == null) {
+      if (_loading) return;
+      _loading = true;
+      try {
+        final file = await DefaultCacheManager().getSingleFile(
+          sanitizeImageUrl(widget.url),
+          headers: weiboImageHeaders(),
+        );
+        if (!mounted) return;
+        controller = VideoPlayerController.file(file);
+        await controller.initialize();
+        if (!mounted) {
+          controller.dispose();
+          return;
+        }
+        await controller.setVolume(0);
+        controller.addListener(_onTick);
+        _controller = controller;
+      } catch (_) {
+        // The still stays when the clip cannot be fetched or played.
+        controller?.dispose();
+        return;
+      } finally {
+        _loading = false;
+      }
+    }
+    if (!mounted || !widget.active) return;
+    await controller.seekTo(Duration.zero);
+    await controller.play();
+    if (!mounted) return;
+    setState(() => _showing = true);
+    widget.onPlaying(true);
+  }
+
+  void _onTick() {
+    final value = _controller!.value;
+    if (!_showing || value.isPlaying || !value.isInitialized) return;
+    if (value.position < value.duration - const Duration(milliseconds: 80)) return;
+    setState(() => _showing = false);
+    widget.onPlaying(false);
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!_ready) return const SizedBox.shrink();
-    final size = _controller.value.size;
+    final controller = _controller;
+    if (controller == null) return const SizedBox.shrink();
+    final size = controller.value.size;
     return IgnorePointer(
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          FittedBox(
-            fit: BoxFit.cover,
-            child: SizedBox(
-              width: size.width,
-              height: size.height,
-              child: VideoPlayer(_controller),
+      child: AnimatedOpacity(
+        opacity: _showing ? 1 : 0,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        child: FittedBox(
+          fit: BoxFit.cover,
+          clipBehavior: Clip.hardEdge,
+          child: SizedBox(width: size.width, height: size.height, child: VideoPlayer(controller)),
+        ),
+      ),
+    );
+  }
+}
+
+/// Marks a live photo in the viewer's top bar; a tap plays the motion again.
+class _LiveChip extends StatelessWidget {
+  const _LiveChip({required this.playing, required this.onTap});
+
+  final ValueListenable<bool> playing;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: ValueListenableBuilder<bool>(
+          valueListenable: playing,
+          builder: (context, playing, _) => AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+            decoration: BoxDecoration(
+              color: playing ? Colors.white : Colors.white.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.motion_photos_on_rounded, size: 15, color: playing ? Colors.black : Colors.white),
+                const SizedBox(width: 4),
+                Text('实况', style: TextStyle(color: playing ? Colors.black : Colors.white, fontSize: 12, height: 1.2)),
+              ],
             ),
           ),
-          Positioned(
-            left: 10,
-            bottom: 10,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.55),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.motion_photos_on_rounded, color: Colors.white, size: 15),
-                  SizedBox(width: 4),
-                  Text('实况', style: TextStyle(color: Colors.white, fontSize: 11)),
-                ],
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

@@ -1,10 +1,14 @@
 import 'session.dart';
 
-String sanitizeImageUrl(String? value) {
+String sanitizeImageUrl(String? value) => secureUrl(value);
+
+/// Android refuses cleartext HTTP in the WebView and the video player, and the API still hands
+/// out `http://` links and video URLs whose hosts all answer on HTTPS.
+String secureUrl(String? value) {
   if (value == null) return '';
   var url = value.trim();
   if (url.startsWith('//')) url = 'https:' + url;
-  if (url.startsWith('http://')) url = 'https://' + url.substring(7);
+  if (url.toLowerCase().startsWith('http://')) url = 'https://' + url.substring(7);
   return url;
 }
 

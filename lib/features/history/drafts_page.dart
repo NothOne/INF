@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../../core/layout.dart';
 import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/haptics.dart';
@@ -94,6 +95,8 @@ class _DraftsPageState extends State<DraftsPage> {
                     padding: EdgeInsets.only(
                       top: MediaQuery.paddingOf(context).top,
                       bottom: 24 + MediaQuery.paddingOf(context).bottom,
+                      left: contentGutter(context),
+                      right: contentGutter(context),
                     ),
                     itemCount: drafts.length,
                     separatorBuilder: (context, index) => const Divider(),

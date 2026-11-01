@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../core/look.dart';
 import '../../core/api.dart';
+import '../../core/layout.dart';
 import '../../core/models.dart';
 import '../../core/navigation.dart';
 import '../../core/paging.dart';
+import '../../core/pane.dart';
 import '../../core/parse.dart';
 import '../../core/shell_tabs.dart';
 import '../../core/unread_monitor.dart';
@@ -49,7 +51,7 @@ class _NotifyPageState extends State<NotifyPage> with SingleTickerProviderStateM
               preferredSize: const Size.fromHeight(47),
               child: Material(
                 color: Colors.transparent,
-                child: TabBar(
+                child: ContentColumn(child: TabBar(
                   controller: _tabs,
                   indicatorSize: TabBarIndicatorSize.label,
                   dividerColor: scheme.outlineVariant.withValues(alpha: 0.4),
@@ -70,7 +72,7 @@ class _NotifyPageState extends State<NotifyPage> with SingleTickerProviderStateM
                         ),
                       ),
                   ],
-                ),
+                )),
               ),
             ),
           ),
@@ -189,7 +191,9 @@ class _NotifyListState extends State<_NotifyList> with AutomaticKeepAliveClientM
           controller: _scroll,
           padding: EdgeInsets.only(
             top: MediaQuery.paddingOf(context).top,
-            bottom: 92 + MediaQuery.paddingOf(context).bottom,
+            bottom: ShellLayout.clearance(context, 92) + MediaQuery.paddingOf(context).bottom,
+            left: contentGutter(context),
+            right: contentGutter(context),
           ),
           itemCount: _pager.items.length + 1,
           findChildIndexCallback: _pager.indexOfKey,
@@ -203,12 +207,14 @@ class _NotifyListState extends State<_NotifyList> with AutomaticKeepAliveClientM
             return AppearIn(
               key: ValueKey(item.id),
               animate: _pager.fresh.contains(item.id),
-              child: _NotifyItem(
+              child: PaneSelected(
+                ids: [if (item.statusId != null) 'status:${item.statusId}'],
+                child: _NotifyItem(
                 item: item,
                 onOpenStatus: (statusId) => openStatus(context, statusId: statusId),
                 onOpenUser: (uid) => openUser(context, uid),
                 onOpenTopic: (name) => openTopic(context, name),
-                onOpenUrl: (url) => openWeb(context, url),
+                onOpenUrl: (url) => openLink(context, url),
                 onReply: item.commentId == null || item.statusId == null
                     ? null
                     : () => showCommentSheet(
@@ -218,6 +224,7 @@ class _NotifyListState extends State<_NotifyList> with AutomaticKeepAliveClientM
                           replyToName: item.user.screenName,
                           replyToText: item.text,
                         ),
+              ),
               ),
             );
           },

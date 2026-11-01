@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/layout.dart';
 import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/models.dart';
@@ -38,13 +39,15 @@ class _RelationsPageState extends State<RelationsPage> with SingleTickerProvider
       appBar: AppBar(
         flexibleSpace: lookBarBackground(context),
         title: Text(widget.initialKind == RelationKind.following ? '关注' : '粉丝'),
-        bottom: TabBar(
-          controller: _tabs,
-          indicatorSize: TabBarIndicatorSize.label,
-          tabs: const [
-            Tab(height: 46, child: Text('关注')),
-            Tab(height: 46, child: Text('粉丝')),
-          ],
+        bottom: ContentBar(
+          child: TabBar(
+            controller: _tabs,
+            indicatorSize: TabBarIndicatorSize.label,
+            tabs: const [
+              Tab(height: 46, child: Text('关注')),
+              Tab(height: 46, child: Text('粉丝')),
+            ],
+          ),
         ),
       ),
       body: TabBarView(

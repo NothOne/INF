@@ -1,15 +1,21 @@
 package app.inf.flutter
 
 import android.app.PictureInPictureParams
+import android.content.ActivityNotFoundException
 import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.net.ConnectivityManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.Settings
 import android.util.Rational
 import android.view.HapticFeedbackConstants
+import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -93,6 +99,21 @@ class MainActivity : FlutterActivity() {
                             result.success(true)
                         }
                         "userAgent" -> result.success(WebSettings.getDefaultUserAgent(this))
+                        "openUrl" -> {
+                            val url = call.argument<String>("url")
+                            if (url.isNullOrBlank()) {
+                                result.success(false)
+                            } else {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                    .addCategory(Intent.CATEGORY_BROWSABLE)
+                                try {
+                                    startActivity(intent)
+                                    result.success(true)
+                                } catch (error: ActivityNotFoundException) {
+                                    result.success(false)
+                                }
+                            }
+                        }
                         "isMetered" -> {
                             val manager = getSystemService(ConnectivityManager::class.java)
                             result.success(manager?.isActiveNetworkMetered ?: true)
@@ -132,18 +153,48 @@ class MainActivity : FlutterActivity() {
                                 }.start()
                             }
                         }
+                        "saveMotionPhoto" -> {
+                            val image = call.argument<String>("image")
+                            val video = call.argument<String>("video")
+                            val name = call.argument<String>("name") ?: "INF-live.jpg"
+                            if (image.isNullOrBlank() || video.isNullOrBlank()) {
+                                result.error("save_motion_photo", "missing path", null)
+                            } else {
+                                Thread {
+                                    val target = File(cacheDir, "motion-" + System.nanoTime() + ".jpg")
+                                    try {
+                                        MotionPhoto.compose(File(image), File(video), target, cacheDir)
+                                        val saved = saveImageToGallery(target, name, "image/jpeg")
+                                        runOnUiThread { result.success(saved) }
+                                    } catch (error: Throwable) {
+                                        runOnUiThread { result.error("save_motion_photo", error.message, null) }
+                                    } finally {
+                                        target.delete()
+                                    }
+                                }.start()
+                            }
+                        }
                         "saveVideo" -> {
                             val path = call.argument<String>("path")
                             val name = call.argument<String>("name") ?: "INF-video.mp4"
+                            val remux = call.argument<Boolean>("remux") == true
                             if (path.isNullOrBlank()) {
                                 result.error("save_video", "missing path", null)
                             } else {
                                 Thread {
+                                    val remuxed = File(cacheDir, "remux-" + System.nanoTime() + ".mp4")
                                     try {
-                                        val saved = saveVideoToGallery(File(path), name)
+                                        val source = if (remux && MotionPhoto.remuxToMp4(File(path), remuxed)) {
+                                            remuxed
+                                        } else {
+                                            File(path)
+                                        }
+                                        val saved = saveVideoToGallery(source, name)
                                         runOnUiThread { result.success(saved) }
                                     } catch (error: Throwable) {
                                         runOnUiThread { result.error("save_video", error.message, null) }
+                                    } finally {
+                                        remuxed.delete()
                                     }
                                 }.start()
                             }
@@ -160,6 +211,41 @@ class MainActivity : FlutterActivity() {
                             } else {
                                 result.success(null)
                             }
+                        }
+                        "brightness" -> {
+                            val own = window.attributes.screenBrightness
+                            result.success(
+                                if (own >= 0) own.toDouble()
+                                else (Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128) / 255.0)
+                                    .coerceIn(0.0, 1.0)
+                            )
+                        }
+                        "setBrightness" -> {
+                            val value = call.argument<Double>("value") ?: -1.0
+                            window.attributes = window.attributes.apply {
+                                screenBrightness = if (value < 0) -1f else value.toFloat().coerceIn(0.01f, 1f)
+                            }
+                            result.success(true)
+                        }
+                        "volume" -> {
+                            val audio = getSystemService(AudioManager::class.java)
+                            val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                            result.success(audio.getStreamVolume(AudioManager.STREAM_MUSIC).toDouble() / max)
+                        }
+                        "setVolume" -> {
+                            val audio = getSystemService(AudioManager::class.java)
+                            val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                            val value = (call.argument<Double>("value") ?: 0.0).coerceIn(0.0, 1.0)
+                            audio.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(value * max).toInt(), 0)
+                            result.success(true)
+                        }
+                        "keepScreenOn" -> {
+                            if (call.argument<Boolean>("on") == true) {
+                                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                            } else {
+                                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                            }
+                            result.success(true)
                         }
                         "haptic" -> result.success(
                             window.decorView.performHapticFeedback(hapticConstant(call.argument<String>("kind")))

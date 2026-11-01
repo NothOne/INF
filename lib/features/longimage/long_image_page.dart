@@ -4,10 +4,11 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../../core/look.dart';
 import '../../core/models.dart';
+import '../../core/share.dart';
+import '../../core/widgets/app_logo.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/status_card.dart';
 
@@ -37,7 +38,7 @@ class _LongImagePageState extends State<LongImagePage> {
       final dir = await getTemporaryDirectory();
       final file = File('${dir.path}/inf-long-${DateTime.now().millisecondsSinceEpoch}.png');
       await file.writeAsBytes(data.buffer.asUint8List());
-      await SharePlus.instance.share(ShareParams(files: [XFile(file.path)]));
+      await shareFile(file.path, mime: 'image/png');
     } catch (_) {
       if (mounted) showMessage(context, '长图生成失败');
     } finally {
@@ -49,7 +50,7 @@ class _LongImagePageState extends State<LongImagePage> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: const Color(0xFFEDEBF4),
+      backgroundColor: scheme.surface,
       extendBodyBehindAppBar: InfChrome.of(context).extendsBehindBars,
       appBar: AppBar(title: const Text('生成长图'), flexibleSpace: lookBarBackground(context)),
       body: Column(
@@ -57,34 +58,17 @@ class _LongImagePageState extends State<LongImagePage> {
           Expanded(
             child: Builder(
               builder: (context) => SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(12, 12 + MediaQuery.paddingOf(context).top, 12, 12),
+                padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top),
                 child: RepaintBoundary(
                   key: _boundaryKey,
-                  child: Container(
-                    color: Colors.white,
+                  child: ColoredBox(
+                    color: scheme.surface,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Container(
-                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                          child: Row(
-                            children: [
-                              const Text(
-                                'INF',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w800,
-                                  color: Color(0xFF3B5BDB),
-                                  letterSpacing: 1,
-                                ),
-                              ),
-                              const Spacer(),
-                              Text(
-                                '来自 INF',
-                                style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-                              ),
-                            ],
-                          ),
+                        const Padding(
+                          padding: EdgeInsets.fromLTRB(10, 10, 0, 0),
+                          child: InfLogo(height: 14),
                         ),
                         StatusCard(
                           status: widget.status,
@@ -100,7 +84,7 @@ class _LongImagePageState extends State<LongImagePage> {
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
                           child: Text(
                             '长图由 INF 生成 · https://m.weibo.cn/detail/${widget.status.id}',
-                            style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500),
+                            style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant.withValues(alpha: 0.7)),
                           ),
                         ),
                       ],

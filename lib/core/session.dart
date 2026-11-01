@@ -71,6 +71,30 @@ class Session extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Takes in the cookies m.weibo.cn sets on an API response, as the WebView would. Without this
+  /// the jar read at startup goes stale: XSRF-TOKEN rotates every 20 minutes, and a write whose
+  /// X-XSRF-TOKEN header (the fresh `st`) differs from the cookie is refused.
+  void absorbSetCookies(List<String> headers) {
+    for (final header in headers) {
+      final pair = header.split(';').first.trim();
+      final index = pair.indexOf('=');
+      if (index <= 0) continue;
+      final name = pair.substring(0, index);
+      final value = pair.substring(index + 1);
+      final attributes = header.toLowerCase();
+      final expired = value.isEmpty ||
+          value == 'deleted' ||
+          RegExp(r';\s*max-age=(-\d+|0)\b').hasMatch(attributes) ||
+          attributes.contains('expires=thu, 01-jan-1970');
+      if (expired) {
+        cookies.remove(name);
+      } else {
+        cookies[name] = value;
+      }
+      Native.setCookie(header);
+    }
+  }
+
   Map<String, String> _parseCookieHeader(String header) {
     final result = <String, String>{};
     for (final part in header.split(';')) {

@@ -48,13 +48,17 @@ ThemeData infTheme(Brightness brightness, AccentTheme accent, [InfLook look = In
     useMaterial3: true,
     brightness: brightness,
     extensions: [look],
-    pageTransitionsTheme: const PageTransitionsTheme(
+    pageTransitionsTheme: PageTransitionsTheme(
       builders: {
         // Fade-forwards for taps; while the system back gesture is in progress the page shrinks
         // with the finger and shows the one underneath.
-        TargetPlatform.android: PredictiveBackPageTransitionsBuilder(),
-        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-        TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.android: const PredictiveBackPageTransitionsBuilder(),
+        TargetPlatform.iOS: const CupertinoPageTransitionsBuilder(),
+        TargetPlatform.macOS: const CupertinoPageTransitionsBuilder(),
+        // HarmonyOS has no predictive back, so it gets the same fade-forwards without it. Found by
+        // name: only the OpenHarmony fork of Flutter has this platform.
+        for (final platform in TargetPlatform.values)
+          if (platform.name == 'ohos') platform: const FadeForwardsPageTransitionsBuilder(),
       },
     ),
     colorScheme: scheme,

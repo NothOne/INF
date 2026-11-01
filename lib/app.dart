@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'core/layout.dart';
 import 'core/look.dart';
 import 'core/native.dart';
 import 'core/prefs.dart';
@@ -21,18 +22,24 @@ typedef _Appearance = ({
   VisualStyle style,
   double? blur,
   double? clarity,
+  double? refraction,
+  double? liquidClarity,
   AccentTheme accent,
   ThemeMode mode,
   double textScale,
+  DeviceLayout layout,
 });
 
 _Appearance _appearanceOf(Prefs prefs) => (
       style: prefs.visualStyle,
       blur: prefs.glassBlur,
       clarity: prefs.glassClarity,
+      refraction: prefs.liquidRefraction,
+      liquidClarity: prefs.liquidClarity,
       accent: prefs.accent,
       mode: prefs.themeMode,
       textScale: prefs.textScale,
+      layout: prefs.deviceLayout,
     );
 
 class _InfAppState extends State<InfApp> {
@@ -72,6 +79,8 @@ class _InfAppState extends State<InfApp> {
       appearance.style,
       blur: appearance.blur ?? InfLook.defaultBlur,
       clarity: appearance.clarity ?? InfLook.defaultClarity,
+      refraction: appearance.refraction ?? InfLook.defaultRefraction,
+      liquidClarity: appearance.liquidClarity ?? InfLook.defaultLiquidClarity,
     );
     return MaterialApp(
       title: 'INF',
@@ -115,7 +124,7 @@ class _InfAppState extends State<InfApp> {
           ),
           child: MediaQuery(
             data: media.copyWith(textScaler: TextScaler.linear(appearance.textScale)),
-            child: child ?? const SizedBox.shrink(),
+            child: InfLayout(device: appearance.layout, child: child ?? const SizedBox.shrink()),
           ),
         );
       },

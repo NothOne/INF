@@ -1,0 +1,11 @@
+name: cupertino_ui
+description: Stand-in for the pub.dev cupertino_ui package that re-exports the SDK's own Cupertino library.
+version: 1.1.5
+publish_to: none
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter

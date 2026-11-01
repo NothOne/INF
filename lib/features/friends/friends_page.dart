@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/layout.dart';
 import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/models.dart';
@@ -35,12 +36,14 @@ class _FriendsPageState extends State<FriendsPage> with SingleTickerProviderStat
       appBar: AppBar(
         flexibleSpace: lookBarBackground(context),
         title: const Text('我的好友'),
-        bottom: TabBar(
-          controller: _tabs,
-          indicatorSize: TabBarIndicatorSize.label,
-          tabs: [
-            for (final tab in FriendsTab.values) Tab(height: 46, child: Text(tab.label)),
-          ],
+        bottom: ContentBar(
+          child: TabBar(
+            controller: _tabs,
+            indicatorSize: TabBarIndicatorSize.label,
+            tabs: [
+              for (final tab in FriendsTab.values) Tab(height: 46, child: Text(tab.label)),
+            ],
+          ),
         ),
       ),
       body: TabBarView(

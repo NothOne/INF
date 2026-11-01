@@ -5,9 +5,14 @@ import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../core/haptics.dart';
+import '../../core/layout.dart';
+import '../../core/liquid_glass.dart';
 import '../../core/look.dart';
 import '../../core/prefs.dart';
+import '../../core/motion.dart';
 import '../../core/theme.dart';
+import '../../core/version.dart';
+import '../../core/widgets/avatar.dart';
 import '../../core/widgets/common.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -42,6 +47,50 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (_) {
       if (mounted) setState(() => _cacheBytes = 0);
     }
+  }
+
+  void _showBlocked(BuildContext context) {
+    showActionSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => AnimatedBuilder(
+        animation: Prefs.instance,
+        builder: (sheetContext, _) {
+          final users = Prefs.instance.blockedUsers;
+          return SafeArea(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.7),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const ListTile(title: Text('已屏蔽的用户', style: TextStyle(fontWeight: FontWeight.w700))),
+                  if (users.isEmpty)
+                    const Padding(padding: EdgeInsets.fromLTRB(16, 8, 16, 28), child: Text('没有屏蔽任何人'))
+                  else
+                    Flexible(
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          for (final user in users)
+                            ListTile(
+                              leading: Avatar(url: user.avatarUrl, size: 36),
+                              title: Text(user.screenName.isEmpty ? user.id : user.screenName),
+                              trailing: TextButton(
+                                onPressed: () => Prefs.instance.setBlocked(user, false),
+                                child: const Text('解除'),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Future<void> _clearCache() async {
@@ -83,6 +132,8 @@ class _SettingsPageState extends State<SettingsPage> {
               padding: EdgeInsets.only(
                 top: MediaQuery.paddingOf(context).top,
                 bottom: 24 + MediaQuery.paddingOf(context).bottom,
+                left: contentGutter(context),
+                right: contentGutter(context),
               ),
               children: [
                 const _SectionTitle('外观'),
@@ -111,9 +162,11 @@ class _SettingsPageState extends State<SettingsPage> {
                   duration: const Duration(milliseconds: 220),
                   curve: Curves.easeOutCubic,
                   alignment: Alignment.topCenter,
-                  child: prefs.visualStyle == VisualStyle.glass
-                      ? const _GlassTuner()
-                      : const SizedBox(width: double.infinity),
+                  child: switch (prefs.visualStyle) {
+                    VisualStyle.glass => const _GlassTuner(),
+                    VisualStyle.liquid => const _LiquidTuner(),
+                    VisualStyle.classic => const SizedBox(width: double.infinity),
+                  },
                 ),
                 _ChoiceRow<ThemeMode>(
                   title: '深浅色',
@@ -185,6 +238,19 @@ class _SettingsPageState extends State<SettingsPage> {
                     style: Theme.of(context).textTheme.bodyLarge,
                   ),
                 ),
+                _ChoiceRow<DeviceLayout>(
+                  title: '设备布局',
+                  options: [for (final value in DeviceLayout.values) (value, value.label)],
+                  selected: prefs.deviceLayout,
+                  onSelect: prefs.setDeviceLayout,
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 7),
+                  child: Text(
+                    prefs.deviceLayout.description,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ),
                 const Divider(),
                 const _SectionTitle('操作'),
                 _ChoiceRow<HapticLevel>(
@@ -226,6 +292,14 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: const Text('记录浏览历史'),
                   subtitle: const Text('关掉后不再记录新打开过的微博；已记录的不受影响'),
                 ),
+                ListTile(
+                  title: const Text('已屏蔽的用户'),
+                  subtitle: Text(
+                    prefs.blockedUsers.isEmpty ? '长按微博可屏蔽此人；只保存在本机' : '${prefs.blockedUsers.length} 人，列表中不显示 TA 们的微博',
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => _showBlocked(context),
+                ),
                 const Divider(),
                 const _SectionTitle('存储'),
                 _ChoiceRow<ImagePreload>(
@@ -252,7 +326,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 const Divider(),
                 const _SectionTitle('关于'),
                 const ListTile(
-                  title: Text('INF 1.2.0'),
+                  title: Text('INF $appVersion'),
                   subtitle: Text('个人学习用的微博第三方客户端，通过网页版接口访问你自己的账号，与新浪微博官方无关。'),
                 ),
                 ListTile(
@@ -389,6 +463,169 @@ class _GlassPreview extends StatelessWidget {
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: Text('首页', style: theme.appBarTheme.titleTextStyle),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Refraction and clarity of liquid glass, over a preview that follows the sliders live.
+class _LiquidTuner extends StatefulWidget {
+  const _LiquidTuner();
+
+  @override
+  State<_LiquidTuner> createState() => _LiquidTunerState();
+}
+
+class _LiquidTunerState extends State<_LiquidTuner> {
+  late double _refraction = Prefs.instance.liquidRefraction ?? InfLook.defaultRefraction;
+  late double _clarity = Prefs.instance.liquidClarity ?? InfLook.defaultLiquidClarity;
+
+  bool get _isDefault => _refraction == InfLook.defaultRefraction && _clarity == InfLook.defaultLiquidClarity;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final look = InfLook.of(context).copyWith(
+      style: VisualStyle.liquid,
+      refraction: _refraction,
+      liquidClarity: _clarity,
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Theme(
+            data: theme.copyWith(extensions: [look]),
+            child: const _LiquidPreview(),
+          ),
+          if (!LiquidShader.available)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                '这台设备的图形引擎不支持透镜折射，液态玻璃以高光边缘和轻磨砂代替。',
+                style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ),
+          const SizedBox(height: 6),
+          _TunerSlider(
+            title: '折射',
+            low: '轻',
+            high: '强',
+            value: _refraction,
+            onChanged: (v) => setState(() => _refraction = v),
+            onChangeEnd: (v) => Prefs.instance.setLiquid(refraction: v),
+          ),
+          _TunerSlider(
+            title: '通透度',
+            low: '厚实',
+            high: '通透',
+            value: _clarity,
+            onChanged: (v) => setState(() => _clarity = v),
+            onChangeEnd: (v) => Prefs.instance.setLiquid(clarity: v),
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _isDefault
+                  ? null
+                  : () {
+                      setState(() {
+                        _refraction = InfLook.defaultRefraction;
+                        _clarity = InfLook.defaultLiquidClarity;
+                      });
+                      Prefs.instance.resetLiquid();
+                    },
+              child: const Text('恢复默认'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A liquid bar and a floating capsule over colourful sample content. The capsule answers a
+/// press the way the tab bar does.
+class _LiquidPreview extends StatelessWidget {
+  const _LiquidPreview();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    Widget tile(Color color) => Expanded(
+          child: Container(
+            height: 44,
+            margin: const EdgeInsets.only(right: 8),
+            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          border: Border.all(color: scheme.outlineVariant),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Stack(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 30, 14, 14),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [tile(scheme.primary), tile(scheme.secondary), tile(scheme.tertiary)]),
+                  const SizedBox(height: 8),
+                  Text(
+                    '透镜把栏边缘外的内容折进来，折射越强，边缘弯得越明显；越通透，中间越清楚。',
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 10),
+                  Row(children: [tile(scheme.tertiary), tile(scheme.primary), tile(scheme.error)]),
+                ],
+              ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              height: 58,
+              child: LiquidSurface(
+                lens: const LiquidLens(bezel: 14, edges: LiquidEdges.bottomOnly),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('首页', style: theme.appBarTheme.titleTextStyle),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              right: 14,
+              bottom: 12,
+              child: LiquidPress(
+                child: LiquidSurface(
+                  borderRadius: BorderRadius.circular(22),
+                  lifted: true,
+                  child: SizedBox(
+                    width: 132,
+                    height: 44,
+                    child: Center(
+                      child: Text(
+                        '按住试试',
+                        style: theme.textTheme.labelLarge?.copyWith(color: scheme.onSurface),
+                      ),
+                    ),
                   ),
                 ),
               ),

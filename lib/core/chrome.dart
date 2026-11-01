@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 
 import 'look.dart';
+import 'prefs.dart' show VisualStyle;
+
+import 'chrome_classic.dart';
+import 'chrome_glass.dart';
+import 'chrome_liquid.dart';
 
 export 'chrome_classic.dart' show ClassicChrome;
 export 'chrome_glass.dart' show GlassChrome;
+export 'chrome_liquid.dart' show LiquidChrome;
 
 /// The parts of a screen that belong to the visual style rather than to the page: bars, panels
 /// and the fills of small surfaces. Each style is its own implementation, so a page asks for a
@@ -12,10 +18,13 @@ export 'chrome_glass.dart' show GlassChrome;
 abstract class InfChrome {
   const InfChrome();
 
-  static InfChrome of(BuildContext context) =>
-      InfLook.of(context).glass ? const GlassChrome() : const ClassicChrome();
+  static InfChrome of(BuildContext context) => forLook(InfLook.of(context));
 
-  static InfChrome forLook(InfLook look) => look.glass ? const GlassChrome() : const ClassicChrome();
+  static InfChrome forLook(InfLook look) => switch (look.style) {
+        VisualStyle.classic => const ClassicChrome(),
+        VisualStyle.glass => const GlassChrome(),
+        VisualStyle.liquid => const LiquidChrome(),
+      };
 
   /// Whether page content runs up behind the top bar (and the bottom panels).
   bool get extendsBehindBars;
@@ -49,4 +58,10 @@ abstract class InfChrome {
   /// [color] at [alpha] for a small surface (a quote box, a pill, a field). Classic flattens it
   /// onto the page colour, so nothing behind it ever shows through.
   Color fill(ColorScheme scheme, Color color, double alpha);
+
+  /// A control that answers a press with its own give (liquid glass swells and springs back).
+  Widget pressable(BuildContext context, {required Widget child}) => child;
+
+  /// How sheets rise; null keeps the sheet's own motion.
+  AnimationStyle? get sheetMotion => null;
 }

@@ -38,25 +38,29 @@ Future<T?> showInfSheet<T>({
     useSafeArea: true,
     isDismissible: dismissible,
     backgroundColor: Colors.transparent,
-    sheetAnimationStyle: const AnimationStyle(
-      duration: InfMotion.sheet,
-      reverseDuration: Duration(milliseconds: 190),
-      curve: InfMotion.enter,
-      reverseCurve: InfMotion.exit,
-    ),
+    sheetAnimationStyle: InfChrome.of(context).sheetMotion ??
+        const AnimationStyle(
+          duration: InfMotion.sheet,
+          reverseDuration: Duration(milliseconds: 190),
+          curve: InfMotion.enter,
+          reverseCurve: InfMotion.exit,
+        ),
     builder: (context) => builder(context),
   );
 }
 
-/// A sheet of actions or a picker, with a drag handle. Under glass it is frosted over the page.
+/// A sheet of actions or a picker, with a drag handle. Under glass it is frosted over the page
+/// unless [frosted] is false, which keeps it solid in every style.
 Future<T?> showActionSheet<T>({
   required BuildContext context,
   required WidgetBuilder builder,
   bool isScrollControlled = false,
   bool useSafeArea = false,
   Color? backgroundColor,
+  bool frosted = true,
 }) {
-  final chrome = InfChrome.of(context);
+  final style = InfChrome.of(context);
+  final chrome = frosted ? style : const ClassicChrome();
   final own = chrome.drawsActionSheet;
   return showModalBottomSheet<T>(
     context: context,
@@ -65,6 +69,7 @@ Future<T?> showActionSheet<T>({
     showDragHandle: !own,
     backgroundColor: own ? Colors.transparent : backgroundColor,
     elevation: own ? 0 : null,
+    sheetAnimationStyle: style.sheetMotion,
     builder: (context) => chrome.actionSheet(context, child: builder(context)),
   );
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/look.dart';
 import '../../core/api.dart';
+import '../../core/layout.dart';
 import '../../core/models.dart';
 import '../../core/motion.dart';
 import '../../core/navigation.dart';
@@ -9,6 +10,7 @@ import '../../core/parse.dart';
 import '../../core/session.dart';
 import '../../core/shell_tabs.dart';
 import '../../core/unread_monitor.dart';
+import '../../core/version.dart';
 import '../../core/widgets/avatar.dart';
 import '../../core/widgets/common.dart';
 
@@ -115,7 +117,9 @@ class _ProfilePageState extends State<ProfilePage> with ShellTabAware {
             builder: (context) => ListView(
             padding: EdgeInsets.only(
               top: MediaQuery.paddingOf(context).top,
-              bottom: 130 + MediaQuery.paddingOf(context).bottom,
+              bottom: ShellLayout.clearance(context, 130) + MediaQuery.paddingOf(context).bottom,
+              left: contentGutter(context),
+              right: contentGutter(context),
             ),
             children: [
               AnimatedSize(
@@ -186,7 +190,7 @@ class _ProfilePageState extends State<ProfilePage> with ShellTabAware {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
                 child: Text(
-                  'INF 1.2.0 · 个人学习用的微博第三方客户端，通过网页版接口访问你自己的账号，与新浪微博官方无关。',
+                  'INF $appVersion · 个人学习用的微博第三方客户端，通过网页版接口访问你自己的账号，与新浪微博官方无关。',
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: scheme.onSurfaceVariant,
                         height: 1.6,

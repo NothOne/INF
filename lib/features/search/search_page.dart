@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/layout.dart';
 import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/haptics.dart';
@@ -13,6 +14,7 @@ import '../../core/parse.dart';
 import '../../core/prefs.dart';
 import '../../core/widgets/avatar.dart';
 import '../../core/widgets/common.dart';
+import '../../core/widgets/hot_board_bar.dart';
 import '../../core/widgets/hot_search_row.dart';
 import '../../core/widgets/paged_status_list.dart';
 import '../../core/widgets/user_row.dart';
@@ -113,7 +115,16 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
     }
   }
 
-  Future<void> _loadHot() => HotSearchStore.instance.load();
+  HotBoard _board = shownBoard(HotBoard.realtime);
+
+  Future<void> _loadHot() => HotSearchStore.instance.load(board: shownBoard(_board));
+
+  void _selectBoard(HotBoard board) {
+    if (board == _board) return;
+    Haptic.selection.play();
+    setState(() => _board = board);
+    HotSearchStore.instance.load(board: board);
+  }
 
   Future<void> _loadUsers(String query) async {
     setState(() {
@@ -254,6 +265,8 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
       padding: EdgeInsets.only(
         top: MediaQuery.paddingOf(context).top,
         bottom: 24 + MediaQuery.paddingOf(context).bottom,
+        left: contentGutter(context),
+        right: contentGutter(context),
       ),
       children: [
         if (_history.isNotEmpty) ...[
@@ -290,37 +303,47 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
         ],
         const SectionHeader(title: '微博热搜'),
         AnimatedBuilder(
-          animation: HotSearchStore.instance,
+          animation: Listenable.merge([HotSearchStore.instance, Prefs.instance]),
           builder: (context, _) {
             final store = HotSearchStore.instance;
-            final hot = store.entries;
-            if (hot == null && store.error != null) {
-              return Padding(
+            final board = shownBoard(_board);
+            final hot = store.entriesOf(board);
+            final Widget rows;
+            if (hot == null && store.errorOf(board) != null) {
+              rows = Padding(
                 padding: const EdgeInsets.all(28),
-                child: Center(child: ErrorRetry(message: store.error, onRetry: () => store.load(force: true))),
+                child: Center(
+                  child: ErrorRetry(message: store.errorOf(board), onRetry: () => store.load(board: board, force: true)),
+                ),
               );
-            }
-            if (hot == null) {
-              return const Padding(
+            } else if (hot == null) {
+              rows = const Padding(
                 padding: EdgeInsets.all(28),
                 child: Center(child: CircularProgressIndicator()),
               );
-            }
-            if (hot.isEmpty) {
-              return Padding(
+            } else if (hot.isEmpty) {
+              rows = Padding(
                 padding: const EdgeInsets.all(30),
                 child: Center(
-                  child: Text('暂时没有热搜', style: TextStyle(color: scheme.onSurfaceVariant)),
+                  child: Text('这个榜单暂时是空的', style: TextStyle(color: scheme.onSurfaceVariant)),
                 ),
+              );
+            } else {
+              rows = Column(
+                children: [
+                  for (final entry in hot)
+                    HotSearchRow(
+                      entry: entry,
+                      detailed: true,
+                      onTap: () => openHotTopic(context, query: entry.query, entry: entry),
+                    ),
+                ],
               );
             }
             return Column(
               children: [
-                for (final entry in hot)
-                  HotSearchRow(
-                    entry: entry,
-                    onTap: () => openHotTopic(context, query: entry.query, entry: entry),
-                  ),
+                HotBoardChips(current: board, onSelect: _selectBoard),
+                rows,
               ],
             );
           },
@@ -341,6 +364,8 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
       padding: EdgeInsets.only(
         top: MediaQuery.paddingOf(context).top,
         bottom: 24 + MediaQuery.paddingOf(context).bottom,
+        left: contentGutter(context),
+        right: contentGutter(context),
       ),
       children: [
         ListTile(
@@ -399,13 +424,15 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
       child: Column(
       key: const ValueKey('results'),
       children: [
-        TabBar(
-          controller: _tabs,
-          indicatorSize: TabBarIndicatorSize.label,
-          tabs: const [
-            Tab(height: 44, child: Text('微博')),
-            Tab(height: 44, child: Text('用户')),
-          ],
+        ContentColumn(
+          child: TabBar(
+            controller: _tabs,
+            indicatorSize: TabBarIndicatorSize.label,
+            tabs: const [
+              Tab(height: 44, child: Text('微博')),
+              Tab(height: 44, child: Text('用户')),
+            ],
+          ),
         ),
         Expanded(
           child: _tabs.index == 0
@@ -433,7 +460,11 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
     if (users == null) return const LoadingFooter();
     if (users.isEmpty) return const EmptyHint(text: '没有找到相关用户', icon: Icons.person_search_rounded);
     return ListView.builder(
-      padding: EdgeInsets.only(bottom: 22 + MediaQuery.paddingOf(context).bottom),
+      padding: EdgeInsets.only(
+        bottom: 22 + MediaQuery.paddingOf(context).bottom,
+        left: contentGutter(context),
+        right: contentGutter(context),
+      ),
       itemCount: users.length,
       itemBuilder: (context, index) {
         final user = users[index];

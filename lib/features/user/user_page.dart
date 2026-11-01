@@ -143,6 +143,7 @@ class _UserPageState extends State<UserPage> {
             }
             if (profile == null || timeline == null) return const _ProfileSkeleton();
             return PagedStatusList(
+              hideBlocked: false,
               pager: timeline,
               emptyText: '还没有微博',
               header: _ProfileHeader(

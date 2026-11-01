@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../core/api.dart';
 import '../../core/haptics.dart';
+import '../../core/layout.dart';
 import '../../core/look.dart';
 import '../../core/models.dart';
 import '../../core/navigation.dart';
@@ -293,7 +294,12 @@ class _ChatPageState extends State<ChatPage> {
       },
       child: ListView.builder(
         controller: _scroll,
-        padding: EdgeInsets.fromLTRB(0, 8 + MediaQuery.paddingOf(context).top, 0, 16),
+        padding: EdgeInsets.fromLTRB(
+          contentGutter(context),
+          8 + MediaQuery.paddingOf(context).top,
+          contentGutter(context),
+          16,
+        ),
         itemCount: _messages.length,
         itemBuilder: (context, index) {
           final message = _messages[index];
@@ -489,6 +495,6 @@ class _InputBar extends StatelessWidget {
         EmojiKeyboardSlot(open: emojiOpen, height: inset, onPick: onPickEmoji),
       ],
     );
-    return InfChrome.of(context).edgePanel(context, child: column);
+    return InfChrome.of(context).edgePanel(context, child: ContentColumn(child: column));
   }
 }

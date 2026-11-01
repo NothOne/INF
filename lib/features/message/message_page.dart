@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../core/look.dart';
 import '../../core/api.dart';
+import '../../core/layout.dart';
 import '../../core/models.dart';
 import '../../core/navigation.dart';
 import '../../core/paging.dart';
+import '../../core/pane.dart';
 import '../../core/parse.dart';
 import '../../core/shell_tabs.dart';
 import '../../core/unread_monitor.dart';
@@ -41,14 +43,16 @@ class _MessagePageState extends State<MessagePage> with SingleTickerProviderStat
         flexibleSpace: lookBarBackground(context),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(47),
-          child: TabBar(
-            controller: _tabs,
-            indicatorSize: TabBarIndicatorSize.label,
-            dividerColor: scheme.outlineVariant.withValues(alpha: 0.4),
-            tabs: const [
-              Tab(height: 46, child: Text('关注的人', style: TextStyle(fontSize: 13.5))),
-              Tab(height: 46, child: Text('未关注人', style: TextStyle(fontSize: 13.5))),
-            ],
+          child: ContentColumn(
+            child: TabBar(
+              controller: _tabs,
+              indicatorSize: TabBarIndicatorSize.label,
+              dividerColor: scheme.outlineVariant.withValues(alpha: 0.4),
+              tabs: const [
+                Tab(height: 46, child: Text('关注的人', style: TextStyle(fontSize: 13.5))),
+                Tab(height: 46, child: Text('未关注人', style: TextStyle(fontSize: 13.5))),
+              ],
+            ),
           ),
         ),
       ),
@@ -176,7 +180,9 @@ class _ConversationListState extends State<_ConversationList> with AutomaticKeep
           controller: _scroll,
           padding: EdgeInsets.only(
             top: MediaQuery.paddingOf(context).top,
-            bottom: 92 + MediaQuery.paddingOf(context).bottom,
+            bottom: ShellLayout.clearance(context, 92) + MediaQuery.paddingOf(context).bottom,
+            left: contentGutter(context),
+            right: contentGutter(context),
           ),
           itemCount: _pager.items.length + 1,
           findChildIndexCallback: _pager.indexOfKey,
@@ -189,9 +195,12 @@ class _ConversationListState extends State<_ConversationList> with AutomaticKeep
             return AppearIn(
               key: ValueKey(conversation.user.id),
               animate: _pager.fresh.contains(conversation.user.id),
-              child: _ConversationRow(
-                conversation: conversation,
-                onTap: () => _openConversation(conversation),
+              child: PaneSelected(
+                ids: ['chat:${conversation.groupId ?? conversation.user.id}'],
+                child: _ConversationRow(
+                  conversation: conversation,
+                  onTap: () => _openConversation(conversation),
+                ),
               ),
             );
           },

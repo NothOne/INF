@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 
 import '../emoji.dart';
 import '../image_url.dart';
+import '../links.dart';
+import '../models.dart';
 import 'smart_image.dart';
 
 enum _TokenKind { plain, mention, topic, url, emoji }
@@ -29,9 +31,13 @@ class RichStatusText extends StatefulWidget {
     this.onUrl,
     this.onOpenImage,
     this.inlineImages = true,
+    this.links = const {},
   });
 
   final String text;
+
+  /// What the post drew for the links in [text], by address.
+  final Map<String, WeiboLink> links;
   final TextStyle? style;
   final Color? color;
   final int maxLines;
@@ -134,10 +140,12 @@ class _RichStatusTextState extends State<RichStatusText> {
                 spans.add(WidgetSpan(alignment: PlaceholderAlignment.middle, child: picture));
               } else {
                 final callback = widget.onUrl;
-                final video = isVideoLink(token.value);
+                final known = widget.links[token.value];
+                var kind = known?.kind ?? linkKindOf(token.value);
+                if (kind == LinkKind.web && isVideoLink(token.value)) kind = LinkKind.video;
                 Widget link = InlineLinkLabel(
-                  icon: video ? Icons.smart_display_outlined : Icons.link_rounded,
-                  label: video ? '查看视频' : '网页链接',
+                  icon: linkKindIcon(kind),
+                  label: _linkLabel(known?.label ?? '', kind),
                   style: style,
                 );
                 if (callback != null) {
@@ -212,10 +220,36 @@ class InlineLinkLabel extends StatelessWidget {
       children: [
         Icon(icon, size: size, color: color),
         SizedBox(width: size * 0.15),
-        Text(label, style: base.copyWith(color: color, height: 1.2)),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: base.copyWith(color: color, height: 1.2),
+          ),
+        ),
       ],
     );
   }
+}
+
+IconData linkKindIcon(LinkKind kind) => switch (kind) {
+      LinkKind.web => Icons.link_rounded,
+      LinkKind.video => Icons.smart_display_outlined,
+      LinkKind.article => Icons.article_outlined,
+      LinkKind.place => Icons.place_outlined,
+      LinkKind.superTopic => Icons.diamond_outlined,
+      LinkKind.vote => Icons.how_to_vote_outlined,
+      LinkKind.lottery => Icons.redeem_outlined,
+      LinkKind.group => Icons.groups_outlined,
+    };
+
+/// A link reads as its own words when the post gave some, and a super topic says that it is one.
+String _linkLabel(String label, LinkKind kind) {
+  final words = label.trim();
+  if (words.isEmpty) return linkKindLabel(kind);
+  if (kind == LinkKind.superTopic && !words.endsWith('超话')) return '$words超话';
+  return words;
 }
 
 /// Weibo's own video pages; the post text links a video with one of these.

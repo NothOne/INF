@@ -276,6 +276,9 @@ class _ContainerTransitionState extends State<_ContainerTransition> {
         const hold = 0.05;
         final travel = ((t - hold) / (1 - hold)).clamp(0.0, 1.0);
         final dy = aligned ? lerpDouble(origin.rect.top - origin.alignTop!, 0, travel)! : 0.0;
+        // Pages centre their reading column on the screen, while the origin sits in a narrower
+        // area beside the side rail; without this the copy lands off to one side of it.
+        final dx = aligned ? lerpDouble(origin.rect.center.dx - screen.center.dx, 0, travel)! : 0.0;
         final pageOpacity = aligned
             ? ((settled ? 1.0 : animation.value) / 0.1).clamp(0.0, 1.0)
             : Curves.easeOut.transform(((t - 0.18) / 0.5).clamp(0.0, 1.0));
@@ -307,7 +310,7 @@ class _ContainerTransitionState extends State<_ContainerTransition> {
                     ),
                     Opacity(
                       opacity: pageOpacity,
-                      child: Transform.translate(offset: Offset(0, dy), child: page),
+                      child: Transform.translate(offset: Offset(dx, dy), child: page),
                     ),
                   ],
                 ),

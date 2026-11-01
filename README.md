@@ -28,6 +28,19 @@ flutter build apk --release --target-platform android-arm64
 
 release 构建默认用 `android/app/debug.keystore` 签名，这个文件不在仓库里：自己生成一个，或者改 `android/app/build.gradle.kts` 里的 `signingConfig`。
 
+### 鸿蒙 NEXT（手机与平板）
+
+需要 OpenHarmony 版 Flutter（[flutter_flutter](https://gitcode.com/openharmony-tpc/flutter_flutter) 的 `oh-3.47.7-preview` 分支）和 HarmonyOS command-line-tools（`DEVECO_SDK_HOME` 指向其中的 `sdk`，`PATH` 里有 `ohpm`、`hvigorw`、`hdc`）。
+
+```bash
+flutter pub get
+flutter build hap --release
+```
+
+产物在 `ohos/entry/build/default/outputs/default/`。仓库里没有签名配置，构建出来是 `entry-default-unsigned.hap`：用 DevEco Studio 打开 `ohos/`，在 File → Project Structure → Signing Configs 里勾选自动签名后再构建，才能装到设备上。
+
+用官方 Flutter 构建 Android 不受影响：鸿蒙插件只在 `ohos` 平台注册。
+
 ## 代码结构
 
 见 [`CODE_MAP.md`](CODE_MAP.md)。

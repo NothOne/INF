@@ -1,3 +1,5 @@
+import 'dart:ui' show Offset;
+
 import 'package:flutter/gestures.dart';
 
 /// Counts fingers on screen across the whole app. Long presses check it so that a two-finger
@@ -13,8 +15,13 @@ class Touches {
   /// Whether the current touch (or the one that just ended) has used more than one finger.
   static bool get multiTouch => _multiTouch;
 
+  /// Where the latest touch went down, in global logical pixels; what a sheet grows out of.
+  static Offset? get lastDown => _lastDown;
+  static Offset? _lastDown;
+
   static void _route(PointerEvent event) {
     if (event is PointerDownEvent) {
+      _lastDown = event.position;
       if (_down.isEmpty) _multiTouch = false;
       _down.add(event.pointer);
       if (_down.length > 1) _multiTouch = true;

@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../../core/layout.dart';
 import '../../core/models.dart';
 import '../../core/navigation.dart';
 import '../../core/paging.dart';
+import '../../core/pane.dart';
+import '../../core/prefs.dart';
 import '../../core/status_store.dart';
 import 'comment_sheet.dart';
 import 'common.dart';
@@ -23,6 +26,7 @@ class PagedStatusList extends StatelessWidget {
     this.controller,
     this.nested = false,
     this.refreshable = true,
+    this.hideBlocked = true,
   });
 
   final PagingController<Status> pager;
@@ -43,10 +47,13 @@ class PagedStatusList extends StatelessWidget {
   /// Off when an enclosing view already owns pull-to-refresh.
   final bool refreshable;
 
+  /// Leaves out the posts of people blocked on this device; off on their own page.
+  final bool hideBlocked;
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge([pager, StatusStore.instance]),
+      animation: Listenable.merge([pager, StatusStore.instance, Prefs.instance]),
       // Cross-fading two copies of the same header would dim it halfway through.
       builder: (context, _) => header == null ? StateSwitcher(child: _body(context)) : _body(context),
     );
@@ -69,6 +76,7 @@ class PagedStatusList extends StatelessWidget {
   Widget _body(BuildContext context) {
     final headerCount = header == null ? 0 : 1;
     final top = underAppBar ? MediaQuery.paddingOf(context).top : 0.0;
+    final gutter = contentGutter(context);
     if (pager.items.isEmpty) {
       final Widget state;
       if (pager.error != null) {
@@ -92,7 +100,7 @@ class PagedStatusList extends StatelessWidget {
         key: ValueKey(pager.error != null ? 'error' : (pager.loading || pager.refreshedAt == null ? 'loading' : 'empty')),
         child: _scrollView(context, [
           SliverPadding(
-            padding: EdgeInsets.only(top: top),
+            padding: EdgeInsets.only(top: top, left: gutter, right: gutter),
             sliver: SliverList.list(
               children: [
                 if (header != null) header!,
@@ -115,6 +123,8 @@ class PagedStatusList extends StatelessWidget {
             padding: EdgeInsets.only(
               top: top,
               bottom: bottomInset + MediaQuery.paddingOf(context).bottom,
+              left: gutter,
+              right: gutter,
             ),
             sliver: SliverList(
               delegate: SliverChildBuilderDelegate(
@@ -137,12 +147,17 @@ class PagedStatusList extends StatelessWidget {
                     return const SizedBox(height: 24);
                   }
                   final status = pager.items[itemIndex];
+                  if (hideBlocked && Prefs.instance.isBlocked(status.author.id)) {
+                    return SizedBox.shrink(key: ValueKey(status.id));
+                  }
                   return AppearIn(
                     key: ValueKey(status.id),
                     animate: pager.fresh.contains(status.id),
                     child: Column(
                       children: [
-                        StatusCard(
+                        PaneSelected(
+                          ids: ['status:${status.id}', if (status.repostOf != null) 'status:${status.repostOf!.id}'],
+                          child: StatusCard(
                           status: status,
                           heroScope: '${status.id}-$itemIndex',
                           onOpenStatus: (id) => openStatus(
@@ -152,7 +167,7 @@ class PagedStatusList extends StatelessWidget {
                           ),
                           onOpenUser: (uid) => openUser(context, uid),
                           onOpenTopic: (name) => openTopic(context, name),
-                          onOpenUrl: (url) => openWeb(context, url),
+                          onOpenUrl: (url) => openLink(context, url),
                           onOpenMedia: (media, mediaIndex, heroTag) {
                             if (media[mediaIndex].kind == MediaKind.video) {
                               openVideo(context, media[mediaIndex].url, coverUrl: media[mediaIndex].previewUrl);
@@ -162,6 +177,7 @@ class PagedStatusList extends StatelessWidget {
                           },
                           onRepost: () => openCompose(context, type: DraftType.repost, statusId: status.id),
                           onComment: () => showCommentSheet(context, statusId: status.id, target: status),
+                        ),
                         ),
                         const Divider(),
                       ],

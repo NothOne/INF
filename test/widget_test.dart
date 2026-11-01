@@ -1,6 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:inf_flutter/core/image_url.dart';
 import 'package:inf_flutter/core/models.dart';
+import 'package:inf_flutter/core/paging.dart';
 import 'package:inf_flutter/core/parse.dart';
+import 'package:inf_flutter/core/prefs.dart';
+import 'package:inf_flutter/core/session.dart';
+import 'package:inf_flutter/core/topic_timeline.dart';
 import 'package:inf_flutter/core/widgets/rich_text.dart';
 
 void main() {
@@ -19,6 +24,32 @@ void main() {
     expect(text, contains('@小明'));
     expect(text, contains('#科技#'));
     expect(text, isNot(contains('全文')));
+  });
+
+  test('absorbSetCookies follows a rotated XSRF-TOKEN', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final session = Session.instance;
+    session.cookies
+      ..clear()
+      ..addAll({'SUB': 'signed', 'XSRF-TOKEN': 'stale1'});
+    session.absorbSetCookies([
+      'XSRF-TOKEN=deleted; expires=Thu, 01-Jan-1970 00:00:01 GMT; Max-Age=0; path=/; domain=.weibo.cn; HttpOnly',
+      'XSRF-TOKEN=b66049; expires=Sun, 01-Nov-2026 02:48:18 GMT; Max-Age=1200; path=/; domain=m.weibo.cn',
+      'MLOGIN=1; Max-Age=3600; path=/; domain=.weibo.cn',
+    ]);
+    expect(session.xsrf, 'b66049');
+    expect(session.cookies['SUB'], 'signed');
+    expect(session.cookies['MLOGIN'], '1');
+    session.absorbSetCookies(['MLOGIN=deleted; Max-Age=0; path=/']);
+    expect(session.cookies.containsKey('MLOGIN'), isFalse);
+    session.cookies.clear();
+  });
+
+  test('secureUrl upgrades cleartext links and video URLs', () {
+    expect(secureUrl('http://weibo.com/p/100101B209435DD76CA0F4499E'), 'https://weibo.com/p/100101B209435DD76CA0F4499E');
+    expect(secureUrl('HTTP://f.video.weibocdn.com/o0/a.mp4?label=mp4_hd'), 'https://f.video.weibocdn.com/o0/a.mp4?label=mp4_hd');
+    expect(secureUrl('//wx1.sinaimg.cn/large/a.jpg'), 'https://wx1.sinaimg.cn/large/a.jpg');
+    expect(secureUrl('https://m.weibo.cn/detail/1'), 'https://m.weibo.cn/detail/1');
   });
 
   test('parseReposts reads the timeline list and the hot list', () {
@@ -55,6 +86,128 @@ void main() {
     expect(board[2].isTopic, isFalse);
     expect(board.first.rankText, '热搜置顶');
     expect(board[2].rankText, '热搜第2');
+  });
+
+  test('toStatus reads live photos from both APIs and leaves GIF clips alone', () {
+    const mov = 'https://video.weibo.com/media/play?livephoto=https%3A%2F%2Flivephoto.us.sinaimg.cn%2Fabc.mov';
+    final mobile = toStatus({
+      'id': '1',
+      'text': '',
+      'pics': [
+        {'pid': 'a', 'url': 'https://wx2.sinaimg.cn/orj360/a.jpg', 'type': 'livephoto', 'videoSrc': mov},
+        {'pid': 'b', 'url': 'https://wx2.sinaimg.cn/orj360/b.gif', 'type': 'gifvideos', 'videoSrc': 'https://f.video.weibocdn.com/b.mp4'},
+        {'pid': 'c', 'url': 'https://wx2.sinaimg.cn/orj360/c.jpg'},
+      ],
+    })!;
+    expect(mobile.media.map((m) => m.liveUrl).toList(), [mov, null, null]);
+
+    final web = toStatus({
+      'id': '2',
+      'text': '',
+      'pic_ids': ['a', 'b', 'c'],
+      'pic_infos': {
+        'a': {'type': 'livephoto', 'video': mov, 'large': {'url': 'https://wx2.sinaimg.cn/orj960/a.jpg'}},
+        'b': {'type': 'livephoto', 'fid': 'xyz', 'large': {'url': 'https://wx2.sinaimg.cn/orj960/b.jpg'}},
+        'c': {'type': 'pic', 'large': {'url': 'https://wx2.sinaimg.cn/orj960/c.jpg'}},
+      },
+      'pic_video': '2:def',
+    })!;
+    expect(web.media[0].liveUrl, mov);
+    expect(web.media[1].liveUrl, livePhotoUrl('xyz'));
+    expect(web.media[2].liveUrl, livePhotoUrl('def'));
+    expect(livePhotoUrl('xyz'), contains('livephoto.us.sinaimg.cn%2Fxyz.mov'));
+  });
+
+  test('parseTopicDetail reads when each board run started and ended', () {
+    final info = parseTopicDetail({
+      'baseInfo': {
+        'object': {
+          'display_name': '话题',
+          'creator': {'mid': '5360106272721056', 'create_at': 1793432384},
+        },
+        'count': {'read': 1000},
+      },
+      'baseData': {
+        'm_rank_pos_duration': {
+          'data': [
+            {
+              'cate_desc': '热搜榜',
+              'top_pos': 1,
+              'duration_minute': 91,
+              'on_board_time': '202610311552',
+              'off_board_time': '202610311722',
+            },
+          ],
+        },
+      },
+    })!;
+    final stint = info.boards.single;
+    expect(stint.onAt, DateTime.utc(2026, 10, 31, 7, 52).toLocal());
+    expect(stint.offAt, DateTime.utc(2026, 10, 31, 9, 22).toLocal());
+    expect(info.firstStatusId, '5360106272721056');
+  });
+
+  test('buildTopicTimeline orders board runs, the peak hour and posts, ending now', () {
+    final now = DateTime(2026, 10, 31, 18, 30);
+    User author(String name, {bool verified = false}) => User(id: name, screenName: name, verified: verified);
+    Status post(String id, User user, DateTime at, {int likes = 0}) =>
+        Status(id: id, author: user, text: id, createdAt: at, likesCount: likes);
+    final events = buildTopicTimeline(
+      now: now,
+      info: TopicInfo(
+        reads: 13770000,
+        createdAt: DateTime(2026, 10, 31, 15, 20),
+        boards: [
+          TopicBoardStint(
+            board: '热搜榜',
+            bestRank: 1,
+            minutes: 91,
+            onAt: DateTime(2026, 10, 31, 15, 52),
+            offAt: DateTime(2026, 10, 31, 17, 23),
+          ),
+        ],
+      ),
+      trend: [for (var i = 0; i < 24; i++) TopicTrendPoint('', i == 21 ? 900 : 10)],
+      posts: [
+        post('loud', author('路人'), DateTime(2026, 10, 31, 16, 40), likes: 5000),
+        post('media', author('新闻', verified: true), DateTime(2026, 10, 31, 15, 30)),
+        post('quiet', author('路人2'), DateTime(2026, 10, 31, 17, 0)),
+      ],
+    );
+    expect(events.map((e) => e.kind).toList(), [
+      TopicEventKind.started,
+      TopicEventKind.post,
+      TopicEventKind.boardOn,
+      TopicEventKind.peak,
+      TopicEventKind.post,
+      TopicEventKind.boardOff,
+      TopicEventKind.now,
+    ]);
+    expect(events[1].status!.id, 'media');
+    expect(events[3].at, DateTime(2026, 10, 31, 16));
+    expect(events[4].status!.id, 'loud');
+    expect(events[5].detail, '在榜1小时31分钟');
+    expect(events.last.detail, '阅读 1377万');
+  });
+
+  test('a newest-first pager joins a refresh onto what it already has', () async {
+    var round = 0;
+    final pager = PagingController<String>(
+      id: (item) => item,
+      keepTailOnRefresh: true,
+      fetch: (cursor) async {
+        if (cursor != null) return const PageResult(['c', 'd'], 'end');
+        round++;
+        return round == 1
+            ? const PageResult(['a', 'b'], 'p2')
+            : const PageResult(['new', 'a'], 'p2-fresh');
+      },
+    );
+    await pager.refresh();
+    await pager.loadMore();
+    await pager.refresh();
+    expect(pager.items, ['new', 'a', 'b', 'c', 'd']);
+    expect(pager.cursor, 'end');
   });
 
   test('isVideoLink recognises Weibo video pages only', () {
@@ -161,5 +314,12 @@ void main() {
     final result = parseWeiboResult({'ok': -100, 'url': 'https://passport.weibo.com/'});
     expect(result.needsLogin, isTrue);
     expect(result.loginUrl, contains('passport'));
+  });
+
+  test('a video is remembered by its path, not its signed query', () {
+    const a = 'https://f.video.weibocdn.com/o0/abc.mp4?label=mp4_720p&Expires=1&ssig=x';
+    const b = 'https://f.video.weibocdn.com/o0/abc.mp4?label=mp4_720p&Expires=2&ssig=y';
+    expect(Prefs.videoKey(a), Prefs.videoKey(b));
+    expect(Prefs.videoKey(a), '/o0/abc.mp4');
   });
 }

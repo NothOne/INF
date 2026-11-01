@@ -1,63 +1,26 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:share_plus/share_plus.dart';
 
-import '../../core/motion.dart';
 import '../../core/haptics.dart';
+import '../../core/links.dart';
+import '../../core/motion.dart';
 import '../../core/navigation.dart';
+import '../../core/share.dart';
 import '../../core/widgets/common.dart';
 
 /// Open a chat link inside INF when it points at a Weibo status/user; fall
 /// back to a local link sheet for arbitrary URLs.
 Future<void> openChatLink(BuildContext context, String url) async {
   var target = url;
-  if (target.contains('t.cn')) {
-    target = await _resolveShortLink(target) ?? target;
+  if (linkTargetOf(target) is ShortLinkTarget) {
+    target = await expandShortLink(target) ?? target;
+    if (!context.mounted) return;
   }
-  final uri = Uri.tryParse(target);
-  if (uri == null) {
-    await showChatLinkSheet(context, target);
-    return;
-  }
-  final status = RegExp(r'/(?:detail|status)/([0-9A-Za-z]+)').firstMatch(uri.path);
-  if (status != null) {
-    await openStatus(context, statusId: status.group(1)!);
-    return;
-  }
-  final user = RegExp(r'/(?:u|profile)/([0-9]+)').firstMatch(uri.path);
-  if (user != null) {
-    await openUser(context, user.group(1)!);
-    return;
-  }
-  if (uri.host == 'weibo.com' || uri.host == 'www.weibo.com') {
-    final parts = uri.pathSegments.where((part) => part.isNotEmpty).toList();
-    if (parts.length >= 2 && RegExp(r'^[0-9]+' + r'$').hasMatch(parts[0])) {
-      await openStatus(context, statusId: parts[1]);
-      return;
-    }
-    if (parts.length == 1 && RegExp(r'^[0-9]+' + r'$').hasMatch(parts[0])) {
-      await openUser(context, parts[0]);
-      return;
-    }
-  }
-  await showChatLinkSheet(context, target);
-}
-
-Future<String?> _resolveShortLink(String url) async {
-  final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
-  try {
-    final request = await client.getUrl(Uri.parse(url));
-    final response = await request.close();
-    await response.drain<void>();
-    if (response.redirects.isEmpty) return null;
-    final last = response.redirects.last.location;
-    return Uri.parse(url).resolveUri(last).toString();
-  } catch (_) {
-    return null;
-  } finally {
-    client.close(force: true);
+  switch (linkTargetOf(target)) {
+    case StatusTarget() || UserTarget() || TopicTarget() || SuperTopicTarget():
+      await openLink(context, target);
+    case WebTarget() || AppOnlyTarget() || ShortLinkTarget():
+      await showChatLinkSheet(context, target);
   }
 }
 
@@ -116,7 +79,7 @@ Future<void> showChatLinkSheet(BuildContext context, String url) {
                     child: FilledButton.icon(
                       onPressed: () async {
                         Navigator.of(sheetContext).pop();
-                        await SharePlus.instance.share(ShareParams(text: url));
+                        await shareText(url);
                       },
                       icon: const Icon(Icons.ios_share_rounded, size: 18),
                       label: const Text('分享'),

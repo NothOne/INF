@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../layout.dart';
 import '../motion.dart';
 import 'common.dart';
 
@@ -136,7 +137,8 @@ class RowListSkeleton extends StatelessWidget {
     return SkeletonPulse(
       child: ListView.builder(
         physics: const NeverScrollableScrollPhysics(),
-        padding: EdgeInsets.only(top: 6 + MediaQuery.paddingOf(context).top),
+        padding: EdgeInsets.only(top: 6 + MediaQuery.paddingOf(context).top)
+            .add(EdgeInsets.symmetric(horizontal: contentGutter(context))),
         itemCount: count,
         itemBuilder: (context, index) => Padding(
           padding: const EdgeInsets.fromLTRB(16, 11, 16, 11),

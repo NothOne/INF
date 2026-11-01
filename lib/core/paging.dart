@@ -13,11 +13,16 @@ class PagingController<T> extends ChangeNotifier {
     required this.fetch,
     required this.id,
     this.pageSize = 20,
+    this.keepTailOnRefresh = false,
   });
 
   final Future<PageResult<T>> Function(String? cursor) fetch;
   final String Function(T item) id;
   final int pageSize;
+
+  /// For newest-first lists: when the fresh first page reaches down into what is already loaded,
+  /// it is joined on top of it instead of replacing it, so the place being read survives.
+  final bool keepTailOnRefresh;
 
   final List<T> items = [];
   final Set<String> _seen = {};
@@ -76,11 +81,19 @@ class PagingController<T> extends ChangeNotifier {
       // a refresh instead of a jump back to the skeleton.
       final page = await fetch(null);
       final before = items.isEmpty ? const <String>{} : _seen.toSet();
+      final fresh = {for (final item in page.items) id(item)};
+      final joins = keepTailOnRefresh && items.any((item) => fresh.contains(id(item)));
+      final tail = joins ? items.where((item) => !fresh.contains(id(item))).toList() : <T>[];
       _seen.clear();
       items.clear();
-      cursor = page.nextCursor;
-      hasMore = page.nextCursor != null && page.items.isNotEmpty;
       _append(page.items);
+      if (joins) {
+        // The older pages and their cursor carry on below the fresh one.
+        _append(tail);
+      } else {
+        cursor = page.nextCursor;
+        hasMore = page.nextCursor != null && page.items.isNotEmpty;
+      }
       _markFresh(before);
       error = null;
       stale = false;

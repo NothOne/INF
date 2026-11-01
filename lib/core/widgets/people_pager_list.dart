@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/api.dart';
 import '../../core/haptics.dart';
+import '../../core/layout.dart';
 import '../../core/models.dart';
 import '../../core/navigation.dart';
 import '../../core/paging.dart';
@@ -91,6 +92,8 @@ class _PeoplePagerListState extends State<PeoplePagerList> with AutomaticKeepAli
               padding: EdgeInsets.only(
                 top: MediaQuery.paddingOf(context).top,
                 bottom: widget.bottomInset + MediaQuery.paddingOf(context).bottom,
+                left: contentGutter(context),
+                right: contentGutter(context),
               ),
               itemCount: _pager.items.length + 1,
               itemBuilder: (context, index) {

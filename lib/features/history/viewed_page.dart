@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/layout.dart';
 import '../../core/look.dart';
 import '../../core/navigation.dart';
 import '../../core/parse.dart';
@@ -40,6 +41,8 @@ class ViewedPage extends StatelessWidget {
                     padding: EdgeInsets.only(
                       top: MediaQuery.paddingOf(context).top,
                       bottom: 24 + MediaQuery.paddingOf(context).bottom,
+                      left: contentGutter(context),
+                      right: contentGutter(context),
                     ),
                     itemCount: entries.length,
                     separatorBuilder: (context, index) => const Divider(indent: 64),

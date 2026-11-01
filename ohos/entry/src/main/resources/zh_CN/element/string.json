@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "INF 微博客户端"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "INF"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "INF"
+    }
+  ]
+}

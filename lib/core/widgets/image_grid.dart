@@ -138,6 +138,8 @@ class _Cell extends StatelessWidget {
           image,
           if (media.kind == MediaKind.image && media.isLong)
             const Positioned(right: 5, bottom: 5, child: _Badge(text: '长图')),
+          if (media.isLive)
+            const Positioned(left: 5, bottom: 5, child: _Badge(text: '实况', icon: Icons.motion_photos_on_rounded)),
           if (media.kind == MediaKind.video) ...[
             Positioned.fill(
               child: Center(
@@ -184,18 +186,29 @@ class _Cell extends StatelessWidget {
 }
 
 class _Badge extends StatelessWidget {
-  const _Badge({required this.text});
+  const _Badge({required this.text, this.icon});
   final String text;
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
+    const style = TextStyle(color: Colors.white, fontSize: 10, height: 1.2);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: EdgeInsets.fromLTRB(icon == null ? 6 : 4, 2, 6, 2),
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.56),
         borderRadius: BorderRadius.circular(4),
       ),
-      child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 10, height: 1.2)),
+      child: icon == null
+          ? Text(text, style: style)
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, color: Colors.white, size: 11),
+                const SizedBox(width: 2),
+                Text(text, style: style),
+              ],
+            ),
     );
   }
 }

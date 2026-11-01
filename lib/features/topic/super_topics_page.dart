@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/layout.dart';
 import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/models.dart';
@@ -54,9 +55,14 @@ class _SuperTopicsPageState extends State<SuperTopicsPage> {
               return false;
             },
             child: GridView.builder(
-              padding: EdgeInsets.fromLTRB(12, 12 + MediaQuery.paddingOf(context).top, 12, 24 + MediaQuery.paddingOf(context).bottom),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
+              padding: EdgeInsets.fromLTRB(
+                12 + contentGutter(context, maxWidth: 900),
+                12 + MediaQuery.paddingOf(context).top,
+                12 + contentGutter(context, maxWidth: 900),
+                24 + MediaQuery.paddingOf(context).bottom,
+              ),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: WindowClass.of(context).wide ? 3 : 2,
                 mainAxisSpacing: 12,
                 crossAxisSpacing: 12,
                 mainAxisExtent: 156,

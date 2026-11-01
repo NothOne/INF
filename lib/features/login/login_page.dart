@@ -38,9 +38,12 @@ class _LoginPageState extends State<LoginPage> {
             if (url.startsWith('https://') && !_skipped.contains(url)) _bridging = false;
           });
         }
+        // A good crossdomain hop 302s away, so a page that settles on one has failed.
+        if (Native.isOhos) _skipFailedCrossdomain(url);
         _onUrl(url);
       },
-      onHttpError: (error) => _skipFailedCrossdomain(error.request?.uri.toString()),
+      // HarmonyOS's WebView has no HTTP error callback; there onPageFinished stands in.
+      onHttpError: Native.isOhos ? null : (error) => _skipFailedCrossdomain(error.request?.uri.toString()),
       onWebResourceError: (error) {
         if (error.isForMainFrame ?? true) _skipFailedCrossdomain(error.url);
       },

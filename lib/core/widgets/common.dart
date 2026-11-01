@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../layout.dart';
+
 void showMessage(BuildContext context, String? message) {
   if (message == null || message.trim().isEmpty) return;
   final messenger = ScaffoldMessenger.maybeOf(context);
@@ -187,7 +189,8 @@ class StatusListSkeleton extends StatelessWidget {
     return SkeletonPulse(
       child: ListView.builder(
         physics: const NeverScrollableScrollPhysics(),
-        padding: EdgeInsets.only(top: 4 + MediaQuery.paddingOf(context).top),
+        padding: EdgeInsets.only(top: 4 + MediaQuery.paddingOf(context).top)
+            .add(EdgeInsets.symmetric(horizontal: contentGutter(context))),
         itemCount: count,
         itemBuilder: (context, index) => Padding(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),

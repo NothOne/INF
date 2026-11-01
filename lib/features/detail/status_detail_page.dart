@@ -3,6 +3,7 @@ import '../../core/haptics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/layout.dart';
 import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/models.dart';
@@ -17,6 +18,7 @@ import '../../core/widgets/common.dart';
 import '../../core/widgets/refresh.dart';
 import '../../core/widgets/rich_text.dart';
 import '../../core/widgets/smart_image.dart';
+import '../../core/widgets/share_sheet.dart';
 import '../../core/widgets/status_card.dart';
 import '../../core/widgets/transitions.dart';
 
@@ -91,7 +93,11 @@ class _StatusDetailPageState extends State<StatusDetailPage> {
       if (status.isLongText) {
         final long = await WeiboApi.instance.longText(status.id);
         if (long != null && mounted) {
-          setState(() => _status = status.copyWith(text: long, isLongText: false));
+          setState(() => _status = status.copyWith(
+                text: long.text,
+                links: {...status.links, ...long.links},
+                isLongText: false,
+              ));
         }
       }
     } catch (error) {
@@ -145,14 +151,24 @@ class _StatusDetailPageState extends State<StatusDetailPage> {
             title: const Text('微博正文'),
             actions: [
               if (status != null)
-                PopupMenuButton<String>(
+                IconButton(
+                  icon: const Icon(Icons.share_outlined),
+                  tooltip: '分享',
+                  onPressed: () => showStatusShare(
+                    context,
+                    applied ?? status,
+                    onLongImage: () => openLongImage(context, status),
+                  ),
+                ),
+              if (status != null)
+                IconButton(
                   icon: const Icon(Icons.more_horiz_rounded),
-                  onSelected: (value) {
-                    if (value == 'long') openLongImage(context, status);
-                  },
-                  itemBuilder: (context) => const [
-                    PopupMenuItem(value: 'long', child: Text('生成长图')),
-                  ],
+                  tooltip: '更多',
+                  onPressed: () => showStatusActions(
+                    context,
+                    applied ?? status,
+                    onLongImage: () => openLongImage(context, status),
+                  ),
                 ),
               const SizedBox(width: 4),
             ],
@@ -285,6 +301,7 @@ class _DetailBodyState extends State<_DetailBody> {
     final comments = widget.comments;
     final reposts = widget.reposts;
     final scheme = Theme.of(context).colorScheme;
+    final sides = EdgeInsets.symmetric(horizontal: contentGutter(context));
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
         // The outer header also scrolls. Only the list underneath should turn the page.
@@ -302,7 +319,7 @@ class _DetailBodyState extends State<_DetailBody> {
           physics: const AlwaysScrollableScrollPhysics(),
           headerSliverBuilder: (context, _) => [
             SliverPadding(
-              padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top),
+              padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top).add(sides),
               sliver: SliverToBoxAdapter(
               child: StatusCard(
                 status: status,
@@ -310,7 +327,7 @@ class _DetailBodyState extends State<_DetailBody> {
                 onOpenStatus: (id) => openStatus(context, statusId: id),
                 onOpenUser: (uid) => openUser(context, uid),
                 onOpenTopic: (name) => openTopic(context, name),
-                onOpenUrl: (url) => openWeb(context, url),
+                onOpenUrl: (url) => openLink(context, url),
                 onOpenMedia: (media, index, tag) {
                   if (media[index].kind == MediaKind.video) {
                     openVideo(context, media[index].url, coverUrl: media[index].previewUrl);
@@ -325,16 +342,22 @@ class _DetailBodyState extends State<_DetailBody> {
               ),
             ),
             ),
-            SliverToBoxAdapter(
-              child: Container(height: 8, color: InfChrome.of(context).fill(scheme, scheme.surfaceContainerHigh, 0.55)),
+            SliverPadding(
+              padding: sides,
+              sliver: SliverToBoxAdapter(
+                child: Container(height: 8, color: InfChrome.of(context).fill(scheme, scheme.surfaceContainerHigh, 0.55)),
+              ),
             ),
-            SliverToBoxAdapter(
-              child: _DiscussionSwitch(
-                reposts: status.repostsCount,
-                comments: status.commentsCount,
-                showingReposts: widget.showingReposts,
-                onShowReposts: widget.onShowReposts,
-                onShowComments: widget.onShowComments,
+            SliverPadding(
+              padding: sides,
+              sliver: SliverToBoxAdapter(
+                child: _DiscussionSwitch(
+                  reposts: status.repostsCount,
+                  comments: status.commentsCount,
+                  showingReposts: widget.showingReposts,
+                  onShowReposts: widget.onShowReposts,
+                  onShowComments: widget.onShowComments,
+                ),
               ),
             ),
           ],
@@ -356,7 +379,11 @@ class _DetailBodyState extends State<_DetailBody> {
     return ListView.builder(
       primary: primary,
       physics: primary ? const AlwaysScrollableScrollPhysics() : const NeverScrollableScrollPhysics(),
-      padding: EdgeInsets.only(bottom: 28 + MediaQuery.paddingOf(context).bottom),
+      padding: EdgeInsets.only(
+        bottom: 28 + MediaQuery.paddingOf(context).bottom,
+        left: contentGutter(context),
+        right: contentGutter(context),
+      ),
       itemCount: count + 1,
       itemBuilder: (context, index) => index == count ? tail : item(context, index),
     );
@@ -459,8 +486,8 @@ class _DetailBodyState extends State<_DetailBody> {
                 comment: comment,
                 onOpenUser: (uid) => openUser(context, uid),
                 onOpenTopic: (name) => openTopic(context, name),
-                onOpenUrl: (url) => openWeb(context, url),
-                onOpenFloor: () => pushInf(context, CommentFloorPage(statusId: status.id, commentId: comment.id, root: comment)),
+                onOpenUrl: (url) => openLink(context, url),
+                onOpenFloor: () => openCommentFloor(context, statusId: status.id, root: comment),
                 onReply: () => _reply(context, comment),
                 onTap: () => showCommentActions(context, comment, onReply: () => _reply(context, comment)),
                 onOpenImage: (images, imageIndex, tag) {
@@ -713,7 +740,7 @@ class _RepostTile extends StatelessWidget {
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 14.5),
                     onMention: (uid) => openUser(context, uid),
                     onTopic: (name) => openTopic(context, name),
-                    onUrl: (url) => openWeb(context, url),
+                    onUrl: (url) => openLink(context, url),
                   ),
                 ],
               ),
@@ -734,6 +761,7 @@ Future<void> showCommentActions(
 }) async {
   final action = await showActionSheet<CommentAction>(
     context: context,
+    frosted: false,
     builder: (sheetContext) => SafeArea(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1115,7 +1143,7 @@ class _BottomBar extends StatelessWidget {
         ),
       ),
     );
-    return chrome.edgePanel(context, child: bar);
+    return chrome.edgePanel(context, child: ContentColumn(child: bar));
   }
 }
 
@@ -1219,7 +1247,7 @@ class _CommentFloorPageState extends State<CommentFloorPage> {
       comment: comment,
       onOpenUser: (uid) => openUser(context, uid),
       onOpenTopic: (name) => openTopic(context, name),
-      onOpenUrl: (url) => openWeb(context, url),
+      onOpenUrl: (url) => openLink(context, url),
       onOpenFloor: () {},
       imagesAsLinks: !root,
       showReplies: false,
@@ -1269,6 +1297,8 @@ class _CommentFloorPageState extends State<CommentFloorPage> {
                 padding: EdgeInsets.only(
                   top: MediaQuery.paddingOf(context).top,
                   bottom: 28 + MediaQuery.paddingOf(context).bottom,
+                  left: contentGutter(context),
+                  right: contentGutter(context),
                 ),
                 itemCount: 1 + (state == null ? items.length + 1 : 1),
                 itemBuilder: (context, index) {

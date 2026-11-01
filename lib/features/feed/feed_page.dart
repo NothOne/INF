@@ -1,24 +1,30 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/api.dart';
 import '../../core/look.dart';
 import '../../core/haptics.dart';
 import '../../core/hot_search_store.dart';
+import '../../core/layout.dart';
 import '../../core/models.dart';
 import '../../core/motion.dart';
 import '../../core/navigation.dart';
 import '../../core/paging.dart';
+import '../../core/pane.dart';
 import '../../core/parse.dart';
-import '../../core/session.dart';
+import '../../core/prefs.dart';
 import '../../core/status_store.dart';
 import '../../core/widgets/comment_sheet.dart';
 import '../../core/widgets/common.dart';
+import '../../core/widgets/hot_board_bar.dart';
 import '../../core/widgets/hot_search_row.dart';
 import '../../core/widgets/paged_status_list.dart';
 import '../../core/widgets/refresh.dart';
 import '../../core/widgets/status_card.dart';
 import '../../core/widgets/transitions.dart';
 import 'feed_controller.dart';
+import 'recommend_channels_sheet.dart';
 
 class FeedPage extends StatefulWidget {
   const FeedPage({super.key});
@@ -28,7 +34,7 @@ class FeedPage extends StatefulWidget {
 }
 
 /// The three pages under the home bar, left to right. The feed is where the app opens.
-enum _HomePage { feed, hot, board }
+enum _HomePage { feed, recommend, board }
 
 class FeedPageState extends State<FeedPage> {
   late final FeedController _controller = FeedController();
@@ -39,7 +45,9 @@ class FeedPageState extends State<FeedPage> {
   _HomePage _page = _HomePage.feed;
 
   PagingController<Status>? _hotPager;
+  RecommendChannel _channel = Prefs.instance.recommendChannel;
   final ScrollController _hotScroll = ScrollController();
+  HotBoard _board = shownBoard(HotBoard.realtime);
   final ScrollController _boardScroll = ScrollController();
   final GlobalKey<InfRefreshIndicatorState> _boardRefreshKey = GlobalKey<InfRefreshIndicatorState>();
 
@@ -49,7 +57,7 @@ class FeedPageState extends State<FeedPage> {
     switch (_page) {
       case _HomePage.feed:
         return _feedHomeTap();
-      case _HomePage.hot:
+      case _HomePage.recommend:
         if (await _toTop(_hotScroll)) return;
         await _hotPager?.refresh();
       case _HomePage.board:
@@ -58,9 +66,14 @@ class FeedPageState extends State<FeedPage> {
     }
   }
 
+  /// The feed's top is below zero: its offsets are measured from the post being read.
   Future<bool> _toTop(ScrollController scroll) async {
-    if (!scroll.hasClients || scroll.offset <= 8) return false;
-    await scroll.animateTo(0, duration: const Duration(milliseconds: 280), curve: Curves.easeOutCubic);
+    if (!scroll.hasClients || scroll.offset <= scroll.position.minScrollExtent + 8) return false;
+    for (var pass = 0; pass < 4 && scroll.hasClients; pass++) {
+      final top = scroll.position.minScrollExtent;
+      if (scroll.offset <= top + 1) break;
+      await scroll.animateTo(top, duration: const Duration(milliseconds: 280), curve: Curves.easeOutCubic);
+    }
     return true;
   }
 
@@ -100,9 +113,17 @@ class FeedPageState extends State<FeedPage> {
     super.dispose();
   }
 
+  /// A tap on the page already shown opens its picker: groups, channels or boards.
   void _selectPage(_HomePage page) {
     if (page == _page) {
-      if (page == _HomePage.feed) _pickerKey.currentState?.showButtonMenu();
+      switch (page) {
+        case _HomePage.feed:
+          _pickerKey.currentState?.showButtonMenu();
+        case _HomePage.recommend:
+          showRecommendChannels(context, current: _channel, onSelect: _selectChannel);
+        case _HomePage.board:
+          showHotBoardEditor(context, current: _board, onSelect: _selectBoard);
+      }
       return;
     }
     _pages.animateToPage(page.index, duration: InfMotion.tabIn, curve: Curves.easeOutCubic);
@@ -112,13 +133,38 @@ class FeedPageState extends State<FeedPage> {
     final page = _HomePage.values[index];
     Haptic.selection.play();
     setState(() => _page = page);
-    if (page == _HomePage.hot && _hotPager == null) {
-      _hotPager = PagingController<Status>(
-        fetch: (cursor) => WeiboApi.instance.feed(FeedSource.hot, Session.instance.uid ?? '', cursor),
-        id: (status) => status.id,
-      )..refresh();
+    if (page == _HomePage.recommend && _hotPager == null) _startRecommend();
+    if (page == _HomePage.board) {
+      _board = shownBoard(_board);
+      HotSearchStore.instance.load(board: _board);
     }
-    if (page == _HomePage.board) HotSearchStore.instance.load();
+  }
+
+  void _startRecommend() {
+    final channel = _channel;
+    _hotPager?.dispose();
+    _hotPager = PagingController<Status>(
+      fetch: (cursor) => WeiboApi.instance.recommendFeed(channel, cursor),
+      id: (status) => status.id,
+    )..refresh();
+  }
+
+  void _selectChannel(RecommendChannel channel) {
+    if (channel.key == _channel.key) return;
+    Haptic.selection.play();
+    Prefs.instance.setRecommendChannel(channel);
+    if (_hotScroll.hasClients) _hotScroll.jumpTo(0);
+    setState(() {
+      _channel = channel;
+      _startRecommend();
+    });
+  }
+
+  void _selectBoard(HotBoard board) {
+    if (board == _board) return;
+    Haptic.selection.play();
+    setState(() => _board = board);
+    HotSearchStore.instance.load(board: board);
   }
 
   void _refreshFeed() {
@@ -159,6 +205,20 @@ class FeedPageState extends State<FeedPage> {
                 enabled: _page == _HomePage.feed,
                 onTapDisabled: () => _selectPage(_HomePage.feed),
               ),
+              recommendLabel: _ArrowLabel(
+                title: _channel.personal ? '推荐' : _channel.title,
+                active: _page == _HomePage.recommend,
+              ),
+              boardLabel: AnimatedBuilder(
+                animation: Prefs.instance,
+                builder: (context, _) {
+                  final board = shownBoard(_board);
+                  return _ArrowLabel(
+                    title: board == HotBoard.realtime ? '热搜' : board.label,
+                    active: _page == _HomePage.board,
+                  );
+                },
+              ),
             ),
             actions: [
               IconButton(
@@ -182,7 +242,17 @@ class FeedPageState extends State<FeedPage> {
                 ),
               ),
               KeepAlivePage(child: _hotFeed()),
-              KeepAlivePage(child: _HotBoard(scroll: _boardScroll, refreshKey: _boardRefreshKey)),
+              KeepAlivePage(
+                child: AnimatedBuilder(
+                  animation: Prefs.instance,
+                  builder: (context, _) => _HotBoard(
+                    board: shownBoard(_board),
+                    onSelect: _selectBoard,
+                    scroll: _boardScroll,
+                    refreshKey: _boardRefreshKey,
+                  ),
+                ),
+              ),
             ],
           ),
         );
@@ -194,11 +264,11 @@ class FeedPageState extends State<FeedPage> {
     final pager = _hotPager;
     if (pager == null) return const StatusListSkeleton();
     return PagedStatusList(
-      key: const PageStorageKey<String>('home-hot'),
+      key: PageStorageKey<String>('home-recommend-${_channel.key}'),
       pager: pager,
       controller: _hotScroll,
-      bottomInset: 104,
-      emptyText: '暂时没有热门微博',
+      bottomInset: ShellLayout.clearance(context, 104),
+      emptyText: '「${_channel.title}」暂时没有微博',
     );
   }
 
@@ -257,7 +327,7 @@ class _SourcePicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final current = controller.source;
-    final title = current.kind == FeedKind.all ? '首页' : current.name;
+    final title = current.kind == FeedKind.all ? '关注' : current.name;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: enabled ? null : onTapDisabled,
@@ -308,31 +378,44 @@ class _SourcePicker extends StatelessWidget {
           }
           return entries;
         },
-        // The arrow hangs off the label so the label stays centred in its slot like the others.
-        child: Stack(
-          clipBehavior: Clip.none,
-          alignment: Alignment.center,
-          children: [
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 56),
-              child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center),
-            ),
-            Positioned(
-              right: -19,
-              child: AnimatedOpacity(
-                opacity: enabled ? 1 : 0.0,
-                duration: InfMotion.feedback,
-                child: const Icon(Icons.arrow_drop_down_rounded, size: 22),
-              ),
-            ),
-          ],
-        ),
+        child: _ArrowLabel(title: title, active: enabled),
       ),
     );
   }
 }
 
-/// 首页 · 热门 · 热搜 in equal slots, 热门 at the centre of the bar. Each label follows the swipe:
+/// A home tab's title with the arrow that says a tap opens its picker, shown on the page in view.
+/// The arrow hangs off the label so the label stays centred in its slot.
+class _ArrowLabel extends StatelessWidget {
+  const _ArrowLabel({required this.title, required this.active});
+
+  final String title;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      alignment: Alignment.center,
+      children: [
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 56),
+          child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center),
+        ),
+        Positioned(
+          right: -19,
+          child: AnimatedOpacity(
+            opacity: active ? 1 : 0.0,
+            duration: InfMotion.feedback,
+            child: const Icon(Icons.arrow_drop_down_rounded, size: 22),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 关注 · 推荐 · 热搜 in equal slots, 推荐 at the centre of the bar. Each label follows the swipe:
 /// it darkens and underlines as its page slides in, so dragging between pages reads on the bar too.
 class _HomeTabs extends StatelessWidget {
   const _HomeTabs({
@@ -340,12 +423,16 @@ class _HomeTabs extends StatelessWidget {
     required this.current,
     required this.onSelect,
     required this.feedLabel,
+    required this.recommendLabel,
+    required this.boardLabel,
   });
 
   final PageController pages;
   final _HomePage current;
   final ValueChanged<_HomePage> onSelect;
   final Widget feedLabel;
+  final Widget recommendLabel;
+  final Widget boardLabel;
 
   static const _slot = 76.0;
 
@@ -397,8 +484,8 @@ class _HomeTabs extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             tab(_HomePage.feed, feedLabel),
-            tab(_HomePage.hot, const Text('热门')),
-            tab(_HomePage.board, const Text('热搜')),
+            tab(_HomePage.recommend, recommendLabel),
+            tab(_HomePage.board, boardLabel),
           ],
         );
       },
@@ -406,27 +493,15 @@ class _HomeTabs extends StatelessWidget {
   }
 }
 
-/// weibo.com's boards as a home page: 热搜 and the 文娱/社会/生活/体育 boards behind a row of
-/// chips, each entry with its badge, category and time on the board; a tap opens the entry's page.
-class _HotBoard extends StatefulWidget {
-  const _HotBoard({required this.scroll, required this.refreshKey});
+/// weibo.com's boards as a home page: the user's boards behind a row of chips, each entry with
+/// its badge, category and time on the board; a tap opens the entry's page.
+class _HotBoard extends StatelessWidget {
+  const _HotBoard({required this.board, required this.onSelect, required this.scroll, required this.refreshKey});
 
+  final HotBoard board;
+  final ValueChanged<HotBoard> onSelect;
   final ScrollController scroll;
   final GlobalKey<InfRefreshIndicatorState> refreshKey;
-
-  @override
-  State<_HotBoard> createState() => _HotBoardState();
-}
-
-class _HotBoardState extends State<_HotBoard> {
-  HotBoard _board = HotBoard.realtime;
-
-  void _select(HotBoard board) {
-    if (board == _board) return;
-    Haptic.selection.play();
-    setState(() => _board = board);
-    HotSearchStore.instance.load(board: board);
-  }
 
   static const _capsule = 46.0;
 
@@ -438,12 +513,13 @@ class _HotBoardState extends State<_HotBoard> {
     // the entries scroll beneath it; otherwise they are a plain row above the list.
     final floating = chrome.extendsBehindBars;
     final listTop = floating ? _capsule + 12 : 0.0;
+    final gutter = contentGutter(context);
     return AnimatedBuilder(
       animation: HotSearchStore.instance,
       builder: (context, _) {
         final store = HotSearchStore.instance;
-        final board = _board;
         final entries = store.entriesOf(board);
+        final at = store.loadedAtOf(board);
         final Widget list;
         if (entries == null) {
           list = StateSwitcher(
@@ -459,17 +535,19 @@ class _HotBoardState extends State<_HotBoard> {
           );
         } else {
           list = InfRefreshIndicator(
-            key: widget.refreshKey,
+            key: refreshKey,
             onRefresh: () => store.load(board: board, force: true),
             child: ListView.builder(
               key: PageStorageKey<String>('home-board-${board.name}'),
-              controller: widget.scroll,
+              controller: scroll,
               physics: const AlwaysScrollableScrollPhysics(),
               padding: EdgeInsets.only(
                 top: floating ? top + listTop : 0,
-                bottom: 104 + MediaQuery.paddingOf(context).bottom,
+                bottom: ShellLayout.clearance(context, 104) + MediaQuery.paddingOf(context).bottom,
+                left: gutter,
+                right: gutter,
               ),
-              itemCount: entries.isEmpty ? 1 : entries.length,
+              itemCount: entries.isEmpty ? 1 : entries.length + 1,
               itemBuilder: (context, index) {
                 if (entries.isEmpty) {
                   return const Padding(
@@ -477,7 +555,8 @@ class _HotBoardState extends State<_HotBoard> {
                     child: EmptyHint(text: '这个榜单暂时是空的', icon: Icons.local_fire_department_outlined),
                   );
                 }
-                final entry = entries[index];
+                if (index == 0) return _BoardUpdated(at: at);
+                final entry = entries[index - 1];
                 return HotSearchRow(
                   entry: entry,
                   detailed: true,
@@ -487,16 +566,11 @@ class _HotBoardState extends State<_HotBoard> {
             ),
           );
         }
-        final chips = _BoardChips(
-          current: board,
-          updatedAt: store.loadedAtOf(board),
-          onSelect: _select,
-          floating: floating,
-        );
+        final chips = HotBoardChips(current: board, onSelect: onSelect, floating: floating);
         if (!floating) {
           return Padding(
             padding: EdgeInsets.only(top: top),
-            child: Column(children: [chips, Expanded(child: list)]),
+            child: Column(children: [ContentColumn(child: chips), Expanded(child: list)]),
           );
         }
         return Stack(
@@ -505,8 +579,8 @@ class _HotBoardState extends State<_HotBoard> {
               child: entries == null ? Padding(padding: EdgeInsets.only(top: top + listTop), child: list) : list,
             ),
             Positioned(
-              left: 12,
-              right: 12,
+              left: 12 + gutter,
+              right: 12 + gutter,
               top: top + 6,
               height: _capsule,
               child: chrome.floatingPanel(context, radius: BorderRadius.circular(_capsule / 2), child: chips),
@@ -518,75 +592,21 @@ class _HotBoardState extends State<_HotBoard> {
   }
 }
 
-class _BoardChips extends StatelessWidget {
-  const _BoardChips({required this.current, required this.updatedAt, required this.onSelect, this.floating = false});
+/// When the board shown was fetched, above its first entry.
+class _BoardUpdated extends StatelessWidget {
+  const _BoardUpdated({required this.at});
 
-  final HotBoard current;
-  final DateTime? updatedAt;
-  final ValueChanged<HotBoard> onSelect;
-  final bool floating;
+  final DateTime? at;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final text = Theme.of(context).textTheme;
-    final at = updatedAt;
+    final time = at;
+    if (time == null) return const SizedBox(height: 4);
     return Padding(
-      padding: floating ? const EdgeInsets.fromLTRB(5, 0, 14, 0) : const EdgeInsets.fromLTRB(12, 8, 14, 4),
-      child: Row(
-        children: [
-          for (final board in HotBoard.values)
-            Padding(
-              padding: EdgeInsets.only(right: floating ? 2 : 6),
-              child: _BoardChip(
-                label: board.label,
-                selected: board == current,
-                floating: floating,
-                onTap: () => onSelect(board),
-              ),
-            ),
-          const Spacer(),
-          if (at != null)
-            Text('${relativeTime(at)}更新', style: text.labelSmall?.copyWith(color: scheme.onSurfaceVariant)),
-        ],
-      ),
-    );
-  }
-}
-
-class _BoardChip extends StatelessWidget {
-  const _BoardChip({required this.label, required this.selected, required this.onTap, this.floating = false});
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  /// In a floating capsule an unselected chip is only its word: a fill would sit as a second pane
-  /// on the pane.
-  final bool floating;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final chrome = InfChrome.of(context);
-    final idle = floating ? Colors.transparent : chrome.fill(scheme, scheme.surfaceContainerHigh, 0.6);
-    return Material(
-      color: selected ? chrome.fill(scheme, scheme.primaryContainer, floating ? 0.85 : 1) : idle,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: AnimatedDefaultTextStyle(
-          duration: InfMotion.feedback,
-          style: Theme.of(context).textTheme.labelLarge!.copyWith(
-            color: selected ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
-            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: Text(label),
-          ),
-        ),
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
+      child: Text(
+        '${relativeTime(time)}更新',
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
       ),
     );
   }
@@ -611,12 +631,245 @@ class _Timeline extends StatefulWidget {
 class _TimelineState extends State<_Timeline> {
   PagingController<Status>? get pager => widget.controller.pager;
 
+  static const Key _belowKey = ValueKey<String>('feed-below');
+
+  /// The post scroll offsets are measured from: at −[_topInset] its top sits just under the bar.
+  /// New posts load into the sliver above it, so they never move what is on screen.
+  String? _centerId;
+
+  /// Where reading is: the top-most visible post and how far its top sits above the bar's edge.
+  ({String id, double dy})? _position;
+
+  /// The newest post before the latest refresh; 上次看到这里 is drawn above it.
+  String? _markerId;
+
+  /// Posts above the top-most one seen since they arrived.
+  int _unread = 0;
+
+  /// The refresh brought more new posts than one page, so how many is unknown.
+  bool _unreadOpen = false;
+
+  /// The position saved last time lies beyond the loaded pages.
+  bool _canResume = false;
+  bool _resuming = false;
+
+  PagingController<Status>? _listening;
+  DateTime? _refreshedAt;
+  List<String> _ids = const [];
+  final Map<String, BuildContext> _rows = {};
+  DateTime _measuredAt = DateTime.fromMillisecondsSinceEpoch(0);
+  Timer? _saveTimer;
+
+  String get _sourceKey => widget.controller.source.key;
+  double get _topInset => MediaQuery.paddingOf(context).top;
+  double get _bottomInset => ShellLayout.clearance(context, 104) + MediaQuery.paddingOf(context).bottom;
+
+  @override
+  void dispose() {
+    _listening?.removeListener(_onPager);
+    _saveTimer?.cancel();
+    _savePosition();
+    super.dispose();
+  }
+
+  void _listen(PagingController<Status>? current) {
+    if (identical(current, _listening)) return;
+    _listening?.removeListener(_onPager);
+    _listening = current;
+    _ids = const [];
+    _centerId = null;
+    _refreshedAt = current?.refreshedAt;
+    current?.addListener(_onPager);
+    _onPager();
+  }
+
+  /// Keeps the reading place through refreshes and notes what they brought.
+  void _onPager() {
+    final current = _listening;
+    if (current == null || !mounted) return;
+    final ids = [for (final status in current.items) status.id];
+    if (ids.isEmpty) {
+      _ids = ids;
+      return;
+    }
+    if (_ids.isEmpty) {
+      _start(ids);
+    } else if (current.refreshedAt != _refreshedAt) {
+      final previousTop = _ids.first;
+      final at = ids.indexOf(previousTop);
+      if (at > 0) {
+        _markerId = previousTop;
+        _unread = at;
+        _unreadOpen = false;
+      } else if (at < 0) {
+        _markerId = null;
+        _unread = ids.length;
+        _unreadOpen = true;
+      }
+      if (_centerId == null || !ids.contains(_centerId)) {
+        // The refresh did not reach the place being read; it is somewhere further down.
+        final position = _position;
+        _recenter(ids.first, dy: 0);
+        if (position != null && !ids.contains(position.id)) _canResume = true;
+      }
+    }
+    _refreshedAt = current.refreshedAt;
+    _ids = ids;
+  }
+
+  /// The first page shown: from where reading stopped last time when that page holds it, with
+  /// what arrived since then counted against the newest post loaded last time.
+  void _start(List<String> ids) {
+    final saved = Prefs.instance.feedPosition(_sourceKey);
+    if (saved == null) {
+      _recenter(ids.first, dy: 0);
+      return;
+    }
+    _position = (id: saved.id, dy: saved.dy);
+    if (ids.contains(saved.id)) {
+      _recenter(saved.id, dy: saved.dy);
+    } else {
+      _recenter(ids.first, dy: 0);
+      _canResume = saved.id != ids.first;
+    }
+    final head = saved.head;
+    final at = head == null ? -1 : ids.indexOf(head);
+    if (at > 0) {
+      _markerId = head;
+      _unread = at;
+    } else if (at < 0 && saved.headAt != null) {
+      final items = _listening!.items;
+      final newer = items.where((status) => status.createdAt.isAfter(saved.headAt!)).length;
+      _unread = newer;
+      _unreadOpen = newer == items.length;
+    }
+  }
+
+  void _recenter(String id, {required double dy}) {
+    _centerId = id;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final scroll = widget.scrollController;
+      if (!mounted || !scroll.hasClients) return;
+      scroll.jumpTo(-_topInset - dy);
+      _measure(force: true);
+    });
+  }
+
+  /// Finds the top-most visible post, which is both the place to come back to and the newest
+  /// one read.
+  void _measure({bool force = false}) {
+    final now = DateTime.now();
+    if (!force && now.difference(_measuredAt) < const Duration(milliseconds: 120)) return;
+    _measuredAt = now;
+    final viewport = context.findRenderObject();
+    if (viewport is! RenderBox || !viewport.hasSize) return;
+    final top = _topInset;
+    final bottom = viewport.size.height - _bottomInset;
+    String? id;
+    var index = 1 << 30;
+    var dy = 0.0;
+    _rows.forEach((rowId, rowContext) {
+      final box = rowContext.findRenderObject();
+      if (box is! RenderBox || !box.attached || !box.hasSize) return;
+      final y = box.localToGlobal(Offset.zero, ancestor: viewport).dy;
+      if (y + box.size.height <= top + 24 || y >= bottom) return;
+      final at = _ids.indexOf(rowId);
+      if (at < 0 || at >= index) return;
+      index = at;
+      id = rowId;
+      dy = y - top;
+    });
+    final found = id;
+    if (found == null) return;
+    _position = (id: found, dy: dy);
+    if (found == _savedId) _canResume = false;
+    _scheduleSave();
+    final unread = _unread > index ? index : _unread;
+    // Reading on from the top drops the offer to go back to last time's place.
+    final dropResume = _canResume && index >= 3;
+    if (unread != _unread || dropResume) {
+      setState(() {
+        _unread = unread;
+        if (dropResume) _canResume = false;
+      });
+    }
+  }
+
+  String? get _savedId => Prefs.instance.feedPosition(_sourceKey)?.id;
+
+  void _scheduleSave() {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 600), _savePosition);
+  }
+
+  void _savePosition() {
+    final position = _position;
+    final items = _listening?.items ?? const <Status>[];
+    if (position == null || _canResume || items.isEmpty) return;
+    // The newest post actually seen: posts above it stay new for next time.
+    final head = items[_unread.clamp(0, items.length - 1)];
+    Prefs.instance.setFeedPosition(
+      _sourceKey,
+      FeedPosition(id: position.id, dy: position.dy, head: head.id, headAt: head.createdAt),
+    );
+  }
+
+  Future<void> _toNewest() async {
+    final scroll = widget.scrollController;
+    if (!scroll.hasClients) return;
+    Haptic.selection.play();
+    // The sliver above the centre only knows its full height once built, so the first run may
+    // stop short of the real top.
+    for (var pass = 0; pass < 4; pass++) {
+      final top = scroll.position.minScrollExtent;
+      if (scroll.offset <= top + 1) break;
+      await scroll.animateTo(top, duration: const Duration(milliseconds: 360), curve: Curves.easeOutCubic);
+      if (!mounted || !scroll.hasClients) return;
+    }
+    _measure(force: true);
+  }
+
+  /// Pages down until the post reading stopped at last time is loaded, then jumps to it.
+  Future<void> _resume() async {
+    final current = pager;
+    final target = Prefs.instance.feedPosition(_sourceKey);
+    if (current == null || target == null || _resuming) return;
+    Haptic.selection.play();
+    setState(() => _resuming = true);
+    for (var page = 0; page < 10 && !current.items.any((s) => s.id == target.id); page++) {
+      if (!current.hasMore) break;
+      await current.loadMore();
+      if (!mounted) return;
+      if (current.moreError != null) break;
+    }
+    if (!mounted) return;
+    final found = current.items.any((s) => s.id == target.id);
+    setState(() {
+      _resuming = false;
+      _canResume = false;
+      if (found) _recenter(target.id, dy: target.dy);
+    });
+    if (!found) showMessage(context, '没有找到上次读到的微博');
+  }
+
+  /// A pull or a second tap on 首页 asks for the newest posts, so it lands on them.
+  Future<void> _pullRefresh(PagingController<Status> current) async {
+    await current.refresh();
+    if (!mounted || current.items.isEmpty) return;
+    setState(() {
+      _unread = 0;
+      _unreadOpen = false;
+      _recenter(current.items.first.id, dy: 0);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge([widget.controller, pager, StatusStore.instance]),
+      animation: Listenable.merge([widget.controller, pager, StatusStore.instance, Prefs.instance]),
       builder: (context, _) {
         final current = pager;
+        _listen(current);
         return RefreshingBar(
           active: current?.backgroundRefreshing ?? false,
           child: StateSwitcher(child: _body(context, current)),
@@ -657,62 +910,253 @@ class _TimelineState extends State<_Timeline> {
         ),
       );
     }
-    return NotificationListener<ScrollNotification>(
+    final found = _centerId == null ? -1 : items.indexWhere((status) => status.id == _centerId);
+    final center = found < 0 ? 0 : found;
+    final sides = EdgeInsets.symmetric(horizontal: contentGutter(context));
+    int? above(Key key) {
+      final index = current.indexOfKey(key);
+      return index == null || index >= center ? null : center - 1 - index;
+    }
+
+    int? below(Key key) {
+      final index = current.indexOfKey(key);
+      return index == null || index < center ? null : index - center;
+    }
+
+    final pill = _unread > 0
+        ? _FeedPill(
+            icon: Icons.arrow_upward_rounded,
+            label: _unreadOpen ? '$_unread+ 条新微博' : '$_unread 条新微博',
+            onTap: _toNewest,
+          )
+        : _canResume
+            ? _FeedPill(
+                icon: Icons.arrow_downward_rounded,
+                label: _resuming ? '正在找上次读到的位置' : '回到上次读到的位置',
+                busy: _resuming,
+                onTap: _resume,
+              )
+            : null;
+
+    return Stack(
       key: const ValueKey('list'),
-      onNotification: (notification) {
-        current.onScroll(notification);
-        return false;
-      },
-      child: InfRefreshIndicator(
-        key: widget.refreshKey,
-        onRefresh: current.refresh,
-        color: Theme.of(context).colorScheme.primary,
-        child: ListView.builder(
-          controller: widget.scrollController,
-          key: PageStorageKey<String>('feed-${widget.controller.source.key}'),
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: EdgeInsets.only(
-            top: MediaQuery.paddingOf(context).top,
-            bottom: 104 + MediaQuery.paddingOf(context).bottom,
-          ),
-          itemCount: items.length + 1,
-          findChildIndexCallback: current.indexOfKey,
-          itemBuilder: (context, index) {
-            if (index == items.length) {
-              return _Footer(pager: current);
+      children: [
+        NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            current.onScroll(notification);
+            if (notification.depth == 0) {
+              if (notification is ScrollUpdateNotification) _measure();
+              if (notification is ScrollEndNotification) _measure(force: true);
             }
-            final status = items[index];
-            return AppearIn(
-              key: ValueKey(status.id),
-              animate: current.fresh.contains(status.id),
-              child: Column(
-                  children: [
-                    StatusCard(
-                      status: status,
-                      heroScope: '${status.id}-$index',
-                      onOpenStatus: (id) => openStatus(
-                        context,
-                        statusId: id,
-                        seed: status,
-                      ),
-                      onOpenUser: (uid) => openUser(context, uid),
-                      onOpenTopic: (name) => openTopic(context, name),
-                      onOpenUrl: (url) => openWeb(context, url),
-                      onOpenMedia: (media, mediaIndex, heroTag) {
-                        if (media[mediaIndex].kind == MediaKind.video) {
-                          openVideo(context, media[mediaIndex].url, coverUrl: media[mediaIndex].previewUrl);
-                        } else {
-                          openImage(context, media: media, index: mediaIndex, heroTag: heroTag);
-                        }
-                      },
-                      onRepost: () => openCompose(context, type: DraftType.repost, statusId: status.id),
-                      onComment: () => showCommentSheet(context, statusId: status.id, target: status),
-                    ),
-                    const Divider(),
-                  ],
-                ),
-            );
+            return false;
           },
+          child: InfRefreshIndicator(
+            key: widget.refreshKey,
+            onRefresh: () => _pullRefresh(current),
+            color: Theme.of(context).colorScheme.primary,
+            child: CustomScrollView(
+              controller: widget.scrollController,
+              center: _belowKey,
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                SliverToBoxAdapter(child: SizedBox(height: _topInset)),
+                SliverPadding(
+                  padding: sides,
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) => _row(context, current, center - 1 - index),
+                      childCount: center,
+                      findChildIndexCallback: above,
+                    ),
+                  ),
+                ),
+                SliverPadding(
+                  key: _belowKey,
+                  padding: sides,
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) => _row(context, current, center + index),
+                      childCount: items.length - center,
+                      findChildIndexCallback: below,
+                    ),
+                  ),
+                ),
+                SliverPadding(padding: sides, sliver: SliverToBoxAdapter(child: _Footer(pager: current))),
+                SliverToBoxAdapter(child: SizedBox(height: _bottomInset)),
+              ],
+            ),
+          ),
+        ),
+        Positioned(
+          top: _topInset + 10,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeIn,
+              transitionBuilder: (child, animation) => FadeTransition(
+                opacity: animation,
+                child: SlideTransition(
+                  position: Tween<Offset>(begin: const Offset(0, -0.4), end: Offset.zero).animate(animation),
+                  child: child,
+                ),
+              ),
+              child: pill ?? const SizedBox.shrink(),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _row(BuildContext context, PagingController<Status> current, int index) {
+    final status = current.items[index];
+    if (Prefs.instance.isBlocked(status.author.id)) {
+      return _Tracked(key: ValueKey(status.id), id: status.id, rows: _rows, child: const SizedBox.shrink());
+    }
+    return _Tracked(
+      key: ValueKey(status.id),
+      id: status.id,
+      rows: _rows,
+      child: AppearIn(
+        animate: current.fresh.contains(status.id),
+        child: Column(
+          children: [
+            if (status.id == _markerId && index > 0) const _ReadMarker(),
+            PaneSelected(
+              ids: ['status:${status.id}', if (status.repostOf != null) 'status:${status.repostOf!.id}'],
+              child: StatusCard(
+              status: status,
+              heroScope: '${status.id}-$index',
+              onOpenStatus: (id) => openStatus(
+                context,
+                statusId: id,
+                seed: status,
+              ),
+              onOpenUser: (uid) => openUser(context, uid),
+              onOpenTopic: (name) => openTopic(context, name),
+              onOpenUrl: (url) => openLink(context, url),
+              onOpenMedia: (media, mediaIndex, heroTag) {
+                if (media[mediaIndex].kind == MediaKind.video) {
+                  openVideo(context, media[mediaIndex].url, coverUrl: media[mediaIndex].previewUrl);
+                } else {
+                  openImage(context, media: media, index: mediaIndex, heroTag: heroTag);
+                }
+              },
+              onRepost: () => openCompose(context, type: DraftType.repost, statusId: status.id),
+              onComment: () => showCommentSheet(context, statusId: status.id, target: status),
+            ),
+            ),
+            const Divider(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Registers its row while mounted, so the list can tell which posts are on screen.
+class _Tracked extends StatefulWidget {
+  const _Tracked({super.key, required this.id, required this.rows, required this.child});
+
+  final String id;
+  final Map<String, BuildContext> rows;
+  final Widget child;
+
+  @override
+  State<_Tracked> createState() => _TrackedState();
+}
+
+class _TrackedState extends State<_Tracked> {
+  @override
+  void initState() {
+    super.initState();
+    widget.rows[widget.id] = context;
+  }
+
+  @override
+  void didUpdateWidget(_Tracked oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.id != widget.id) {
+      if (identical(oldWidget.rows[oldWidget.id], context)) oldWidget.rows.remove(oldWidget.id);
+      widget.rows[widget.id] = context;
+    }
+  }
+
+  @override
+  void dispose() {
+    if (identical(widget.rows[widget.id], context)) widget.rows.remove(widget.id);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
+class _ReadMarker extends StatelessWidget {
+  const _ReadMarker();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final line = Expanded(child: Divider(color: scheme.primary.withValues(alpha: 0.35), height: 1));
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+      child: Row(
+        children: [
+          line,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              '上次看到这里',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(color: scheme.primary),
+            ),
+          ),
+          line,
+        ],
+      ),
+    );
+  }
+}
+
+class _FeedPill extends StatelessWidget {
+  const _FeedPill({required this.icon, required this.label, required this.onTap, this.busy = false});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      key: ValueKey<IconData>(icon),
+      color: scheme.primary,
+      elevation: 3,
+      shadowColor: Colors.black38,
+      shape: const StadiumBorder(),
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: busy ? null : onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              busy
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: scheme.onPrimary),
+                    )
+                  : Icon(icon, size: 16, color: scheme.onPrimary),
+              const SizedBox(width: 6),
+              Text(label, style: TextStyle(color: scheme.onPrimary, fontSize: 13, fontWeight: FontWeight.w500)),
+            ],
+          ),
         ),
       ),
     );

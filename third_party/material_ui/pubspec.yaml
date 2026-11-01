@@ -1,0 +1,11 @@
+name: material_ui
+description: Stand-in for the pub.dev material_ui package that re-exports the SDK's own Material library.
+version: 1.9.0
+publish_to: none
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter

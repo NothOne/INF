@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/api.dart';
 import '../../core/haptics.dart';
 import '../../core/hot_search_store.dart';
+import '../../core/layout.dart';
 import '../../core/look.dart';
 import '../../core/models.dart';
 import '../../core/motion.dart';
@@ -164,14 +165,16 @@ class _HotTopicPageState extends State<HotTopicPage> with SingleTickerProviderSt
           physics: const AlwaysScrollableScrollPhysics(),
           headerSliverBuilder: (context, _) => [
             SliverToBoxAdapter(
-              child: _TopicHead(
-                title: _title,
-                name: _name,
-                isTopic: _isTopic,
-                entry: _entry,
-                info: _info,
-                trend: _trend,
-                related: _related,
+              child: ContentColumn(
+                child: _TopicHead(
+                  title: _title,
+                  name: _name,
+                  isTopic: _isTopic,
+                  entry: _entry,
+                  info: _info,
+                  trend: _trend,
+                  related: _related,
+                ),
               ),
             ),
             SliverOverlapAbsorber(
@@ -235,7 +238,7 @@ class _TabStrip extends SliverPersistentHeaderDelegate {
         color: color,
         border: Border(bottom: BorderSide(color: divider, width: 0.6)),
       ),
-      child: tabBar,
+      child: ContentColumn(child: tabBar),
     );
   }
 
@@ -337,6 +340,18 @@ class _TopicHead extends StatelessWidget {
             ],
             if (info?.host != null || info?.note != null) ...[const SizedBox(height: 4), _HostLine(info: info!)],
             if (heat.isNotEmpty) ...[const SizedBox(height: 8), _HeatBar(heat: heat, title: title)],
+            const SizedBox(height: 8),
+            _TimelineBar(
+              info: info,
+              onTap: () => openTopicTimeline(
+                context,
+                query: isTopic ? '#$name#' : name,
+                title: title,
+                info: info,
+                trend: trend,
+                entry: entry,
+              ),
+            ),
             if (words.isNotEmpty) ...[const SizedBox(height: 10), _RelatedWords(words: words)],
             if (users.isNotEmpty) ...[const SizedBox(height: 10), _UserStrip(users: users)],
             const SizedBox(height: 10),
@@ -451,6 +466,61 @@ class _HeatBar extends StatelessWidget {
                   ),
                 ),
               ],
+              Icon(Icons.chevron_right_rounded, size: 20, color: scheme.onSurfaceVariant),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The way into the topic's timeline, with when it started when that is known.
+class _TimelineBar extends StatelessWidget {
+  const _TimelineBar({required this.info, required this.onTap});
+
+  final TopicInfo? info;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    final started = info?.createdAt;
+    final onBoard = info?.boards.where((stint) => stint.onAt != null).map((stint) => stint.onAt!).toList();
+    onBoard?.sort();
+    final notes = [
+      if (started != null) '始于${relativeTime(started)}',
+      if (onBoard != null && onBoard.isNotEmpty) '${relativeTime(onBoard.first)}上榜',
+    ];
+    return Material(
+      color: InfChrome.of(context).fill(scheme, scheme.surfaceContainerHigh, 0.55),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          Haptic.selection.play();
+          onTap();
+        },
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 9, 6, 9),
+          child: Row(
+            children: [
+              Icon(Icons.timeline_rounded, size: 17, color: scheme.primary),
+              const SizedBox(width: 8),
+              Text('事件时间线', style: text.bodySmall?.copyWith(fontWeight: FontWeight.w600)),
+              if (notes.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    notes.join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              ] else
+                const Spacer(),
               Icon(Icons.chevron_right_rounded, size: 20, color: scheme.onSurfaceVariant),
             ],
           ),

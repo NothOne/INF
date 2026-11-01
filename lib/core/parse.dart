@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'links.dart';
 import 'models.dart';
 
 class WeiboEnvelope {
@@ -86,7 +87,12 @@ int countOf(dynamic value) {
 // ---------------------------------------------------------------------------------------------
 // HTML text
 
-String weiboHtmlToText(String html) {
+String weiboHtmlToText(String html) => weiboHtmlToRichText(html).text;
+
+/// The post's text, with each link's address standing in its place, and what m.weibo.cn drew for
+/// those links: their own words (a place's name, a super topic, 抽奖详情) and kind.
+({String text, Map<String, WeiboLink> links}) weiboHtmlToRichText(String html) {
+  final links = <String, WeiboLink>{};
   final withoutAnchors = html.replaceAllMapped(_anchorRegex, (match) {
     final attributes = match.group(1) ?? '';
     final body = match.group(2) ?? '';
@@ -103,18 +109,48 @@ String weiboHtmlToText(String html) {
       final name = _mentionName(decodedHref);
       return name == null ? preferred : '@$name';
     }
-    if (RegExp(r'#[^#\n]+#').hasMatch(preferred) || (decodedHref != null && _isTopicHref(decodedHref))) {
+    final superTopic = decodedHref != null && _isSuperTopicHref(decodedHref);
+    if (RegExp(r'#[^#\n]+#').hasMatch(preferred) || (decodedHref != null && _isTopicHref(decodedHref) && !superTopic)) {
       return preferred;
     }
     if (decodedHref != null) {
-      final resolved = _resolveLink(decodedHref);
-      return resolved == null ? preferred : ' $resolved ';
+      final absolute = _resolveLink(decodedHref);
+      if (absolute == null) return preferred;
+      final resolved = _asciiUrl(absolute);
+      final icon = RegExp(r'''<img\b[^>]*\bsrc\s*=\s*["']([^"']+)''', caseSensitive: false).firstMatch(body)?.group(1);
+      final kind = linkKindOf(resolved, iconUrl: icon);
+      final words = preferred == '网页链接' || preferred.startsWith('http') ? '' : preferred;
+      links[resolved] = WeiboLink(url: resolved, label: words, kind: kind);
+      return ' $resolved ';
     }
     return preferred;
   });
-  return _htmlFragmentToText(withoutAnchors)
+  final text = _htmlFragmentToText(withoutAnchors)
       .replaceAll(RegExp(r'[ \t\r\f]+'), ' ')
       .trim();
+  return (text: text, links: links);
+}
+
+/// The text tokenizer ends a link at the first character outside URL ASCII, so a raw 肖战 or a
+/// space in an href would cut it short.
+String _asciiUrl(String url) {
+  final buffer = StringBuffer();
+  for (final rune in url.runes) {
+    if (rune > 0x20 && rune < 0x7F && rune != 0x22 && rune != 0x3C && rune != 0x3E && rune != 0x5C &&
+        rune != 0x5E && rune != 0x60 && rune != 0x7B && rune != 0x7C && rune != 0x7D) {
+      buffer.writeCharCode(rune);
+    } else {
+      buffer.write(Uri.encodeComponent(String.fromCharCode(rune)));
+    }
+  }
+  return buffer.toString();
+}
+
+bool _isSuperTopicHref(String href) {
+  final normalized = href.toLowerCase();
+  return normalized.contains('containerid=100808') ||
+      normalized.contains('containerid%3d100808') ||
+      normalized.contains('/p/100808');
 }
 
 String _htmlFragmentToText(String fragment) {
@@ -387,21 +423,12 @@ Status? toStatus(dynamic element) {
   if (json == null) return null;
   final id = idOf(json['id']) ?? idOf(json['mid']);
   if (id == null) return null;
-  final convertedText = weiboHtmlToText(textOf(json['text']) ?? textOf(json['raw_text']) ?? '');
+  final rich = weiboHtmlToRichText(textOf(json['text']) ?? textOf(json['raw_text']) ?? '');
+  final convertedText = rich.text;
   final pageInfo = asMap(json['page_info']);
   final pics = _imagesFromPics(json);
   final images = pics.isNotEmpty ? pics : _imagesFromPicInfos(json);
-  final picVideo = textOf(json['pic_video']) ?? textOf(json['live_video']);
-  if (picVideo != null && picVideo.isNotEmpty && images.isNotEmpty) {
-    final first = images.first;
-    images[0] = Media.image(
-      first.url,
-      previewUrl: first.previewUrl,
-      width: first.width,
-      height: first.height,
-      liveUrl: picVideo,
-    );
-  }
+  _applyPicVideo(images, textOf(json['pic_video']));
   final media = <Media>[...images];
   final video = _videoFrom(pageInfo);
   if (video != null) media.add(video);
@@ -427,11 +454,14 @@ Status? toStatus(dynamic element) {
     commentsCount: countOf(json['comments_count']),
     likesCount: countOf(json['attitudes_count']),
     liked: intOf(json['attitudes_status']) == 1 || boolOf(json['liked']),
+    favorited: boolOf(json['favorited']),
     topics: topicNames.map(Topic.new).toList(),
     place: pageInfo != null && textOf(pageInfo['type']) == 'place'
-        ? Place(textOf(pageInfo['page_title']) ?? '')
+        ? Place(textOf(pageInfo['page_title']) ?? '', url: _pageUrlOf(pageInfo))
         : null,
     article: _articleCard(pageInfo),
+    card: _linkCard(pageInfo),
+    links: rich.links,
     isLongText: boolOf(json['isLongText']),
     region: textOf(json['region_name']),
     pinned: intOf(json['isTop']) == 1 ||
@@ -468,10 +498,46 @@ List<Media> _imagesFromPics(Map<String, dynamic> json) {
       previewUrl: (preview != null && preview.isNotEmpty) ? preview : url,
       width: intOf(geo?['width']) ?? 0,
       height: intOf(geo?['height']) ?? 0,
-      liveUrl: textOf(pic['video']) ?? textOf(pic['live_video']),
+      liveUrl: _liveUrlOf(pic, 'videoSrc'),
     ));
   }
   return result;
+}
+
+/// A live photo's motion clip. m.weibo.cn names it `videoSrc`, weibo.com `video`; when only the
+/// clip's `fid` survives, video.weibo.com still redirects the bare livephoto address to a signed one.
+/// GIFs carry the same fields with an mp4, so only `type: livephoto` counts.
+String? _liveUrlOf(Map<String, dynamic> pic, String key) {
+  if (textOf(pic['type']) != 'livephoto') return null;
+  final url = textOf(pic[key]) ?? textOf(pic['video']);
+  if (url != null && url.isNotEmpty) return url;
+  final fid = textOf(pic['fid']);
+  if (fid != null && fid.isNotEmpty) return livePhotoUrl(fid);
+  return null;
+}
+
+String livePhotoUrl(String fid) => 'https://video.weibo.com/media/play?livephoto='
+    '${Uri.encodeComponent('https://livephoto.us.sinaimg.cn/$fid.mov')}';
+
+/// weibo.com's `pic_video` lists the live pictures as `index:fid` pairs, e.g. `0:000C6S…,2:000Fx…`.
+void _applyPicVideo(List<Media> images, String? picVideo) {
+  if (picVideo == null || picVideo.isEmpty) return;
+  for (final pair in picVideo.split(',')) {
+    final colon = pair.indexOf(':');
+    if (colon <= 0) continue;
+    final index = int.tryParse(pair.substring(0, colon).trim());
+    final fid = pair.substring(colon + 1).trim();
+    if (index == null || index < 0 || index >= images.length || fid.isEmpty) continue;
+    final image = images[index];
+    if (image.isLive) continue;
+    images[index] = Media.image(
+      image.url,
+      previewUrl: image.previewUrl,
+      width: image.width,
+      height: image.height,
+      liveUrl: livePhotoUrl(fid),
+    );
+  }
 }
 
 List<Media> _imagesFromPicInfos(Map<String, dynamic> json) {
@@ -528,14 +594,17 @@ List<Media> _imagesFromPicInfos(Map<String, dynamic> json) {
       previewUrl: textOf(preview?['url']) ?? url,
       width: intOf(size?['width']) ?? 0,
       height: intOf(size?['height']) ?? 0,
-      liveUrl: textOf(info['video']) ?? textOf(info['video_url']) ?? textOf(info['pic_video']),
+      liveUrl: _liveUrlOf(info, 'video'),
     ));
   }
   return result;
 }
 
 Media? _videoFrom(Map<String, dynamic>? pageInfo) {
-  if (pageInfo == null || textOf(pageInfo['type']) != 'video') return null;
+  // weibo.com numbers `type` and names the kind in `object_type`.
+  if (pageInfo == null || (textOf(pageInfo['type']) != 'video' && textOf(pageInfo['object_type']) != 'video')) {
+    return null;
+  }
   final urls = asMap(pageInfo['urls']);
   final mediaInfo = asMap(pageInfo['media_info']);
   final candidates = [
@@ -608,6 +677,53 @@ Article? _articleCard(Map<String, dynamic>? pageInfo) {
     }
   }
   return Article(url: url, title: title, summary: summary);
+}
+
+String? _pageUrlOf(Map<String, dynamic> pageInfo) {
+  for (final key in ['page_url', 'url_ori', 'url', 'scheme']) {
+    final value = textOf(pageInfo[key]);
+    if (value != null && value.isNotEmpty) return value;
+  }
+  return null;
+}
+
+/// Cards other parts of the post already show (the video, an article, the place line, a topic
+/// that is in the text) are left out; everything else gets the generic card.
+LinkCard? _linkCard(Map<String, dynamic>? pageInfo) {
+  if (pageInfo == null || _videoFrom(pageInfo) != null || _articleCard(pageInfo) != null) return null;
+  final type = textOf(pageInfo['type']) ?? '';
+  final objectType = textOf(pageInfo['object_type']) ?? '';
+  if (const {'video', 'place', 'topic', 'search_topic', 'article'}.contains(type) || objectType == 'video') return null;
+  final url = _pageUrlOf(pageInfo);
+  final title = textOf(pageInfo['page_title']) ?? textOf(pageInfo['content1']) ?? '';
+  if (url == null || title.isEmpty) return null;
+  final content1 = textOf(pageInfo['content1']);
+  final content2 = textOf(pageInfo['content2']) ?? textOf(pageInfo['page_desc']);
+  final summary = [content1, content2].firstWhere((value) => value != null && value.isNotEmpty && value != title, orElse: () => null);
+  final pagePic = pageInfo['page_pic'];
+  final image = pagePic is Map ? textOf(pagePic['url']) : textOf(pagePic);
+  final kind = type == 'hudongvote' || objectType == 'hudongvote' ? LinkKind.vote : linkKindOf(url);
+  final typeLabel = switch (type) {
+    'hudongvote' => '投票',
+    'wenda' => '问答',
+    'group' => '群聊',
+    'user' => '用户',
+    'live' => '直播',
+    'music' => '音乐',
+    'movie' => '影视',
+    'book' => '书籍',
+    'goods' || 'shop' => '商品',
+    'event' || 'activity' => '活动',
+    _ => kind == LinkKind.web ? '网页' : linkKindLabel(kind),
+  };
+  return LinkCard(
+    url: url,
+    title: title,
+    summary: summary == null ? null : weiboHtmlToText(summary),
+    imageUrl: image == null || image.isEmpty ? null : image,
+    typeLabel: typeLabel,
+    kind: kind,
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1080,6 +1196,37 @@ List<HotSearch> parseHotBand(dynamic data, {HotBoard board = HotBoard.realtime})
   return result.where((entry) => seen.add(entry.word)).toList();
 }
 
+/// weibo.com's `feed/allGroups`: the 推荐 channels are its groups of type 1, 我的频道 then 频道推荐.
+/// Its 热门 becomes two: [RecommendChannel.hot] for the account and [RecommendChannel.everyone].
+List<RecommendChannel> parseRecommendChannels(dynamic data) {
+  final result = <RecommendChannel>[];
+  final seen = <String>{};
+  var first = true;
+  for (final element in asList(asMap(data)?['groups'])) {
+    final group = asMap(element);
+    if (group == null || intOf(group['group_type']) != 1) continue;
+    for (final item in asList(group['group'])) {
+      final channel = asMap(item);
+      final gid = idOf(channel?['gid']);
+      final container = textOf(channel?['containerid']);
+      final title = textOf(channel?['title'])?.trim();
+      if (gid == null || container == null || title == null || title.isEmpty || !seen.add(gid)) continue;
+      if (gid == RecommendChannel.hot.gid) {
+        result.addAll(const [RecommendChannel.hot, RecommendChannel.everyone]);
+        continue;
+      }
+      result.add(RecommendChannel(gid: gid, containerId: container, title: title, featured: first));
+    }
+    first = false;
+  }
+  if (!result.any((channel) => channel.personal)) result.insertAll(0, const [RecommendChannel.hot, RecommendChannel.everyone]);
+  return result;
+}
+
+/// weibo.com's `feed/hottimeline`: every call is a fresh draw, so pages overlap.
+List<Status> parseHotTimeline(dynamic data) =>
+    asList(asMap(data)?['statuses']).map(toStatus).whereType<Status>().toList();
+
 int? _hexColor(String? hex) {
   final value = hex?.trim().replaceFirst('#', '');
   if (value == null || (value.length != 6 && value.length != 8)) return null;
@@ -1194,10 +1341,15 @@ TopicInfo? parseTopicDetail(dynamic data) {
     final item = asMap(element);
     final name = textOf(item?['cate_desc']);
     if (item == null || name == null) continue;
+    final on = _boardTime(item['on_board_time']);
+    final off = _boardTime(item['off_board_time']);
     boards.add(TopicBoardStint(
       board: name,
       bestRank: intOf(item['top_pos']),
       minutes: intOf(item['duration_minute']) ?? 0,
+      onAt: on,
+      // A board still running reports the latest update as its end.
+      offAt: off != null && DateTime.now().difference(off) > const Duration(minutes: 12) ? off : null,
     ));
   }
   List<User> usersOf(dynamic list) => [
@@ -1229,8 +1381,19 @@ TopicInfo? parseTopicDetail(dynamic data) {
     contributors: usersOf(base['lists_users']),
     media: usersOf(media?['users']),
     createdAt: created == null || created <= 0 ? null : DateTime.fromMillisecondsSinceEpoch(created * 1000),
+    firstStatusId: idOf(asMap(object?['creator'])?['mid']),
   );
   return parsed.isEmpty && parsed.interactions == null ? null : parsed;
+}
+
+/// Board times are written `yyyyMMddHHmm` in Beijing time.
+DateTime? _boardTime(dynamic value) {
+  final text = textOf(value);
+  if (text == null || text.length != 12 || int.tryParse(text) == null) return null;
+  int part(int from, int to) => int.parse(text.substring(from, to));
+  return DateTime.utc(part(0, 4), part(4, 6), part(6, 8), part(8, 10), part(10, 12))
+      .subtract(const Duration(hours: 8))
+      .toLocal();
 }
 
 /// m.s.weibo.com's `ajax_topic/trend`: hourly reads for the last day.

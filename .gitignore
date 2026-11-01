@@ -49,3 +49,6 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Gradle output when building from android/ directly
+/android/build/

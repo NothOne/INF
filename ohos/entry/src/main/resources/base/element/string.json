@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "INF for Weibo"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "INF"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "INF"
+    }
+  ]
+}

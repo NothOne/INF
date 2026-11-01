@@ -11,7 +11,13 @@ export 'chrome.dart';
 /// a subtree can be previewed in another style by overriding the theme.
 @immutable
 class InfLook extends ThemeExtension<InfLook> {
-  const InfLook(this.style, {this.blur = defaultBlur, this.clarity = defaultClarity});
+  const InfLook(
+    this.style, {
+    this.blur = defaultBlur,
+    this.clarity = defaultClarity,
+    this.refraction = defaultRefraction,
+    this.liquidClarity = defaultLiquidClarity,
+  });
 
   final VisualStyle style;
 
@@ -21,10 +27,33 @@ class InfLook extends ThemeExtension<InfLook> {
   /// How much of what is behind glass shows through its tint, 0–1.
   final double clarity;
 
+  /// How far liquid glass bends what is behind its edges, 0–1.
+  final double refraction;
+
+  /// How see-through liquid glass is, 0–1: thinner tint and less blur towards 1.
+  final double liquidClarity;
+
   static const defaultBlur = 0.6;
   static const defaultClarity = 0.4;
+  static const defaultRefraction = 0.5;
+  static const defaultLiquidClarity = 0.5;
 
-  bool get glass => style == VisualStyle.glass;
+  /// Both glass styles: content runs behind the bars, and panels are panes rather than paper.
+  bool get glass => style != VisualStyle.classic;
+
+  bool get liquid => style == VisualStyle.liquid;
+
+  /// Liquid glass tint over the page, for chrome with little text on it.
+  double liquidTintAlpha(Brightness brightness) {
+    final dark = brightness == Brightness.dark;
+    final thick = dark ? 0.62 : 0.66;
+    final thin = dark ? 0.10 : 0.12;
+    return thick + (thin - thick) * liquidClarity;
+  }
+
+  /// Liquid glass keeps a light frost so text over a busy feed stays legible; most of its
+  /// look comes from the edge, not the blur.
+  double get liquidBlurSigma => 1.5 + 6.5 * (1 - liquidClarity);
 
   /// 0 is sharp glass, 1 the heaviest frost. The default still lands on the previous sigma,
   /// so opening the clear end does not shift a setting the user has not touched.
@@ -55,8 +84,20 @@ class InfLook extends ThemeExtension<InfLook> {
   static InfLook of(BuildContext context) => Theme.of(context).extension<InfLook>() ?? classic;
 
   @override
-  InfLook copyWith({VisualStyle? style, double? blur, double? clarity}) =>
-      InfLook(style ?? this.style, blur: blur ?? this.blur, clarity: clarity ?? this.clarity);
+  InfLook copyWith({
+    VisualStyle? style,
+    double? blur,
+    double? clarity,
+    double? refraction,
+    double? liquidClarity,
+  }) =>
+      InfLook(
+        style ?? this.style,
+        blur: blur ?? this.blur,
+        clarity: clarity ?? this.clarity,
+        refraction: refraction ?? this.refraction,
+        liquidClarity: liquidClarity ?? this.liquidClarity,
+      );
 
   @override
   InfLook lerp(InfLook? other, double t) {
@@ -65,6 +106,8 @@ class InfLook extends ThemeExtension<InfLook> {
       t < 0.5 ? style : other.style,
       blur: lerpDouble(blur, other.blur, t)!,
       clarity: lerpDouble(clarity, other.clarity, t)!,
+      refraction: lerpDouble(refraction, other.refraction, t)!,
+      liquidClarity: lerpDouble(liquidClarity, other.liquidClarity, t)!,
     );
   }
 }
