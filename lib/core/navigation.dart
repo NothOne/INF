@@ -4,6 +4,7 @@ import '../core/container_route.dart';
 import '../core/links.dart';
 import '../core/models.dart';
 import '../core/pane.dart';
+import '../core/prefs.dart';
 import '../features/compose/compose_page.dart';
 import '../features/detail/status_detail_page.dart';
 import '../features/friends/friends_page.dart';
@@ -13,6 +14,7 @@ import '../features/login/login_page.dart';
 import '../features/longimage/long_image_page.dart';
 import '../features/media/image_viewer_page.dart';
 import '../features/media/video_page.dart';
+import '../features/place/place_sheet.dart';
 import '../features/message/chat_page.dart';
 import '../features/relations/relations_page.dart';
 import '../features/search/search_page.dart';
@@ -25,9 +27,10 @@ import '../features/user/user_page.dart';
 import '../features/web/link_fallback_page.dart';
 import '../features/web/web_page.dart';
 
-/// Normal destinations use MaterialPageRoute so the app-wide PageTransitionsTheme
-/// (fade-forwards with predictive back on Android, Cupertino on iOS) owns the transition. A tap
-/// that captured a [ContainerOrigin] just before gets a page that grows out of what was tapped.
+/// Every page moves the one way [Prefs.pageMotion] says. [PageMotion.expand] grows it out of the
+/// [ContainerOrigin] the tap captured just before, or out of the touch itself; [PageMotion.slide]
+/// is MaterialPageRoute, so the app-wide PageTransitionsTheme (fade-forwards with predictive back
+/// on Android, Cupertino on iOS) owns the transition.
 ///
 /// [pane] marks a page that may open in the [DetailPane] beside a list, and names what it shows
 /// so the list can mark it; it does whenever [context] is in or beside one. Everything else opens
@@ -58,10 +61,13 @@ Future<T?> pushInf<T>(BuildContext context, Widget page, {bool overlay = false, 
     );
   }
   final origin = ContainerOrigin.take();
-  if (origin != null) {
-    return navigator.push<T>(ContainerTransformRoute<T>(origin: origin, builder: (context) => page));
+  if (Prefs.instance.pageMotion == PageMotion.slide) {
+    return navigator.push<T>(MaterialPageRoute<T>(builder: (context) => page));
   }
-  return navigator.push<T>(MaterialPageRoute<T>(builder: (context) => page));
+  return navigator.push<T>(ContainerTransformRoute<T>(
+    origin: origin ?? ContainerOrigin.atTouch(MediaQuery.sizeOf(context)),
+    builder: (context) => page,
+  ));
 }
 
 Future<void> openStatus(
@@ -202,6 +208,9 @@ Future<void> openLink(BuildContext context, String url, {String? title}) async {
 
 Future<void> openLinkFallback(BuildContext context, String url, {String? appUrl, String? title}) =>
     pushInf(context, LinkFallbackPage(url: url, appUrl: appUrl, title: title));
+
+/// Where a post was sent from: its address, and the way there in a map app.
+Future<void> openPlace(BuildContext context, Place place) => showPlaceSheet(context, place);
 
 Future<void> openVideo(BuildContext context, String url, {String? coverUrl}) =>
     pushInf(context, VideoPage(url: url, coverUrl: coverUrl), overlay: true);

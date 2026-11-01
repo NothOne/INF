@@ -251,6 +251,19 @@ class _SettingsPageState extends State<SettingsPage> {
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
                   ),
                 ),
+                _ChoiceRow<PageMotion>(
+                  title: '页面动效',
+                  options: [for (final value in PageMotion.values) (value, value.label)],
+                  selected: prefs.pageMotion,
+                  onSelect: prefs.setPageMotion,
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 7),
+                  child: Text(
+                    prefs.pageMotion.description,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ),
                 const Divider(),
                 const _SectionTitle('操作'),
                 _ChoiceRow<HapticLevel>(

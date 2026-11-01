@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../core/layout.dart';
 import '../../core/look.dart';
 import '../../core/api.dart';
+import '../../core/container_route.dart';
 import '../../core/models.dart';
 import '../../core/navigation.dart';
 import '../../core/paging.dart';
@@ -1000,12 +1001,16 @@ class _InlineReplies extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final shown = comment.replies.take(3).toList();
+    final fill = InfChrome.of(context).fill(scheme, scheme.surfaceContainerHigh, 0.58);
     return Material(
-      color: InfChrome.of(context).fill(scheme, scheme.surfaceContainerHigh, 0.58),
+      color: fill,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
+        onTap: () {
+          ContainerOrigin.capture(context, radius: 8, color: fill);
+          onTap();
+        },
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
           child: Column(

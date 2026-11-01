@@ -123,8 +123,15 @@ class Topic {
 
 class Place {
   final String name;
+
+  /// Weibo's page for the place.
   final String? url;
-  const Place(this.name, {this.url});
+  final String? address;
+
+  /// What Weibo says about it, e.g. 198人来过 1084条微博.
+  final String? summary;
+  final String? picUrl;
+  const Place(this.name, {this.url, this.address, this.summary, this.picUrl});
 }
 
 /// What a link in a post points at, as far as its address and Weibo's little icon tell.

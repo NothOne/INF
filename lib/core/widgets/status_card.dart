@@ -6,6 +6,7 @@ import '../../core/motion.dart';
 import '../../core/chrome.dart';
 import '../../core/container_route.dart';
 import '../../core/haptics.dart';
+import '../../core/layout.dart';
 import '../../core/models.dart';
 import '../../core/parse.dart';
 import '../../core/native.dart';
@@ -174,13 +175,19 @@ class _StatusCardState extends State<StatusCard> {
     StatusStore.instance.seed(widget.status);
   }
 
-  /// Opens this post's own page, which grows out of the card: the page's copy of the card starts
-  /// exactly over this one, below the status bar and the page's toolbar.
+  /// Opens this post's own page, which grows out of the card. On a phone the page's copy of the
+  /// card starts exactly over this one, below the status bar and the page's toolbar. Beside the
+  /// rail the card is laid out narrower than the full-screen page, so its text wraps differently
+  /// and no copy can cover it: the page grows out of the card's shape instead.
   void _openSelf(String id) {
     final open = widget.onOpenStatus;
     if (open == null) return;
-    final view = View.of(context);
-    ContainerOrigin.capture(context, alignTop: view.padding.top / view.devicePixelRatio + kToolbarHeight);
+    if (WindowClass.of(context).wide) {
+      ContainerOrigin.capture(context, radius: 12, color: Theme.of(context).colorScheme.surface);
+    } else {
+      final view = View.of(context);
+      ContainerOrigin.capture(context, alignTop: view.padding.top / view.devicePixelRatio + kToolbarHeight);
+    }
     open(id);
   }
 
@@ -192,8 +199,11 @@ class _StatusCardState extends State<StatusCard> {
     if (open == null) return null;
     return (url) {
       final index = status.media.indexWhere((media) => media.kind == MediaKind.video);
-      if (openMedia != null && index >= 0 && status.links[url]?.kind == LinkKind.video) {
+      final kind = status.links[url]?.kind;
+      if (openMedia != null && index >= 0 && kind == LinkKind.video) {
         openMedia(status.media, index, null);
+      } else if (kind == LinkKind.place && status.place != null) {
+        openPlace(context, status.place!);
       } else {
         open(url);
       }
@@ -304,7 +314,7 @@ class _StatusCardState extends State<StatusCard> {
                 const SizedBox(height: 7),
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTap: status.place!.url == null ? null : () => widget.onOpenUrl?.call(status.place!.url!),
+                  onTap: widget.onOpenUrl == null ? null : () => openPlace(context, status.place!),
                   child: Row(
                     children: [
                       Icon(Icons.place_outlined, size: 15, color: scheme.onSurfaceVariant),

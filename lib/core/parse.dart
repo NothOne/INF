@@ -457,7 +457,13 @@ Status? toStatus(dynamic element) {
     favorited: boolOf(json['favorited']),
     topics: topicNames.map(Topic.new).toList(),
     place: pageInfo != null && textOf(pageInfo['type']) == 'place'
-        ? Place(textOf(pageInfo['page_title']) ?? '', url: _pageUrlOf(pageInfo))
+        ? Place(
+            textOf(pageInfo['page_title']) ?? '',
+            url: _pageUrlOf(pageInfo),
+            address: textOf(pageInfo['content1']),
+            summary: textOf(pageInfo['content2']),
+            picUrl: textOf(asMap(pageInfo['page_pic'])?['url']),
+          )
         : null,
     article: _articleCard(pageInfo),
     card: _linkCard(pageInfo),

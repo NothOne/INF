@@ -1,8 +1,10 @@
-import 'dart:ui' show lerpDouble;
+import 'dart:ui' show ImageFilter, TileMode, lerpDouble;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
+
+import 'touches.dart';
 
 
 /// Where the next page grows from, captured from the tapped widget just before navigating.
@@ -25,6 +27,14 @@ class ContainerOrigin {
   /// the page is shifted so that content stays exactly where it was and the page grows around
   /// it; when null, the page fades in inside the growing shape.
   final double? alignTop;
+
+  /// What a page opened without a captured origin grows out of: a small disc where the finger
+  /// last went down, or the middle of the screen.
+  static ContainerOrigin atTouch(Size screen) {
+    const side = 56.0;
+    final at = Touches.lastDown ?? screen.center(Offset.zero);
+    return ContainerOrigin(rect: Rect.fromCenter(center: at, width: side, height: side), radius: side / 2);
+  }
 
   static ContainerOrigin? _pending;
   static DateTime _capturedAt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -310,7 +320,16 @@ class _ContainerTransitionState extends State<_ContainerTransition> {
                     ),
                     Opacity(
                       opacity: pageOpacity,
-                      child: Transform.translate(offset: Offset(dx, dy), child: page),
+                      // Growing out of a shape, the page comes into focus as it fades in.
+                      child: ImageFiltered(
+                        enabled: !aligned && pageOpacity < 0.98,
+                        imageFilter: ImageFilter.blur(
+                          sigmaX: 10 * (1 - pageOpacity),
+                          sigmaY: 10 * (1 - pageOpacity),
+                          tileMode: TileMode.decal,
+                        ),
+                        child: Transform.translate(offset: Offset(dx, dy), child: page),
+                      ),
                     ),
                   ],
                 ),

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/rendering.dart';
 
+import 'fade_safe_backdrop.dart';
 import 'look.dart';
 import 'touches.dart';
 
@@ -160,7 +161,7 @@ class LiquidSurface extends StatelessWidget {
       );
     } else {
       final sigma = look.liquidBlurSigma * lens.frost;
-      glass = BackdropFilter(filter: _fallbackFilter(sigma), child: body);
+      glass = FadeSafeBackdrop(filter: _fallbackFilter(sigma), child: body);
     }
     final pane = ClipRRect(borderRadius: borderRadius, child: glass);
     if (!lifted) return pane;
@@ -354,8 +355,9 @@ class _LiquidLayer extends ContainerLayer {
 
   @override
   void addToScene(ui.SceneBuilder builder) {
-    final filter = source?.filterNow();
+    final filter = insideFade(this) ? null : source?.filterNow();
     if (filter == null) {
+      engineLayer = null;
       addChildrenToScene(builder);
       return;
     }

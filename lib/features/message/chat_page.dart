@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../core/api.dart';
 import '../../core/haptics.dart';
 import '../../core/layout.dart';
+import '../../core/link_preview.dart';
 import '../../core/look.dart';
 import '../../core/models.dart';
 import '../../core/navigation.dart';
@@ -18,6 +19,7 @@ import '../../core/widgets/avatar.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/mention_picker.dart';
 import '../../core/widgets/rich_text.dart';
+import '../../core/widgets/smart_image.dart';
 
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key, required this.uid, this.name, this.group = false});
@@ -400,16 +402,123 @@ class _Bubble extends StatelessWidget {
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: mine ? scheme.onPrimaryContainer : scheme.onSurface,
                         ),
+                    linkColor: mine ? scheme.onPrimaryContainer : null,
                     onMention: onOpenUser,
                     onTopic: onOpenTopic,
                     onUrl: onOpenUrl,
                   ),
                 ),
+                for (final url in _linksIn(message.displayText).take(2))
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: _LinkPreviewCard(url: url, onTap: () => onOpenUrl(url)),
+                  ),
               ],
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+final _linkPattern = RegExp(r'https?://[^\s<>"，。！？、）)\]】]+', caseSensitive: false);
+
+/// The addresses in a message worth a preview; pictures already show as pictures.
+Iterable<String> _linksIn(String text) => _linkPattern
+    .allMatches(text)
+    .map((match) => match.group(0)!)
+    .where((url) => !(Uri.tryParse(url)?.host.endsWith('sinaimg.cn') ?? true))
+    .toSet();
+
+/// What a link in a message points at, under the bubble: a post's author and text, or a page's
+/// title, description and site.
+class _LinkPreviewCard extends StatelessWidget {
+  const _LinkPreviewCard({required this.url, required this.onTap});
+
+  final String url;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    return FutureBuilder<LinkPreview?>(
+      future: LinkPreviews.instance.of(url),
+      builder: (context, snapshot) {
+        final preview = snapshot.data;
+        final loading = snapshot.connectionState != ConnectionState.done;
+        final title = preview?.title ?? (loading ? '正在读取链接…' : null);
+        final site = preview?.site ?? Uri.tryParse(url)?.host ?? '';
+        final picture = preview?.imageUrl;
+        return Container(
+          constraints: const BoxConstraints(maxWidth: 290),
+          child: Material(
+            color: scheme.surfaceContainerLow,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.6)),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: onTap,
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (title != null)
+                            Text(
+                              title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: text.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: loading ? scheme.onSurfaceVariant : scheme.onSurface,
+                              ),
+                            ),
+                          if (preview?.description != null) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              preview!.description!,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                            ),
+                          ],
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Icon(Icons.link_rounded, size: 14, color: scheme.primary),
+                              const SizedBox(width: 3),
+                              Flexible(
+                                child: Text(
+                                  site,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: text.labelSmall?.copyWith(color: scheme.primary),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (picture != null) ...[
+                      const SizedBox(width: 10),
+                      SmartImage(url: picture, width: 56, height: 56, radius: 8),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

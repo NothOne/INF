@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import 'chrome.dart';
+import 'fade_safe_backdrop.dart';
 import 'prefs.dart';
 
 export 'chrome.dart';
@@ -213,7 +214,7 @@ class GlassSurface extends StatelessWidget {
       borderRadius: borderRadius,
       child: sigma < 0.5
           ? frosted
-          : BackdropFilter(
+          : FadeSafeBackdrop(
               enabled: k > 0,
               filter: _glassFilter(look.blurSigma, k),
               child: frosted,

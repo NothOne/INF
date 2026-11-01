@@ -7,10 +7,10 @@ import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/haptics.dart';
 import '../../core/models.dart';
+import '../../core/navigation.dart';
 import '../../core/parse.dart';
 import '../../core/prefs.dart';
 import '../../core/widgets/common.dart';
-import '../compose/compose_page.dart';
 
 class DraftsPage extends StatefulWidget {
   const DraftsPage({super.key});
@@ -106,11 +106,7 @@ class _DraftsPageState extends State<DraftsPage> {
                       final openable = draft.state != DraftState.queued && draft.state != DraftState.sending;
                       return InkWell(
                         onTap: openable
-                            ? () => Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (context) => ComposePage(draftId: draft.id),
-                                  ),
-                                )
+                            ? () => openCompose(context, draftId: draft.id)
                             : null,
                         child: Padding(
                           padding: const EdgeInsets.fromLTRB(16, 12, 6, 12),

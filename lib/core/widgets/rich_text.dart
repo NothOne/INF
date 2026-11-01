@@ -32,6 +32,7 @@ class RichStatusText extends StatefulWidget {
     this.onOpenImage,
     this.inlineImages = true,
     this.links = const {},
+    this.linkColor,
   });
 
   final String text;
@@ -40,6 +41,10 @@ class RichStatusText extends StatefulWidget {
   final Map<String, WeiboLink> links;
   final TextStyle? style;
   final Color? color;
+
+  /// For mentions, topics and links; the accent colour unless the text sits on it, as in a sent
+  /// message.
+  final Color? linkColor;
   final int maxLines;
   final ValueChanged<String>? onMention;
   final ValueChanged<String>? onTopic;
@@ -76,6 +81,7 @@ class _RichStatusTextState extends State<RichStatusText> {
     final base = widget.style ?? Theme.of(context).textTheme.bodyLarge!;
     final style = widget.color == null ? base : base.copyWith(color: widget.color);
     final scheme = Theme.of(context).colorScheme;
+    final linkColor = widget.linkColor ?? scheme.primary;
     _clearRecognizers();
     return ListenableBuilder(
       listenable: EmojiStore.instance,
@@ -89,14 +95,14 @@ class _RichStatusTextState extends State<RichStatusText> {
               final callback = widget.onMention;
               spans.add(_link(
                 token.value,
-                scheme.primary,
+                linkColor,
                 callback == null ? null : () => callback(_mentionName(token.value)),
               ));
             case _TokenKind.topic:
               final callback = widget.onTopic;
               spans.add(_link(
                 token.value,
-                scheme.primary,
+                linkColor,
                 callback == null ? null : () => callback(_topicName(token.value)),
               ));
             case _TokenKind.url:
@@ -104,7 +110,7 @@ class _RichStatusTextState extends State<RichStatusText> {
               if (imageUrl != null && !widget.inlineImages) {
                 final callback = widget.onOpenImage;
                 final tag = _imageTag(token.start);
-                Widget link = InlineLinkLabel(icon: Icons.image_outlined, label: '查看图片', style: style);
+                Widget link = InlineLinkLabel(icon: Icons.image_outlined, label: '查看图片', style: style, color: linkColor);
                 if (callback != null) {
                   link = GestureDetector(
                     behavior: HitTestBehavior.opaque,
@@ -147,6 +153,7 @@ class _RichStatusTextState extends State<RichStatusText> {
                   icon: linkKindIcon(kind),
                   label: _linkLabel(known?.label ?? '', kind),
                   style: style,
+                  color: linkColor,
                 );
                 if (callback != null) {
                   link = GestureDetector(
@@ -204,15 +211,16 @@ class _RichStatusTextState extends State<RichStatusText> {
 /// A link in running text drawn as an icon and a word, in the accent colour and the text's size:
 /// 查看图片, 网页链接, 查看视频.
 class InlineLinkLabel extends StatelessWidget {
-  const InlineLinkLabel({super.key, required this.icon, required this.label, this.style});
+  const InlineLinkLabel({super.key, required this.icon, required this.label, this.style, this.color});
 
   final IconData icon;
   final String label;
   final TextStyle? style;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
-    final color = Theme.of(context).colorScheme.primary;
+    final color = this.color ?? Theme.of(context).colorScheme.primary;
     final base = style ?? DefaultTextStyle.of(context).style;
     final size = base.fontSize ?? 15;
     return Row(

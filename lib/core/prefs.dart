@@ -63,6 +63,16 @@ enum DeviceLayout {
   const DeviceLayout(this.label, this.description);
 }
 
+/// How every page opens over the one it was opened from, and closes back into it.
+enum PageMotion {
+  expand('展开', '页面从点按的地方放大展开，返回时缩回原处'),
+  slide('推入', '页面从右侧推入，返回时向右滑出');
+
+  final String label;
+  final String description;
+  const PageMotion(this.label, this.description);
+}
+
 /// One store for the few settings the app has. It is a ChangeNotifier so the shell can rebuild the
 /// theme when the user changes it, instead of restarting the activity like the Compose version did.
 class Prefs extends ChangeNotifier {
@@ -152,6 +162,16 @@ class Prefs extends ChangeNotifier {
 
   Future<void> setDeviceLayout(DeviceLayout layout) async {
     await _prefs.setString('device_layout', layout.name);
+    notifyListeners();
+  }
+
+  PageMotion get pageMotion {
+    final value = _prefs.getString('page_motion');
+    return PageMotion.values.where((m) => m.name == value).firstOrNull ?? PageMotion.slide;
+  }
+
+  Future<void> setPageMotion(PageMotion motion) async {
+    await _prefs.setString('page_motion', motion.name);
     notifyListeners();
   }
 

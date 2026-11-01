@@ -172,6 +172,12 @@ String _superTopicName(Uri uri) {
 
 const _appNames = {
   'sinaweibo': '微博',
+  'androidamap': '高德地图',
+  'amapuri': '高德地图',
+  'baidumap': '百度地图',
+  'bdapp': '百度地图',
+  'qqmap': '腾讯地图',
+  'geo': '地图',
   'bilibili': '哔哩哔哩',
   'cctvnews': '央视新闻',
   'yangshipin': '央视频',

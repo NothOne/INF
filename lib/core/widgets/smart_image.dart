@@ -50,6 +50,13 @@ class SmartImage extends StatefulWidget {
   State<SmartImage> createState() => _SmartImageState();
 }
 
+/// The picture an address shows. sinaimg signs avatars (`?KID=…&Expires=…&ssig=…`) anew in every
+/// response, so a list refreshed under the reader would otherwise blank and fade in each one.
+String _identity(String url) {
+  final query = url.indexOf('?');
+  return query < 0 ? url : url.substring(0, query);
+}
+
 class _SmartImageState extends State<SmartImage> {
   static const _fadeIn = Duration(milliseconds: 200);
 
@@ -59,7 +66,7 @@ class _SmartImageState extends State<SmartImage> {
   @override
   void didUpdateWidget(SmartImage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (sanitizeImageUrl(oldWidget.url) != sanitizeImageUrl(widget.url)) _covered = false;
+    if (_identity(sanitizeImageUrl(oldWidget.url)) != _identity(sanitizeImageUrl(widget.url))) _covered = false;
   }
 
   void _cover() {
@@ -104,7 +111,7 @@ class _SmartImageState extends State<SmartImage> {
       image = preview.isEmpty ? _flat(scheme, icon: true) : _underlay(scheme, clean, preview);
     } else {
       final picture = Image(
-        key: ValueKey(clean),
+        key: ValueKey(_identity(clean)),
         image: weiboImageProvider(clean, cacheWidth: widget.cacheWidth),
         width: widget.width,
         height: widget.height,
@@ -112,7 +119,8 @@ class _SmartImageState extends State<SmartImage> {
         alignment: widget.alignment,
         gaplessPlayback: true,
         frameBuilder: (context, child, frame, sync) {
-          if (frame != null && sync) {
+          // A picture already shown keeps showing while the same one loads under a fresh address.
+          if (_covered || (frame != null && sync)) {
             if (!_covered) WidgetsBinding.instance.addPostFrameCallback((_) => _cover());
             return child;
           }

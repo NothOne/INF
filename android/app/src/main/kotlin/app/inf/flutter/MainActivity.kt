@@ -64,7 +64,8 @@ class MainActivity : FlutterActivity() {
         } else {
             Intent(Intent.ACTION_VIEW, Uri.parse(url))
         }
-        intent.addCategory(Intent.CATEGORY_BROWSABLE)
+        // Map apps answer geo: only without it.
+        if (intent.scheme != "geo") intent.addCategory(Intent.CATEGORY_BROWSABLE)
         if (target != null) intent.setPackage(target)
         return try {
             startActivity(intent)

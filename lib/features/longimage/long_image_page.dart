@@ -66,10 +66,7 @@ class _LongImagePageState extends State<LongImagePage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Padding(
-                          padding: EdgeInsets.fromLTRB(10, 10, 0, 0),
-                          child: InfLogo(height: 14),
-                        ),
+                        const SizedBox(height: 6),
                         StatusCard(
                           status: widget.status,
                           detail: true,
@@ -82,9 +79,21 @@ class _LongImagePageState extends State<LongImagePage> {
                         ),
                         Padding(
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
-                          child: Text(
-                            '长图由 INF 生成 · https://m.weibo.cn/detail/${widget.status.id}',
-                            style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant.withValues(alpha: 0.7)),
+                          child: Row(
+                            children: [
+                              const InfLogo(height: 13),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                child: Text(
+                                  '长图由 INF 生成 · https://m.weibo.cn/detail/${widget.status.id}',
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    height: 1.3,
+                                    color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
