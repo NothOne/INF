@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui' show ImageFilter, TileMode, lerpDouble;
 
 import 'package:flutter/material.dart';
@@ -292,6 +293,13 @@ class _ContainerTransitionState extends State<_ContainerTransition> {
         final pageOpacity = aligned
             ? ((settled ? 1.0 : animation.value) / 0.1).clamp(0.0, 1.0)
             : Curves.easeOut.transform(((t - 0.18) / 0.5).clamp(0.0, 1.0));
+        // Aligned, the copy must match the original at both ends, so the blur peaks mid-flight;
+        // otherwise the page comes into focus as it fades in.
+        final blur = settled
+            ? 0.0
+            : aligned
+                ? 9 * math.sin(math.pi * travel)
+                : 10 * (1 - pageOpacity);
         final fill = origin.color;
         final fillOpacity = fill == null ? 0.0 : 1 - Curves.easeIn.transform((t / 0.45).clamp(0.0, 1.0));
         final shape = RRect.fromRectAndRadius(rect, Radius.circular(radius));
@@ -320,12 +328,11 @@ class _ContainerTransitionState extends State<_ContainerTransition> {
                     ),
                     Opacity(
                       opacity: pageOpacity,
-                      // Growing out of a shape, the page comes into focus as it fades in.
                       child: ImageFiltered(
-                        enabled: !aligned && pageOpacity < 0.98,
+                        enabled: blur > 0.2,
                         imageFilter: ImageFilter.blur(
-                          sigmaX: 10 * (1 - pageOpacity),
-                          sigmaY: 10 * (1 - pageOpacity),
+                          sigmaX: blur,
+                          sigmaY: blur,
                           tileMode: TileMode.decal,
                         ),
                         child: Transform.translate(offset: Offset(dx, dy), child: page),

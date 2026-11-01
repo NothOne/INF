@@ -22,10 +22,13 @@ import '../../core/widgets/rich_text.dart';
 import '../../core/widgets/smart_image.dart';
 
 class ChatPage extends StatefulWidget {
-  const ChatPage({super.key, required this.uid, this.name, this.group = false});
+  const ChatPage({super.key, required this.uid, this.name, this.avatar, this.group = false});
 
   final String uid;
   final String? name;
+
+  /// The avatar the page was opened from, already decoded, for the other person's messages.
+  final String? avatar;
   final bool group;
 
   @override
@@ -33,6 +36,9 @@ class ChatPage extends StatefulWidget {
 }
 
 class _ChatPageState extends State<ChatPage> {
+  /// The last messages seen per conversation, so reopening one paints them at once.
+  static final _recent = <String, ({List<DirectMessage> messages, String? cursor, bool hasMore})>{};
+
   final ScrollController _scroll = ScrollController();
   final TextEditingController _text = TextEditingController();
   final FocusNode _focus = FocusNode();
@@ -57,7 +63,16 @@ class _ChatPageState extends State<ChatPage> {
     _text.addListener(_changed);
     _emoji.addListener(_onEmoji);
     _focus.addListener(_onFocus);
-    _loadLatest(initial: true);
+    final recent = _recent[_key];
+    if (recent != null) {
+      _messages = recent.messages;
+      _cursor = recent.cursor;
+      _hasMore = recent.hasMore;
+      _loading = false;
+      _loadLatest(quiet: true);
+    } else {
+      _loadLatest(initial: true);
+    }
     _poll = Timer.periodic(const Duration(seconds: 20), (_) {
       if (_scroll.hasClients && _atBottom && !_loading) _loadLatest(quiet: true, scroll: false);
     });
@@ -77,6 +92,10 @@ class _ChatPageState extends State<ChatPage> {
     super.dispose();
   }
 
+  String get _key => '${widget.group ? 'g' : 'u'}${widget.uid}';
+
+  void _remember() => _recent[_key] = (messages: _messages, cursor: _cursor, hasMore: _hasMore);
+
   void _changed() => setState(() {});
 
   void _onEmoji() {
@@ -85,9 +104,8 @@ class _ChatPageState extends State<ChatPage> {
 
   void _onFocus() => _emoji.onFocusChanged(_focus.hasFocus);
 
-  bool get _atBottom => !_scroll.hasClients
-      ? true
-      : _scroll.position.pixels >= _scroll.position.maxScrollExtent - 80;
+  /// The list is reversed: offset 0 is the newest message.
+  bool get _atBottom => !_scroll.hasClients || _scroll.position.pixels <= 80;
 
   Future<void> _loadPeer() async {
     try {
@@ -110,7 +128,8 @@ class _ChatPageState extends State<ChatPage> {
         _loading = false;
         _error = null;
       });
-      if (scroll) _scrollToBottom(animated: !initial);
+      _remember();
+      if (scroll && !initial) _scrollToBottom();
     } catch (error) {
       if (!mounted) return;
       if (quiet) return;
@@ -124,7 +143,6 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _loadOlder() async {
     if (_loadingOlder || !_hasMore || _cursor == null) return;
     setState(() => _loadingOlder = true);
-    final previousMax = _scroll.hasClients ? _scroll.position.maxScrollExtent : 0.0;
     try {
       final page = widget.group
           ? await WeiboApi.instance.groupChat(widget.uid, _cursor)
@@ -136,26 +154,17 @@ class _ChatPageState extends State<ChatPage> {
         _cursor = page.nextCursor;
         _hasMore = page.nextCursor != null && older.isNotEmpty;
       });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!_scroll.hasClients) return;
-        final next = _scroll.position.maxScrollExtent;
-        _scroll.jumpTo(_scroll.position.pixels + (next - previousMax));
-      });
+      _remember();
     } catch (_) {
     } finally {
       if (mounted) setState(() => _loadingOlder = false);
     }
   }
 
-  void _scrollToBottom({bool animated = true}) {
+  void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scroll.hasClients) return;
-      final target = _scroll.position.maxScrollExtent;
-      if (animated) {
-        _scroll.animateTo(target, duration: const Duration(milliseconds: 220), curve: Curves.easeOutCubic);
-      } else {
-        _scroll.jumpTo(target);
-      }
+      _scroll.animateTo(0, duration: const Duration(milliseconds: 220), curve: Curves.easeOutCubic);
     });
   }
 
@@ -281,6 +290,19 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Widget _buildMessages(BuildContext context) {
+    final state = _loading && _messages.isEmpty
+        ? 'loading'
+        : _messages.isEmpty
+            ? (_error != null ? 'error' : 'empty')
+            : 'list';
+    // The first messages fade in over the spinner instead of replacing it in one frame.
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      child: KeyedSubtree(key: ValueKey(state), child: _messagesBody(context)),
+    );
+  }
+
+  Widget _messagesBody(BuildContext context) {
     if (_loading && _messages.isEmpty) return const LoadingFooter();
     if (_error != null && _messages.isEmpty) {
       return Center(child: ErrorRetry(message: _error, onRetry: () => _loadLatest(initial: true)));
@@ -291,11 +313,13 @@ class _ChatPageState extends State<ChatPage> {
     final scheme = Theme.of(context).colorScheme;
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
-        if (notification.metrics.pixels < 120) _loadOlder();
+        if (notification.metrics.pixels > notification.metrics.maxScrollExtent - 120) _loadOlder();
         return false;
       },
+      // Reversed, it opens at the newest message on its first frame instead of jumping there.
       child: ListView.builder(
         controller: _scroll,
+        reverse: true,
         padding: EdgeInsets.fromLTRB(
           contentGutter(context),
           8 + MediaQuery.paddingOf(context).top,
@@ -304,8 +328,9 @@ class _ChatPageState extends State<ChatPage> {
         ),
         itemCount: _messages.length,
         itemBuilder: (context, index) {
-          final message = _messages[index];
-          final previous = index > 0 ? _messages[index - 1] : null;
+          final at = _messages.length - 1 - index;
+          final message = _messages[at];
+          final previous = at > 0 ? _messages[at - 1] : null;
           final showTime = previous == null ||
               message.createdAt.difference(previous.createdAt) > const Duration(minutes: 5);
           return Column(
@@ -322,6 +347,7 @@ class _ChatPageState extends State<ChatPage> {
                 message: message,
                 mine: message.senderId == _selfId,
                 peer: _peer,
+                avatar: widget.group ? null : widget.avatar,
                 showSenderName: widget.group,
                 onOpenUser: (uid) => openUser(context, uid),
                 onOpenTopic: (name) => openTopic(context, name),
@@ -340,6 +366,7 @@ class _Bubble extends StatelessWidget {
     required this.message,
     required this.mine,
     required this.peer,
+    required this.avatar,
     required this.showSenderName,
     required this.onOpenUser,
     required this.onOpenTopic,
@@ -349,6 +376,7 @@ class _Bubble extends StatelessWidget {
   final DirectMessage message;
   final bool mine;
   final User? peer;
+  final String? avatar;
   final bool showSenderName;
   final ValueChanged<String> onOpenUser;
   final ValueChanged<String> onOpenTopic;
@@ -367,7 +395,7 @@ class _Bubble extends StatelessWidget {
             GestureDetector(
               onTap: () => onOpenUser(message.senderId),
               child: Avatar(
-                url: message.senderAvatar ?? peer?.avatarUrl,
+                url: avatar ?? message.senderAvatar ?? peer?.avatarUrl,
                 size: 36,
               ),
             ),

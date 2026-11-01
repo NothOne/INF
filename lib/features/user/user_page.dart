@@ -151,7 +151,7 @@ class _UserPageState extends State<UserPage> {
                 isSelf: isSelf,
                 followBusy: _followBusy,
                 onToggleFollow: _toggleFollow,
-                onMessage: () => openChat(context, uid: profile.user.id, name: profile.user.screenName),
+                onMessage: () => openChat(context, uid: profile.user.id, name: profile.user.screenName, avatar: profile.user.avatarUrl),
                 onRelations: (kind) => openRelations(context, uid: profile.user.id, kind: kind),
               ),
             );

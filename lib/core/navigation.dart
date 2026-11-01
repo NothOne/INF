@@ -168,9 +168,10 @@ Future<void> openChat(
   BuildContext context, {
   required String uid,
   String? name,
+  String? avatar,
   bool group = false,
 }) =>
-    pushInf(context, ChatPage(uid: uid, name: name, group: group), pane: 'chat:$uid');
+    pushInf(context, ChatPage(uid: uid, name: name, avatar: avatar, group: group), pane: 'chat:$uid');
 
 Future<void> openWeb(BuildContext context, String url) => pushInf(context, WebPage(url: url));
 

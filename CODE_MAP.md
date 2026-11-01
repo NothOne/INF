@@ -125,7 +125,7 @@ main()
 | `link_preview.dart` | `LinkPreviews` `LinkPreview` | 链接预览：解开跳转和 t.cn，微博/用户/话题走接口或直接起名，普通网页读前 192 KB HTML 的 og:title / description / image；微博自家网页不抓（未登录只会拿到登录页），登录墙标题丢掉；按地址缓存 |
 | `fade_safe_backdrop.dart` | `FadeSafeBackdrop` `insideFade` | 合成时发现自己处在半透明的 `OpacityLayer` 或任何 `ImageFilterLayer` 里（切换底部标签、页面展开/推入的淡入淡出）就跳过模糊：否则背景模糊采样的是淡入层里的空白，整块玻璃变灰闪一下。`GlassSurface` 和液态玻璃都用它；新加的模糊不要直接用 `BackdropFilter` |
 | `motion.dart` | `InfMotion` `showInfSheet` `showActionSheet` `afterFrame` | 所有时长和曲线常量；底部面板和操作菜单 |
-| `container_route.dart` | `ContainerOrigin` `ContainerTransformRoute` | 「展开」动效：页面从点到的控件放大展开（卡片 → 详情对齐正文、楼中楼回复框 → 评论详情、按钮 → 编辑页），没有控件时从手指按下处（`ContainerOrigin.atTouch`）展开；含返回手势驱动。手机上卡片用对齐版（卡片内容和详情正文对齐着放大）；平板/侧栏布局信息流列和全屏详情宽度不一样，对不齐，所以只做形状缩放 + 页面淡入并叠一层随透明度减弱的动态模糊（`ImageFiltered`） |
+| `container_route.dart` | `ContainerOrigin` `ContainerTransformRoute` | 「展开」动效：页面从点到的控件放大展开（卡片 → 详情对齐正文、楼中楼回复框 → 评论详情、按钮 → 编辑页），没有控件时从手指按下处（`ContainerOrigin.atTouch`）展开；含返回手势驱动。手机上卡片用对齐版（卡片内容和详情正文对齐着放大），动态模糊在途中最强、两端为零，起止画面和原卡片一致；平板/侧栏布局信息流列和全屏详情宽度不一样，对不齐，所以只做形状缩放 + 页面淡入并叠一层随透明度减弱的动态模糊（`ImageFiltered`） |
 | `layout.dart` | `WindowClass` `InfLayout` `contentGutter` `ContentColumn` `ContentBar` `ContentArea` `ShellLayout` | 平板适配：按窗口宽度分紧凑（< 600）/ 中等（600–840）/ 宽屏（≥ 840），叠加设置里的「设备布局」（自动 / 手机 / 平板）。非紧凑时外壳换成侧边栏，内容限宽 `kContentMaxWidth` 居中 |
 | `pane.dart` | `DetailPane` `PaneSelected` | 宽屏双栏：首页、通知、私信左边列表、右边独立 Navigator（淡入淡出，空态「选择一条…」）。从列表打开替换右栏，从右栏里打开压栈；返回先退右栏，空了再交给外壳。`PaneSelected` 按 pane key 高亮左栏当前条目。窗口缩到中等时外壳不再构建它，右栏直接关闭 |
 | `share.dart` | `statusLink` `shareText` 等 | 分享文案与链接 |
@@ -143,7 +143,7 @@ main()
 | `people_pager_list.dart` | `PeoplePagerList` | 分页用户列表 + 关注按钮 |
 | `rich_text.dart` | `RichStatusText` `linkKindIcon` | 正文富文本：@提及、#话题#、链接、表情（`linkColor` 可换链接色，私信里自己发的气泡用）；链接用 `Status.links` 里微博给的文字和类型（地名、超话名、抽奖详情…） |
 | `image_grid.dart` | `StatusImageGrid` `thumbnailUrl` | 九宫格，带 Hero tag |
-| `smart_image.dart` | `SmartImage` `weiboImageProvider` `isImageInMemory` | 带防盗链 Referer 的网络图片；按去掉查询串的地址认图（头像地址每次带不同的签名 `KID/Expires/ssig`），显示过就不再淡入，避免返回时头像闪一下 |
+| `smart_image.dart` | `SmartImage` `weiboImageProvider` `isImageInMemory` | 带防盗链 Referer 的网络图片；带签名（`Expires`/`ssig`）的地址去掉查询串作 `cacheKey`，同一头像换了签名仍命中内存和磁盘缓存，显示过就不再淡入；`Avatar` 64 以下统一按 192 解码，各页面共用一份 |
 | `comment_sheet.dart` | `showCommentSheet` `CommentSheet` | 评论 / 回复底部面板，首页、详情、通知和 `PagedStatusList` 共用；两种风格下都是实心面板（`InfChrome.typingSheet`） |
 | `mention_picker.dart` | `showMentionPicker` `EmojiKeyboard` `EmojiKeyboardSlot` `EmojiPanel` | @ 用户选择器和表情面板，评论面板、编辑页、私信共用 |
 | `avatar.dart` / `user_row.dart` | `Avatar` `UserListRow` | 头像、用户行 |
@@ -178,7 +178,7 @@ main()
 | `feed/` | `FeedPage` + `FeedController` | 首页顶栏三个等宽标签、推荐居中，三页可左右滑动，每页再点一次标题打开选择器：关注（全部关注流，切分组）、推荐（默认「热门」= 登录账号的 m.weibo.cn 102803 个性化流；「推荐」及其余频道 = weibo.com 游客推荐频道；`recommend_channels_sheet.dart` 选频道）、热搜（`HotBoardChips` 切榜单，标题处打开榜单管理）；底栏「首页」单击作用于当前页（回顶/刷新） | Tab 0 |
 | `notify/` | `NotifyPage` | 通知四个子 Tab | Tab 1 |
 | `place/` | `showPlaceSheet` | 地点面板：图、名称、到访统计、地址（可复制），地点详情网页、用地图导航（`geo:` 交给地图 App，没有就开高德网页） | `openPlace`（正文里的位置链接、卡片位置行） |
-| `message/` | `MessagePage` `ChatPage` `chat_link_sheet` | 私信列表、单聊/群聊、私信链接面板；消息里的链接在气泡下显示预览卡（`LinkPreviews`） | Tab 2 / `openChat` |
+| `message/` | `MessagePage` `ChatPage` `chat_link_sheet` | 私信列表、单聊/群聊、私信链接面板；消息里的链接在气泡下显示预览卡（`LinkPreviews`）；消息列表倒序（offset 0 是最新），首帧就停在底部；按会话在内存里记住最近消息，再次进入直接显示；对方头像用列表传进来的那张（`openChat(avatar:)`） | Tab 2 / `openChat` |
 | `profile/` | `ProfilePage` | 「我」、菜单入口、退出 | Tab 3 |
 | `detail/` | `StatusDetailPage` `CommentTile` `showCommentActions` `CommentFloorPage` | 微博详情、评论/转发切换、楼中楼（顶部显示主评论，取自 `hotFlowChild` 的 `rootComment`） | `openStatus` |
 | `compose/` | `ComposePage` | 发博/转发、多图、草稿 | `openCompose` |

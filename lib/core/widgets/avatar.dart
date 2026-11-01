@@ -26,7 +26,8 @@ class Avatar extends StatelessWidget {
         height: size,
         fit: BoxFit.cover,
         placeholderColor: scheme.surfaceContainerHigh,
-        cacheWidth: (size * 3).round(),
+        // One decode for every small size, so the same avatar is already in memory on the next page.
+        cacheWidth: size <= 64 ? 192 : (size * 3).round(),
       ),
     );
     if (heroTag != null) {

@@ -8,8 +8,17 @@ import '../image_url.dart';
 ImageProvider weiboImageProvider(String url, {int? cacheWidth}) => ResizeImage.resizeIfNeeded(
       cacheWidth,
       null,
-      CachedNetworkImageProvider(sanitizeImageUrl(url), headers: weiboImageHeaders(url)),
+      _provider(sanitizeImageUrl(url)),
     );
+
+CachedNetworkImageProvider _provider(String url) {
+  final identity = _identity(url);
+  return CachedNetworkImageProvider(
+    url,
+    headers: weiboImageHeaders(url),
+    cacheKey: identity == url ? null : identity,
+  );
+}
 
 /// Whether [url] is already decoded in memory, i.e. would paint on the very first frame.
 bool isImageInMemory(String url, {int? cacheWidth}) {
@@ -51,10 +60,13 @@ class SmartImage extends StatefulWidget {
 }
 
 /// The picture an address shows. sinaimg signs avatars (`?KID=…&Expires=…&ssig=…`) anew in every
-/// response, so a list refreshed under the reader would otherwise blank and fade in each one.
+/// response; keyed by the full address, the same avatar would be fetched, decoded and faded in
+/// again on every page and every refresh.
 String _identity(String url) {
   final query = url.indexOf('?');
-  return query < 0 ? url : url.substring(0, query);
+  if (query < 0) return url;
+  final params = url.substring(query + 1);
+  return params.contains('Expires=') || params.contains('ssig=') ? url.substring(0, query) : url;
 }
 
 class _SmartImageState extends State<SmartImage> {

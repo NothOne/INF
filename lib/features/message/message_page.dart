@@ -125,6 +125,7 @@ class _ConversationListState extends State<_ConversationList> with AutomaticKeep
       context,
       uid: conversation.groupId ?? conversation.user.id,
       name: conversation.user.screenName,
+      avatar: conversation.isGroup ? null : conversation.user.avatarUrl,
       group: conversation.isGroup,
     );
     if (!mounted) return;
