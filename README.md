@@ -41,6 +41,35 @@ flutter build hap --release
 
 用官方 Flutter 构建 Android 不受影响：鸿蒙插件只在 `ohos` 平台注册。
 
+## 在 GitHub Actions 上构建
+
+两个 workflow，都在 Actions 页面手动触发：
+
+- `build-apk.yml`：Android 包。push 到 `dev` / `main` 也会自动跑。需要 secret `DEBUG_KEYSTORE_BASE64`（`base64 -w0 android/debug.keystore`），否则签名那步会失败。
+- `build-hap.yml`：鸿蒙包。要先有 `build-ohos-image.yml` 造出来的构建镜像。
+
+### 鸿蒙的构建镜像
+
+华为只允许登录后在官网下载 command-line-tools，CI 里拿不到，而完整装完是 7.1GB、单个发布附件又限 2GiB。所以镜像这样来：
+
+1. 本地把一份安装好的 command-line-tools 打包（去掉纯 C++ 用的 `llvm`、`BiSheng` 和文档，7.1GB → 581MB）：
+
+   ```bash
+   tar -c -I "xz -T0 -3" -f clt.tar.xz \
+     --exclude='command-line-tools/sdk/default/openharmony/native/llvm' \
+     --exclude='command-line-tools/sdk/default/openharmony/native/docs' \
+     --exclude='command-line-tools/sdk/default/hms/native/BiSheng' \
+     --exclude='command-line-tools/sdk/default/hms/native/docs' \
+     --exclude='command-line-tools/codelinter' \
+     --exclude='command-line-tools/emulator' \
+     --exclude='command-line-tools/arktsdoc' \
+     command-line-tools
+   ```
+
+2. 传到某个 release 附件，然后跑 `build-ohos-image`，填这个 zip 的直链和版本号。镜像推到 `ghcr.io/<owner>/<repo>/ohos-clt`，`Dockerfile` 在 [`docker/ohos/`](docker/ohos/Dockerfile)。
+
+`build-hap.yml` 里有个 `sign` 勾选框。不勾只出 `INF-<version>-unsigned.hap`；勾了需要 `OHOS_KEYSTORE_B64`、`OHOS_CERT_B64`、`OHOS_PROFILE_B64`、`OHOS_KEY_ALIAS`、`OHOS_KEY_PWD`、`OHOS_KEYSTORE_PWD` 六个 secret，对应 `.tools/ohos-signing/` 里那套材料。debug profile 只认登记过的设备，签出来的包给别人装不上。
+
 ## 代码结构
 
 见 [`CODE_MAP.md`](CODE_MAP.md)。

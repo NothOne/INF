@@ -1,0 +1,94 @@
+name: build-hap
+
+# Manual only: a release HAP takes a few minutes and produces an artifact
+# nobody needs on every push. Build the image first with build-ohos-image.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: "Sign the HAP (needs the OHOS_* secrets; a debug profile only admits registered devices)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: build-hap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hap:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/${{ github.repository }}/ohos-clt:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --user runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report the toolchain
+        run: |
+          flutter --version 2>/dev/null || true
+          node -v
+          java -version 2>&1 | head -1
+          echo "SDK: $HOS_SDK_HOME"
+
+      - name: Restore signing material
+        if: inputs.sign
+        env:
+          KEYSTORE_B64: ${{ secrets.OHOS_KEYSTORE_B64 }}
+          CERT_B64: ${{ secrets.OHOS_CERT_B64 }}
+          PROFILE_B64: ${{ secrets.OHOS_PROFILE_B64 }}
+        run: |
+          mkdir -p .tools/ohos-signing
+          echo "$KEYSTORE_B64" | base64 -d > .tools/ohos-signing/inf.p12
+          echo "$CERT_B64" | base64 -d > .tools/ohos-signing/inf.cer
+          echo "$PROFILE_B64" | base64 -d > .tools/ohos-signing/inf.p7b
+
+      - name: Build HAP
+        run: |
+          set +e
+          flutter build hap --release
+          rc=$?
+          set -e
+          # ohos/build-profile.json5 declares no signingConfigs, so hvigor prints
+          # a "configure signing in DevEco" notice and exits non-zero *after*
+          # writing the unsigned HAP. Judge by the file, not the exit code.
+          HAP=ohos/entry/build/default/outputs/default/entry-default-unsigned.hap
+          if [ ! -f "$HAP" ]; then
+            echo "No HAP produced (flutter exited $rc)." >&2
+            exit 1
+          fi
+          echo "HAP built (flutter exited $rc, as expected without a signingConfig)."
+          VERSION=$(sed -nE 's/^version:[[:space:]]*([^+[:space:]]+).*/\1/p' pubspec.yaml)
+          mkdir -p dist
+          cp "$HAP" "dist/INF-$VERSION-unsigned.hap"
+          ls -lh dist/
+
+      - name: Sign HAP
+        if: inputs.sign
+        env:
+          KEY_ALIAS: ${{ secrets.OHOS_KEY_ALIAS }}
+          KEY_PWD: ${{ secrets.OHOS_KEY_PWD }}
+          KEYSTORE_PWD: ${{ secrets.OHOS_KEYSTORE_PWD }}
+        run: |
+          VERSION=$(sed -nE 's/^version:[[:space:]]*([^+[:space:]]+).*/\1/p' pubspec.yaml)
+          OUT="dist/INF-${VERSION}.hap"
+          java -jar "$HAP_SIGN_TOOL_PATH" sign-app \
+            -mode localSign -signAlg SHA256withECDSA -signCode 1 \
+            -keyAlias "$KEY_ALIAS" -keyPwd "$KEY_PWD" \
+            -keystoreFile .tools/ohos-signing/inf.p12 -keystorePwd "$KEYSTORE_PWD" \
+            -appCertFile .tools/ohos-signing/inf.cer \
+            -profileFile .tools/ohos-signing/inf.p7b \
+            -inFile "dist/INF-${VERSION}-unsigned.hap" \
+            -outFile "$OUT"
+          ls -lh "$OUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: inf-hap-${{ github.sha }}
+          path: dist/*.hap
+          if-no-files-found: error
