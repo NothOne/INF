@@ -32,6 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         git \
         git-lfs \
+        libgl1 \
         locales \
         openjdk-21-jdk-headless \
         unzip \
@@ -46,12 +47,15 @@ RUN --mount=type=bind,source=clt.tar.xz,target=/tmp/clt.tar.xz \
     tar -xJf /tmp/clt.tar.xz -C /opt --no-same-owner \
     && chmod -R a+rX /opt/command-line-tools
 
+# LD_LIBRARY_PATH: the image transcoder hvigor loads for resources links skia from the
+# previewer's libraries, and skia needs libGL.
 ENV COMMANDLINE_TOOL_DIR=/opt/command-line-tools \
     DEVECO_SDK_HOME=/opt/command-line-tools/sdk \
     HOS_SDK_HOME=/opt/command-line-tools/sdk \
     HAP_SIGN_TOOL_PATH=/opt/command-line-tools/sdk/default/openharmony/toolchains/lib/hap-sign-tool.jar \
     JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
-    NODE_HOME=/opt/command-line-tools/tool/node
+    NODE_HOME=/opt/command-line-tools/tool/node \
+    LD_LIBRARY_PATH=/opt/command-line-tools/sdk/default/openharmony/previewer/common/bin
 
 ENV PATH="${JAVA_HOME}/bin:${COMMANDLINE_TOOL_DIR}/tool/node/bin:${COMMANDLINE_TOOL_DIR}/bin:${COMMANDLINE_TOOL_DIR}/ohpm/bin:${COMMANDLINE_TOOL_DIR}/hvigor/bin:${COMMANDLINE_TOOL_DIR}/sdk/default/openharmony/toolchains:${PATH}"
 
