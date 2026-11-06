@@ -51,6 +51,10 @@ jobs:
           # The Dockerfile unpacks it with ADD, which only handles tar archives.
           tar -tf docker/ohos/clt.tar.xz | head -3
 
+      # Image names must be lowercase; the repository is NothOne/INF.
+      - name: Image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/ohos-clt" >> "$GITHUB_ENV"
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -64,8 +68,8 @@ jobs:
           context: docker/ohos
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/ohos-clt:${{ inputs.tag }}
-            ghcr.io/${{ github.repository }}/ohos-clt:latest
+            ${{ env.IMAGE }}:${{ inputs.tag }}
+            ${{ env.IMAGE }}:latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=HarmonyOS NEXT build environment for INF
@@ -73,4 +77,4 @@ jobs:
       - name: Report the image size
         run: |
           docker buildx imagetools inspect \
-            ghcr.io/${{ github.repository }}/ohos-clt:${{ inputs.tag }}
+            "$IMAGE:${{ inputs.tag }}"

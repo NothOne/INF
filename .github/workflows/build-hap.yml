@@ -21,7 +21,8 @@ jobs:
       contents: read
       packages: read
     container:
-      image: ghcr.io/${{ github.repository }}/ohos-clt:latest
+      # Lowercase: image names must be, and expressions cannot lowercase github.repository.
+      image: ghcr.io/nothone/inf/ohos-clt:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
