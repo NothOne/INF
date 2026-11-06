@@ -63,7 +63,11 @@ class Session extends ChangeNotifier {
   /// weibo.com / sina.com.cn / passport hosts are not accepted by m.weibo.cn,
   /// so they must not be mixed in.
   Future<void> reloadCookies() async {
-    final header = await Native.getCookies('https://m.weibo.cn/');
+    // The first CookieManager call starts Chromium and can take seconds on a cold start. Reading
+    // a timeout as an empty jar would send the next request without SUB and sign the user out.
+    final header = await Native.getCookies('https://m.weibo.cn/') ??
+        await Native.getCookies('https://m.weibo.cn/', const Duration(seconds: 8));
+    if (header == null) return;
     cookies
       ..clear()
       ..addAll(_parseCookieHeader(header));
@@ -124,9 +128,14 @@ class Session extends ChangeNotifier {
         state = SessionState.loggedOut;
       }
       unreachableMessage = null;
-    } on LoginRequiredException {
+    } on LoginRequiredException catch (error) {
       uid = null;
-      state = SessionState.loggedOut;
+      if (error.unparsable && hasSignedInCookie) {
+        unreachableMessage = '微博暂时没有正常响应，请稍后重试';
+        state = SessionState.unreachable;
+      } else {
+        state = SessionState.loggedOut;
+      }
     } catch (error) {
       uid = null;
       unreachableMessage = error is ApiException ? error.message : error.toString();
@@ -136,8 +145,26 @@ class Session extends ChangeNotifier {
     return state;
   }
 
-  void onLoginRequired() {
-    if (state == SessionState.loggedOut) return;
+  bool _confirmingLogout = false;
+
+  /// One endpoint answering -100 is not taken as the end of the session on its own word: while
+  /// signed in, `api/config` has to agree first.
+  Future<void> onLoginRequired() async {
+    if (state == SessionState.loggedOut || _confirmingLogout) return;
+    if (state == SessionState.loggedIn) {
+      _confirmingLogout = true;
+      try {
+        final config = await WeiboApi.instance.config();
+        if (config.login) return;
+      } on LoginRequiredException catch (error) {
+        if (error.unparsable) return;
+      } catch (_) {
+        return;
+      } finally {
+        _confirmingLogout = false;
+      }
+      if (state != SessionState.loggedIn) return;
+    }
     state = SessionState.loggedOut;
     uid = null;
     notifyListeners();

@@ -15,14 +15,18 @@ class Native {
   static Future<void> share({String? text, String? path, String? mime}) =>
       _call('share', {'text': text, 'path': path, 'mime': mime});
 
-  static Future<String> getCookies([String url = 'https://m.weibo.cn/']) async {
+  /// Null when the cookie store did not answer in [timeout], which is not the same as no cookies.
+  static Future<String?> getCookies([
+    String url = 'https://m.weibo.cn/',
+    Duration timeout = const Duration(seconds: 2),
+  ]) async {
     try {
       final value = await _channel
           .invokeMethod<String>('getCookies', {'url': url})
-          .timeout(const Duration(seconds: 2), onTimeout: () => '');
-      return value ?? '';
+          .timeout(timeout, onTimeout: () => null);
+      return value;
     } catch (_) {
-      return '';
+      return null;
     }
   }
 
@@ -188,6 +192,16 @@ class Native {
   static Future<void> _call(String method, Map<String, Object?> arguments) async {
     try {
       await _channel.invokeMethod<bool>(method, arguments).timeout(const Duration(seconds: 2), onTimeout: () => null);
+    } catch (_) {}
+  }
+
+  /// Android's API level, read once by [init]; null on HarmonyOS or when the channel failed.
+  static int? sdkInt;
+
+  static Future<void> init() async {
+    if (!Platform.isAndroid) return;
+    try {
+      sdkInt = await _channel.invokeMethod<int>('sdkInt').timeout(const Duration(seconds: 2), onTimeout: () => null);
     } catch (_) {}
   }
 

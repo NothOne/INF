@@ -1,8 +1,10 @@
 #version 460 core
 
-// A pane of liquid glass laid over the backdrop: a light frost in the middle, and towards the
-// rim a lens that pulls in what lies beyond the edge, splits it faintly by colour and catches a
-// highlight. Everything is in physical pixels of the screen.
+// A pane of liquid glass laid over the backdrop: towards the rim a lens that pulls in what lies
+// beyond the edge, splits it faintly by colour and catches a highlight. Everything is in physical
+// pixels of the screen. The frost is not done here: Dart pushes a gaussian backdrop filter under
+// this one and the shader reads its result, because a few taps wide enough to blur only stack
+// offset copies of the page.
 
 #include <flutter/runtime_effect.glsl>
 
@@ -19,8 +21,6 @@ uniform float uRadius;
 uniform float uBezel;
 uniform float uRefraction;
 uniform float uDispersion;
-uniform float uBlur;
-uniform float uSaturation;
 uniform float uHighlight;
 uniform vec2 uLight;
 
@@ -46,22 +46,6 @@ vec3 sampleAt(vec2 screen, vec2 shift) {
   uv.y = 1.0 - uv.y;
 #endif
   return texture(uTexture, uv).rgb;
-}
-
-vec3 frosted(vec2 screen, vec2 shift) {
-  if (uBlur < 0.5) return sampleAt(screen, shift);
-  float r = uBlur;
-  vec3 sum = sampleAt(screen, shift) * 0.2;
-  sum += sampleAt(screen + vec2(r, 0.0), shift) * 0.1;
-  sum += sampleAt(screen - vec2(r, 0.0), shift) * 0.1;
-  sum += sampleAt(screen + vec2(0.0, r), shift) * 0.1;
-  sum += sampleAt(screen - vec2(0.0, r), shift) * 0.1;
-  float d = r * 0.7071;
-  sum += sampleAt(screen + vec2(d, d), shift) * 0.1;
-  sum += sampleAt(screen + vec2(-d, d), shift) * 0.1;
-  sum += sampleAt(screen + vec2(d, -d), shift) * 0.1;
-  sum += sampleAt(screen + vec2(-d, -d), shift) * 0.1;
-  return sum;
 }
 
 void main() {
@@ -91,16 +75,13 @@ void main() {
   vec3 color;
   if (uDispersion > 0.001 && lens > 0.002) {
     color = vec3(
-      frosted(p + bend * (1.0 + uDispersion), shift).r,
-      frosted(p + bend, shift).g,
-      frosted(p + bend * (1.0 - uDispersion), shift).b
+      sampleAt(p + bend * (1.0 + uDispersion), shift).r,
+      sampleAt(p + bend, shift).g,
+      sampleAt(p + bend * (1.0 - uDispersion), shift).b
     );
   } else {
-    color = frosted(p + bend, shift);
+    color = sampleAt(p + bend, shift);
   }
-
-  float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
-  color = mix(vec3(luma), color, uSaturation);
 
   // A highlight on the lit side of the lip and a fainter one opposite, plus a hairline rim.
   float facing = dot(normal, uLight);

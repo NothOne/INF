@@ -1276,6 +1276,39 @@ int? _hexColor(String? hex) {
   return value.length == 6 ? 0xFF000000 | parsed : parsed;
 }
 
+/// passport's `sso/v2/qrcode/image`; the code's content is the `data` parameter of its image URL.
+QrLogin? parseQrLogin(dynamic data) {
+  final root = asMap(data);
+  if (intOf(root?['retcode']) != 20000000) return null;
+  final body = asMap(root?['data']);
+  final qrid = textOf(body?['qrid']);
+  final image = textOf(body?['image']);
+  if (qrid == null || image == null) return null;
+  final scan = Uri.tryParse(image)?.queryParameters['data'];
+  if (scan == null || !scan.startsWith('https://')) return null;
+  return QrLogin(qrid: qrid, imageUrl: image, scanUrl: scan);
+}
+
+/// passport's `sso/v2/qrcode/check`, answered with the retcodes its own login page switches on.
+QrLoginStatus parseQrLoginStatus(dynamic data) {
+  final root = asMap(data);
+  final message = textOf(root?['msg']);
+  switch (intOf(root?['retcode'])) {
+    case 20000000:
+      return QrLoginStatus(QrLoginState.confirmed, message: message, url: textOf(asMap(root?['data'])?['url']));
+    case 50114001:
+      return QrLoginStatus(QrLoginState.waiting, message: message);
+    case 50114002:
+      return QrLoginStatus(QrLoginState.scanned, message: message);
+    case 50114003:
+    case 50114004:
+    case 50114015:
+      return QrLoginStatus(QrLoginState.failed, message: message);
+    default:
+      return QrLoginStatus(QrLoginState.waiting, message: message);
+  }
+}
+
 /// weibo.com's `side/search`: query completions and matching accounts.
 SearchSuggestions parseSearchSuggestions(dynamic data) {
   final root = asMap(data);

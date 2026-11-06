@@ -5,6 +5,7 @@ import '../../core/haptics.dart';
 import '../../core/look.dart';
 import '../../core/models.dart';
 import '../../core/motion.dart';
+import 'common.dart';
 import 'mention_picker.dart';
 
 /// A comment is a panel of the page it answers, not a destination. The post stays visible behind
@@ -122,9 +123,10 @@ class _CommentSheetState extends State<CommentSheet> {
       }
       if (!mounted) return;
       Haptic.success.play();
+      final bar = infSnackBar(context, Text(_isReply ? '回复成功' : '评论成功'));
       final messenger = ScaffoldMessenger.of(context);
       widget.onSent();
-      messenger.showSnackBar(SnackBar(content: Text(_isReply ? '回复成功' : '评论成功')));
+      messenger.showSnackBar(bar);
     } catch (error) {
       if (!mounted) return;
       Haptic.error.play();

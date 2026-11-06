@@ -226,6 +226,39 @@ class _BackGestureDriverState extends State<_BackGestureDriver>
   Widget build(BuildContext context) => widget.child;
 }
 
+/// The part of the aligned transition the page spends crossfading with the card underneath; what
+/// is left of the travel it spends sliding from over the card to its own place.
+const double _alignFadeSpan = 0.3;
+
+/// How much the page is blurred at mid-flight, in sigma.
+const double _alignBlur = 8;
+
+/// Opacity, blur and offset of the aligned page at curved progress [t]. The route has no barrier,
+/// so a part-transparent page shows the very card the post was tapped on, and fading one out of
+/// the other hands the place over without a jump. Sharp, the page's copy of the post is not the
+/// card — the feed cuts a long post at six lines and a 全文 link — and that difference stayed on
+/// screen as the blur reached zero while the page was still opaque.
+///
+/// [travel] is how far the copy has moved from over the card to where the page puts it, and stays
+/// zero for the whole fade: crossed while apart, the two would both be seen at once.
+///
+/// The fade starts at the card end of [t] rather than after a slice of clock time, because the
+/// curve lingers there in both directions.
+@visibleForTesting
+({double opacity, double blur, double travel}) containerAlignProfile(double t) {
+  final fade = (t / _alignFadeSpan).clamp(0.0, 1.0);
+  // Rises as a quarter sine, so the blur is already several sigma while the page is only just
+  // showing; peaks a third of the way in, where the crossfade is past and the copy starts to move.
+  final focus = math.sin(math.pi * t / 2);
+  return (
+    // Smoothstep: eased at both ends, and exactly 0 and 1 at them.
+    opacity: fade * fade * (3 - 2 * fade),
+    // Zero exactly where the page is invisible or settled, and nowhere else.
+    blur: 4 * _alignBlur * focus * (1 - focus),
+    travel: ((t - _alignFadeSpan) / (1 - _alignFadeSpan)).clamp(0.0, 1.0),
+  );
+}
+
 class _ContainerTransition extends StatefulWidget {
   const _ContainerTransition({required this.route, required this.animation, required this.child});
 
@@ -280,26 +313,20 @@ class _ContainerTransitionState extends State<_ContainerTransition> {
         final rect = Rect.lerp(origin.rect, screen, t)!;
         final radius = lerpDouble(origin.radius, route.popGestureInProgress ? 22 : 0, t)!;
         final aligned = origin.alignTop != null;
-        // Aligned, the page's copy of the origin covers the original roughly (the page may show
-        // more of it), so a fade that is short in clock time — not in [t], whose curve lingers at
-        // the ends — swaps them; the copy holds still over the original meanwhile, or both
-        // would show, offset. Otherwise the page arrives later and slower.
-        const hold = 0.05;
-        final travel = ((t - hold) / (1 - hold)).clamp(0.0, 1.0);
-        final dy = aligned ? lerpDouble(origin.rect.top - origin.alignTop!, 0, travel)! : 0.0;
+        final profile = containerAlignProfile(t);
+        // Aligned, the copy holds over the card for the whole crossfade and only then moves off
+        // it; otherwise the page arrives later and slower.
+        final dy = aligned ? lerpDouble(origin.rect.top - origin.alignTop!, 0, profile.travel)! : 0.0;
         // Pages centre their reading column on the screen, while the origin sits in a narrower
         // area beside the side rail; without this the copy lands off to one side of it.
-        final dx = aligned ? lerpDouble(origin.rect.center.dx - screen.center.dx, 0, travel)! : 0.0;
-        final pageOpacity = aligned
-            ? ((settled ? 1.0 : animation.value) / 0.1).clamp(0.0, 1.0)
-            : Curves.easeOut.transform(((t - 0.18) / 0.5).clamp(0.0, 1.0));
-        // Aligned, the copy must match the original at both ends, so the blur peaks mid-flight;
-        // otherwise the page comes into focus as it fades in.
-        final blur = settled
-            ? 0.0
+        final dx = aligned ? lerpDouble(origin.rect.center.dx - screen.center.dx, 0, profile.travel)! : 0.0;
+        final pageOpacity = settled
+            ? 1.0
             : aligned
-                ? 9 * math.sin(math.pi * travel)
-                : 10 * (1 - pageOpacity);
+                ? profile.opacity
+                : Curves.easeOut.transform(((t - 0.18) / 0.5).clamp(0.0, 1.0));
+        // Unaligned, the page comes into focus as it fades in.
+        final blur = settled ? 0.0 : (aligned ? profile.blur : 10 * (1 - pageOpacity));
         final fill = origin.color;
         final fillOpacity = fill == null ? 0.0 : 1 - Curves.easeIn.transform((t / 0.45).clamp(0.0, 1.0));
         final shape = RRect.fromRectAndRadius(rect, Radius.circular(radius));
@@ -312,7 +339,14 @@ class _ContainerTransitionState extends State<_ContainerTransition> {
             ),
             Positioned.fill(
               child: CustomPaint(
-                painter: _ShadowPainter(shape, alpha: (dark ? 0.45 : 0.16) * (1 - (t - 0.85).clamp(0.0, 0.15) / 0.15)),
+                painter: _ShadowPainter(
+                  shape,
+                  // Aligned, the page dissolves into the card; a shadow left around the shrinking
+                  // shape would sit over the feed after the page itself is gone.
+                  alpha: (dark ? 0.45 : 0.16) *
+                      (1 - (t - 0.85).clamp(0.0, 0.15) / 0.15) *
+                      (aligned ? pageOpacity : 1),
+                ),
               ),
             ),
             Positioned.fill(

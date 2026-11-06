@@ -3,6 +3,11 @@ import 'package:flutter/material.dart';
 import '../haptics.dart';
 import 'common.dart';
 
+/// In a [NestedScrollView] the pull at the top belongs to the inner list: the depth-0 notification
+/// is the header, which the coordinator clamps instead of letting it overscroll, so only the
+/// depth-1 list ever reports the drag that [RefreshIndicator] turns into a refresh.
+bool nestedScrollRefreshPredicate(ScrollNotification notification) => notification.depth == 1;
+
 /// [RefreshIndicator] plus touch: a tick at the exact drag distance where letting go refreshes,
 /// a softer one if the finger backs out of it, and an error buzz with a message when the refresh
 /// fails. [onRefresh] may complete with `false` to report a failure it handled itself.
@@ -11,11 +16,13 @@ class InfRefreshIndicator extends StatefulWidget {
     super.key,
     required this.onRefresh,
     this.color,
+    this.notificationPredicate = defaultScrollNotificationPredicate,
     required this.child,
   });
 
   final Future<Object?> Function() onRefresh;
   final Color? color;
+  final ScrollNotificationPredicate notificationPredicate;
   final Widget child;
 
   @override
@@ -51,7 +58,7 @@ class InfRefreshIndicatorState extends State<InfRefreshIndicator> {
   }
 
   bool _onScroll(ScrollNotification notification) {
-    if (notification.depth != 0 || notification.metrics.axis != Axis.vertical) return false;
+    if (!widget.notificationPredicate(notification) || notification.metrics.axis != Axis.vertical) return false;
     if (notification is ScrollStartNotification) {
       final atTop = notification.metrics.extentBefore == 0;
       _dragOffset = (notification.dragDetails != null && atTop && !_refreshing) ? 0 : null;
@@ -83,6 +90,7 @@ class InfRefreshIndicatorState extends State<InfRefreshIndicator> {
       child: RefreshIndicator(
         key: _indicator,
         onRefresh: _refresh,
+        notificationPredicate: widget.notificationPredicate,
         // Below a bar the content scrolls under, not behind it.
         edgeOffset: MediaQuery.paddingOf(context).top,
         color: widget.color,

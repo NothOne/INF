@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/layout.dart';
 import '../../core/models.dart';
@@ -13,6 +12,7 @@ import '../../core/unread_monitor.dart';
 import '../../core/version.dart';
 import '../../core/widgets/avatar.dart';
 import '../../core/widgets/common.dart';
+import '../../core/widgets/shell_top_bar.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -110,8 +110,9 @@ class _ProfilePageState extends State<ProfilePage> with ShellTabAware {
             (session.state == SessionState.checking && _user != null);
         return Scaffold(
           backgroundColor: Colors.transparent,
-          extendBodyBehindAppBar: InfChrome.of(context).extendsBehindBars,
-          appBar: AppBar(title: const Text('我'), flexibleSpace: lookBarBackground(context)),
+          // The bar keeps its height when it leaves; the list is padded by it below instead.
+          extendBodyBehindAppBar: true,
+          appBar: ShellTopBar(child: AppBar(title: const Text('我'))),
           // The padding has to be read below the Scaffold, which adds the bar's height to it.
           body: Builder(
             builder: (context) => ListView(
@@ -283,7 +284,7 @@ class _Header extends StatelessWidget {
 
   static Widget _startAligned(Widget? current, List<Widget> previous) => Stack(
         alignment: AlignmentDirectional.centerStart,
-        children: [...previous, if (current != null) current],
+        children: [...previous, ?current],
       );
 }
 

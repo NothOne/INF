@@ -62,6 +62,52 @@ abstract class InfChrome {
   /// A control that answers a press with its own give (liquid glass swells and springs back).
   Widget pressable(BuildContext context, {required Widget child}) => child;
 
+  /// A round button floating over the page, such as 发微博. [onPressed] gets the button's own
+  /// context, which the page it opens grows out of.
+  Widget floatingButton(
+    BuildContext context, {
+    required String tooltip,
+    required Widget icon,
+    required ValueChanged<BuildContext> onPressed,
+  }) {
+    return Builder(
+      builder: (buttonContext) => FloatingActionButton(
+        heroTag: null,
+        elevation: 2,
+        tooltip: tooltip,
+        backgroundColor: floatingButtonTint(context),
+        foregroundColor: Theme.of(context).colorScheme.onPrimaryContainer,
+        onPressed: () => onPressed(buttonContext),
+        child: icon,
+      ),
+    );
+  }
+
+  /// What [floatingButton] is filled with. The page it opens grows out of a disc of this colour, so
+  /// the two have to agree.
+  Color floatingButtonTint(BuildContext context) => Theme.of(context).colorScheme.primaryContainer;
+
+  /// A small capsule floating over the page, such as the feed's “N 条新微博”. It lies on the
+  /// primary colour, so [child] is drawn in `onPrimary`.
+  Widget floatingCapsule(BuildContext context, {required Widget child, VoidCallback? onTap}) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.primary,
+      elevation: 3,
+      shadowColor: Colors.black38,
+      shape: const StadiumBorder(),
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: onTap,
+        child: child,
+      ),
+    );
+  }
+
+  /// The transient message at the bottom of the page (see `showMessage`). Classic and glass keep
+  /// the theme's inverse bar; liquid gives it a pane of dark glass.
+  SnackBar snackBar(BuildContext context, Widget content) => SnackBar(content: content);
+
   /// How sheets rise; null keeps the sheet's own motion.
   AnimationStyle? get sheetMotion => null;
 }

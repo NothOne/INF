@@ -14,6 +14,7 @@ import '../../core/paging.dart';
 import '../../core/pane.dart';
 import '../../core/parse.dart';
 import '../../core/prefs.dart';
+import '../../core/shell_tabs.dart';
 import '../../core/status_store.dart';
 import '../../core/widgets/comment_sheet.dart';
 import '../../core/widgets/common.dart';
@@ -21,6 +22,7 @@ import '../../core/widgets/hot_board_bar.dart';
 import '../../core/widgets/hot_search_row.dart';
 import '../../core/widgets/paged_status_list.dart';
 import '../../core/widgets/refresh.dart';
+import '../../core/widgets/shell_top_bar.dart';
 import '../../core/widgets/status_card.dart';
 import '../../core/widgets/transitions.dart';
 import 'feed_controller.dart';
@@ -132,6 +134,8 @@ class FeedPageState extends State<FeedPage> {
   void _pageChanged(int index) {
     final page = _HomePage.values[index];
     Haptic.selection.play();
+    // Each home page has its own bar; swiping to one is not scrolling the page it left.
+    showShellBars();
     setState(() => _page = page);
     if (page == _HomePage.recommend && _hotPager == null) _startRecommend();
     if (page == _HomePage.board) {
@@ -188,68 +192,82 @@ class FeedPageState extends State<FeedPage> {
       builder: (context, _) {
         return Scaffold(
           backgroundColor: Colors.transparent,
-          extendBodyBehindAppBar: InfChrome.of(context).extendsBehindBars,
-          appBar: AppBar(
-            flexibleSpace: lookBarBackground(context),
-            centerTitle: true,
-            titleSpacing: 0,
-            leadingWidth: 56,
-            leading: const SizedBox.shrink(),
-            title: _HomeTabs(
-              pages: _pages,
-              current: _page,
-              onSelect: _selectPage,
-              feedLabel: _SourcePicker(
-                controller: _controller,
-                pickerKey: _pickerKey,
-                enabled: _page == _HomePage.feed,
-                onTapDisabled: () => _selectPage(_HomePage.feed),
+          // The bar stays in the layout when it leaves; the list is padded by it below instead.
+          extendBodyBehindAppBar: true,
+          appBar: ShellTopBar(
+            child: AppBar(
+              centerTitle: true,
+              titleSpacing: 0,
+              leadingWidth: 56,
+              leading: const SizedBox.shrink(),
+              title: _HomeTabs(
+                pages: _pages,
+                current: _page,
+                onSelect: _selectPage,
+                feedLabel: _SourcePicker(
+                  controller: _controller,
+                  pickerKey: _pickerKey,
+                  enabled: _page == _HomePage.feed,
+                  onTapDisabled: () => _selectPage(_HomePage.feed),
+                ),
+                recommendLabel: _ArrowLabel(
+                  title: _channel.personal ? '推荐' : _channel.title,
+                  active: _page == _HomePage.recommend,
+                ),
+                boardLabel: AnimatedBuilder(
+                  animation: Prefs.instance,
+                  builder: (context, _) {
+                    final board = shownBoard(_board);
+                    return _ArrowLabel(
+                      title: board == HotBoard.realtime ? '热搜' : board.label,
+                      active: _page == _HomePage.board,
+                    );
+                  },
+                ),
               ),
-              recommendLabel: _ArrowLabel(
-                title: _channel.personal ? '推荐' : _channel.title,
-                active: _page == _HomePage.recommend,
-              ),
-              boardLabel: AnimatedBuilder(
-                animation: Prefs.instance,
-                builder: (context, _) {
-                  final board = shownBoard(_board);
-                  return _ArrowLabel(
-                    title: board == HotBoard.realtime ? '热搜' : board.label,
-                    active: _page == _HomePage.board,
-                  );
-                },
-              ),
+              actions: [
+                IconButton(
+                  onPressed: () => openSearch(context),
+                  tooltip: '搜索',
+                  icon: const Icon(Icons.search_rounded),
+                ),
+                const SizedBox(width: 4),
+              ],
             ),
-            actions: [
-              IconButton(
-                onPressed: () => openSearch(context),
-                tooltip: '搜索',
-                icon: const Icon(Icons.search_rounded),
-              ),
-              const SizedBox(width: 4),
-            ],
           ),
           body: PageView(
             controller: _pages,
             onPageChanged: _pageChanged,
+            // A swipe between home pages is not scrolling, so it must not leave a bar behind: the
+            // bar comes back as the page starts to move.
             children: [
               KeepAlivePage(
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 220),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeIn,
-                  child: _body(),
+                child: _SwipeKeepsBars(
+                  pages: _pages,
+                  index: _HomePage.feed.index,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeIn,
+                    child: _body(),
+                  ),
                 ),
               ),
-              KeepAlivePage(child: _hotFeed()),
               KeepAlivePage(
-                child: AnimatedBuilder(
-                  animation: Prefs.instance,
-                  builder: (context, _) => _HotBoard(
-                    board: shownBoard(_board),
-                    onSelect: _selectBoard,
-                    scroll: _boardScroll,
-                    refreshKey: _boardRefreshKey,
+                child: _SwipeKeepsBars(pages: _pages, index: _HomePage.recommend.index, child: _hotFeed()),
+              ),
+              KeepAlivePage(
+                child: _SwipeKeepsBars(
+                  pages: _pages,
+                  index: _HomePage.board.index,
+                  child: AnimatedBuilder(
+                    animation: Prefs.instance,
+                    builder: (context, _) => _HotBoard(
+                      board: shownBoard(_board),
+                      onSelect: _selectBoard,
+                      scroll: _boardScroll,
+                      refreshKey: _boardRefreshKey,
+                    ),
                   ),
                 ),
               ),
@@ -307,6 +325,42 @@ class FeedPageState extends State<FeedPage> {
         );
     }
   }
+}
+
+/// Brings the shell's bars back as soon as its home page starts sliding in or out from under them:
+/// leaving is a scroll, arriving is not, so a swipe never ends on a page with no bar.
+class _SwipeKeepsBars extends StatefulWidget {
+  const _SwipeKeepsBars({required this.pages, required this.index, required this.child});
+
+  final PageController pages;
+  final int index;
+  final Widget child;
+
+  @override
+  State<_SwipeKeepsBars> createState() => _SwipeKeepsBarsState();
+}
+
+class _SwipeKeepsBarsState extends State<_SwipeKeepsBars> {
+  @override
+  void initState() {
+    super.initState();
+    widget.pages.addListener(_moved);
+  }
+
+  @override
+  void dispose() {
+    widget.pages.removeListener(_moved);
+    super.dispose();
+  }
+
+  void _moved() {
+    if (!widget.pages.hasClients || !widget.pages.position.hasContentDimensions) return;
+    final page = widget.pages.page ?? widget.index.toDouble();
+    if (page != widget.index.toDouble()) showShellBars();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 class _SourcePicker extends StatelessWidget {
@@ -507,12 +561,15 @@ class _HotBoard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Includes the bar: the list is laid from the top of the screen down in every style.
     final top = MediaQuery.paddingOf(context).top;
     final chrome = InfChrome.of(context);
     // When content runs under the chrome (glass), the chips float over the list as a capsule and
-    // the entries scroll beneath it; otherwise they are a plain row above the list.
+    // the entries scroll beneath it; otherwise they are a plain row on the page.
     final floating = chrome.extendsBehindBars;
-    final listTop = floating ? _capsule + 12 : 0.0;
+    final bandTop = floating ? 6.0 : 0.0;
+    final band = floating ? _capsule : 44.0;
+    final listTop = top + (floating ? _capsule + 12 : band);
     final gutter = contentGutter(context);
     return AnimatedBuilder(
       animation: HotSearchStore.instance,
@@ -542,7 +599,7 @@ class _HotBoard extends StatelessWidget {
               controller: scroll,
               physics: const AlwaysScrollableScrollPhysics(),
               padding: EdgeInsets.only(
-                top: floating ? top + listTop : 0,
+                top: listTop,
                 bottom: ShellLayout.clearance(context, 104) + MediaQuery.paddingOf(context).bottom,
                 left: gutter,
                 right: gutter,
@@ -567,23 +624,27 @@ class _HotBoard extends StatelessWidget {
           );
         }
         final chips = HotBoardChips(current: board, onSelect: onSelect, floating: floating);
-        if (!floating) {
-          return Padding(
-            padding: EdgeInsets.only(top: top),
-            child: Column(children: [ContentColumn(child: chips), Expanded(child: list)]),
-          );
-        }
+        // Solid on the page, a lifted capsule over it: either way the entries pass underneath, so
+        // the row cannot be see-through.
+        final row = floating
+            ? chrome.floatingPanel(context, radius: BorderRadius.circular(_capsule / 2), child: chips)
+            : ColoredBox(color: Theme.of(context).colorScheme.surface, child: ContentColumn(child: chips));
         return Stack(
           children: [
             Positioned.fill(
-              child: entries == null ? Padding(padding: EdgeInsets.only(top: top + listTop), child: list) : list,
+              // Only the row's own room: states that do not scroll pad by the bar themselves.
+              child: entries == null
+                  ? Padding(padding: EdgeInsets.only(top: listTop - top), child: list)
+                  : list,
             ),
+            // The board switcher belongs to the bar, not to the list: it leaves with the bar, and
+            // the room it takes is kept, so the entries never move.
             Positioned(
-              left: 12 + gutter,
-              right: 12 + gutter,
-              top: top + 6,
-              height: _capsule,
-              child: chrome.floatingPanel(context, radius: BorderRadius.circular(_capsule / 2), child: chips),
+              left: floating ? 12 + gutter : 0,
+              right: floating ? 12 + gutter : 0,
+              top: top + bandTop,
+              height: band,
+              child: ShellBarBand(travel: top + bandTop + band, child: row),
             ),
           ],
         );
@@ -1132,14 +1193,11 @@ class _FeedPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Material(
+    // Keyed by the icon so the switcher above swaps rather than rebuilds it in place.
+    return KeyedSubtree(
       key: ValueKey<IconData>(icon),
-      color: scheme.primary,
-      elevation: 3,
-      shadowColor: Colors.black38,
-      shape: const StadiumBorder(),
-      child: InkWell(
-        customBorder: const StadiumBorder(),
+      child: InfChrome.of(context).floatingCapsule(
+        context,
         onTap: busy ? null : onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),

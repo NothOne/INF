@@ -78,7 +78,7 @@ class LiquidLens {
   final double dispersion;
   final double highlight;
 
-  /// Multiplies the blur in the middle of the pane.
+  /// Multiplies the gaussian blur under the pane.
   final double frost;
   final LiquidEdges edges;
 
@@ -191,7 +191,9 @@ ui.ImageFilter _fallbackFilter(double sigma) {
       0.2126 * (1 - s), 0.7152 * (1 - s), 0.0722 * (1 - s) + s, 0, 0,
       0, 0, 0, 1, 0,
     ]),
-    inner: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+    // Clamped, not left to fade out beyond the layer: the lens reads past the pane's edge, and a
+    // backdrop that goes transparent there leaves a dark rim.
+    inner: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma, tileMode: ui.TileMode.clamp),
   );
 }
 
@@ -250,6 +252,9 @@ class _LiquidBackdrop extends SingleChildRenderObjectWidget {
   final double radius;
   final LiquidLens lens;
   final double refraction;
+
+  /// Sigma of the gaussian pushed under the lens, in logical pixels: [ui.ImageFilter.blur] in a
+  /// backdrop layer works in the layer's own coordinates, so this is not multiplied by the DPR.
   final double blurSigma;
   final bool dark;
   final double devicePixelRatio;
@@ -337,8 +342,6 @@ class _RenderLiquidBackdrop extends RenderProxyBox {
     put(bezel);
     put(bend);
     put((lens.dispersion * (0.4 + refraction)).clamp(0.0, 0.6));
-    put(blurSigma * px * 0.9);
-    put(1.3);
     put(lens.highlight * (dark ? 0.55 : 0.85));
     put(_light.dx);
     put(_light.dy);
@@ -350,6 +353,9 @@ class _LiquidLayer extends ContainerLayer {
   // Not `owner`: that is the layer tree's own and the layer will not attach if shadowed.
   _RenderLiquidBackdrop? source;
 
+  /// The blur pushed under the lens. Kept apart from [engineLayer], which is the lens itself.
+  ui.BackdropFilterEngineLayer? _frost;
+
   @override
   bool get alwaysNeedsAddToScene => true;
 
@@ -358,8 +364,18 @@ class _LiquidLayer extends ContainerLayer {
     final filter = insideFade(this) ? null : source?.filterNow();
     if (filter == null) {
       engineLayer = null;
+      _frost = null;
       addChildrenToScene(builder);
       return;
+    }
+    // The frost is a real gaussian in its own backdrop layer, so the shader samples one already
+    // smooth backdrop: its own sparse taps stacked copies of the page a blur apart (a grid).
+    final sigma = source?.blurSigma ?? 0;
+    final frost = sigma >= 0.5;
+    if (frost) {
+      _frost = builder.pushBackdropFilter(_fallbackFilter(sigma), oldLayer: _frost);
+    } else {
+      _frost = null;
     }
     final old = engineLayer;
     engineLayer = builder.pushBackdropFilter(
@@ -368,6 +384,7 @@ class _LiquidLayer extends ContainerLayer {
     );
     addChildrenToScene(builder);
     builder.pop();
+    if (frost) builder.pop();
   }
 }
 
@@ -483,7 +500,7 @@ class _LiquidBarBackgroundState extends State<LiquidBarBackground> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final look = InfLook.of(context);
-    final resting = Color.lerp(scheme.surface, scheme.surfaceContainer, 0.6)!.withValues(alpha: 0.70);
+    final resting = Color.lerp(scheme.surface, scheme.surfaceContainer, 0.6)!.withValues(alpha: 0.40);
     final engaged = scheme.surface.withValues(alpha: look.liquidTintAlpha(scheme.brightness));
     return TweenAnimationBuilder<double>(
       tween: Tween<double>(end: _depth),
@@ -520,7 +537,7 @@ class LiquidSheet extends StatelessWidget {
     final sheet = LiquidSurface(
       borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
       // A sheet holds text over a dimmed page: more body than a bar.
-      tint: scheme.surface.withValues(alpha: (alpha + 0.24).clamp(0.0, 0.94)),
+      tint: scheme.surface.withValues(alpha: (alpha + 0.20).clamp(0.0, 0.94)),
       lens: const LiquidLens(bezel: 20, refraction: 0.7, highlight: 1.1, edges: LiquidEdges.exceptBottom),
       child: Column(
         mainAxisSize: MainAxisSize.min,

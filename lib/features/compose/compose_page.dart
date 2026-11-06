@@ -212,9 +212,10 @@ class _ComposePageState extends State<ComposePage> {
       StatusStore.instance.bumpFeed();
       if (!mounted) return;
       Haptic.success.play();
+      final bar = infSnackBar(context, const Text('已发送'));
       final messenger = ScaffoldMessenger.of(context);
       Navigator.of(context).pop();
-      messenger.showSnackBar(const SnackBar(content: Text('已发送')));
+      messenger.showSnackBar(bar);
     } catch (error) {
       if (!mounted) return;
       Haptic.error.play();

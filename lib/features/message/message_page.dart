@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/layout.dart';
 import '../../core/models.dart';
@@ -14,6 +13,7 @@ import '../../core/widgets/avatar.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/refresh.dart';
 import '../../core/widgets/rich_text.dart';
+import '../../core/widgets/shell_top_bar.dart';
 import '../../core/widgets/transitions.dart';
 
 class MessagePage extends StatefulWidget {
@@ -37,21 +37,23 @@ class _MessagePageState extends State<MessagePage> with SingleTickerProviderStat
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       backgroundColor: Colors.transparent,
-      extendBodyBehindAppBar: InfChrome.of(context).extendsBehindBars,
-      appBar: AppBar(
-        title: const Text('私信'),
-        flexibleSpace: lookBarBackground(context),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(47),
-          child: ContentColumn(
-            child: TabBar(
-              controller: _tabs,
-              indicatorSize: TabBarIndicatorSize.label,
-              dividerColor: scheme.outlineVariant.withValues(alpha: 0.4),
-              tabs: const [
-                Tab(height: 46, child: Text('关注的人', style: TextStyle(fontSize: 13.5))),
-                Tab(height: 46, child: Text('未关注人', style: TextStyle(fontSize: 13.5))),
-              ],
+      // The bar keeps its height when it leaves; the list is padded by it below instead.
+      extendBodyBehindAppBar: true,
+      appBar: ShellTopBar(
+        child: AppBar(
+          title: const Text('私信'),
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(47),
+            child: ContentColumn(
+              child: TabBar(
+                controller: _tabs,
+                indicatorSize: TabBarIndicatorSize.label,
+                dividerColor: scheme.outlineVariant.withValues(alpha: 0.4),
+                tabs: const [
+                  Tab(height: 46, child: Text('关注的人', style: TextStyle(fontSize: 13.5))),
+                  Tab(height: 46, child: Text('未关注人', style: TextStyle(fontSize: 13.5))),
+                ],
+              ),
             ),
           ),
         ),
@@ -101,7 +103,10 @@ class _ConversationListState extends State<_ConversationList> with AutomaticKeep
 
   void _innerTabChanged() {
     if (widget.tabs.indexIsChanging || currentShellTab.value != shellTab) return;
-    if (widget.tabs.index == widget.position) onTabShown(first: false);
+    if (widget.tabs.index != widget.position) return;
+    // Swiping between sub-tabs is not scrolling a list, so the bar comes back with the page.
+    showShellBars();
+    onTabShown(first: false);
   }
 
   @override

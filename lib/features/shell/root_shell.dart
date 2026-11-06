@@ -5,6 +5,7 @@ import '../../core/haptics.dart';
 import '../../core/layout.dart';
 import '../../core/liquid_glass.dart';
 import '../../core/look.dart';
+import '../../core/motion.dart';
 import '../../core/native.dart';
 import '../../core/navigation.dart';
 import '../../core/pane.dart';
@@ -51,8 +52,10 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
   late final Animation<double> _leaveOpacity = ReverseAnimation(_leaveFade);
   late final Animation<double> _enterScale = Tween<double>(begin: 0.985, end: 1).animate(_enterFade);
   late final Animation<double> _leaveScale = Tween<double>(begin: 1, end: 1.015).animate(_leaveFade);
-  bool _barVisible = true;
   bool _rail = false;
+
+  /// The bottom bar and each tab's own top bar share this: [shellBarsVisible].
+  bool get _barVisible => shellBarsVisible.value;
 
   /// Expanded windows: the first three tabs keep a [DetailPane] beside their list.
   bool _split = false;
@@ -81,6 +84,8 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // The tabs' own top bars read this; a shell built again starts with its bars in view.
+    shellBarsVisible.value = true;
     WidgetsBinding.instance.addPostFrameCallback((_) => _openIncomingLink());
     // Build the other tabs offstage once the feed has had its start: they open on their cached
     // pages with avatars already decoded, and only touch the network once shown.
@@ -104,7 +109,7 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
     if (index == 0 && _index == 0) {
       final now = DateTime.now();
       final last = _lastHomeAction;
-      setState(() => _barVisible = true);
+      _setBarsVisible(true);
       if (last != null && now.difference(last).inMilliseconds < 350) return;
       _lastHomeAction = now;
       Haptic.selection.play();
@@ -112,7 +117,7 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
       return;
     }
     if (index == _index) {
-      setState(() => _barVisible = true);
+      _setBarsVisible(true);
       return;
     }
     if (tapped) Haptic.selection.play();
@@ -121,10 +126,11 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
       _previous = _index;
       _index = index;
       _visited.add(index);
-      _barVisible = true;
       _downAccum = 0;
       _upAccum = 0;
     });
+    // The bar is the way back to every other tab.
+    _setBarsVisible(true);
     currentShellTab.value = index;
     _tabFade.forward(from: 0).whenComplete(() {
       if (mounted) setState(() => _previous = null);
@@ -183,6 +189,13 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
     }
     // Swiping between the home pages is not scrolling the content.
     if (notification.metrics.axis != Axis.vertical) return false;
+    // How far the list has gone past its own top. The feed is measured from the post being read, so
+    // at the top its offset is negative rather than zero.
+    final metrics = notification.metrics;
+    final scrolled = metrics.pixels - metrics.minScrollExtent;
+    // Back at the top the bar belongs in view, however the list got there: a fling carries on
+    // without a finger on it.
+    if (!_barVisible && scrolled <= 40) _setBarsVisible(true);
     if (notification is ScrollUpdateNotification && notification.dragDetails == null) {
       return false;
     }
@@ -194,12 +207,17 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
       _upAccum += -delta;
       _downAccum = 0;
     }
-    if (_barVisible && _downAccum > 28 && notification.metrics.pixels > 40) {
-      setState(() => _barVisible = false);
+    if (_barVisible && _downAccum > 28 && scrolled > 40) {
+      _setBarsVisible(false);
     } else if (!_barVisible && _upAccum > 10) {
-      setState(() => _barVisible = true);
+      _setBarsVisible(true);
     }
     return false;
+  }
+
+  /// The bottom bar and the tabs' top bars all follow [shellBarsVisible]; the shell is not rebuilt.
+  void _setBarsVisible(bool visible) {
+    shellBarsVisible.value = visible;
   }
 
   @override
@@ -220,9 +238,9 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
       ];
 
   void _compose(BuildContext buttonContext) {
-    final scheme = Theme.of(buttonContext).colorScheme;
-    // The editor grows out of the button.
-    ContainerOrigin.capture(buttonContext, radius: 16, color: scheme.primaryContainer);
+    final chrome = InfChrome.of(buttonContext);
+    // The editor grows out of the button, so the disc it grows from is the button's own fill.
+    ContainerOrigin.capture(buttonContext, radius: 16, color: chrome.floatingButtonTint(buttonContext));
     openCompose(context);
   }
 
@@ -258,8 +276,12 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
     final window = WindowClass.of(context);
     _rail = window.wide;
     _split = window == WindowClass.expanded;
-    // Coming back to the bar layout, the bar is where it can be seen.
-    if (_rail) _barVisible = true;
+    // The rail does not cover anything, so a window that becomes wide shows the bars again.
+    if (_rail && !shellBarsVisible.value) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _rail) _setBarsVisible(true);
+      });
+    }
     // Back steps out of the open tab's pane first, then to the home tab, then out of the app.
     return ListenableBuilder(
       listenable: Listenable.merge(_paneOpen),
@@ -325,25 +347,30 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
     return Stack(
       children: [
         Positioned.fill(child: _tabsArea(width: MediaQuery.sizeOf(context).width)),
+        // Only this part of the shell listens: the tabs are not rebuilt as the bar moves.
         Positioned(
           left: 0,
           right: 0,
           bottom: 0,
-          child: AnimatedSlide(
-            offset: _barVisible ? Offset.zero : const Offset(0, 1.25),
-            duration: const Duration(milliseconds: 240),
-            curve: Curves.easeOutCubic,
-            child: AnimatedOpacity(
-              opacity: _barVisible || !InfChrome.of(context).panelsCanFade ? 1 : 0,
-              duration: const Duration(milliseconds: 180),
-              child: AnimatedBuilder(
-                animation: UnreadMonitor.instance,
-                builder: (context, _) => _BottomBar(
-                  index: _index,
-                  tabs: _tabs,
-                  badges: _badges,
-                  onSelect: _select,
-                ),
+          child: ValueListenableBuilder<bool>(
+            valueListenable: shellBarsVisible,
+            builder: (context, visible, child) => AnimatedSlide(
+              offset: visible ? Offset.zero : const Offset(0, 1.25),
+              duration: InfMotion.bar,
+              curve: InfMotion.barCurve,
+              child: AnimatedOpacity(
+                opacity: visible || !InfChrome.of(context).panelsCanFade ? 1 : 0,
+                duration: InfMotion.barFade,
+                child: child,
+              ),
+            ),
+            child: AnimatedBuilder(
+              animation: UnreadMonitor.instance,
+              builder: (context, _) => _BottomBar(
+                index: _index,
+                tabs: _tabs,
+                badges: _badges,
+                onSelect: _select,
               ),
             ),
           ),
@@ -352,7 +379,10 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
           Positioned(
             right: 18,
             bottom: 78 + bottomInset,
-            child: _ComposeButton(visible: _barVisible, onPressed: _compose),
+            child: ValueListenableBuilder<bool>(
+              valueListenable: shellBarsVisible,
+              builder: (context, visible, _) => _ComposeButton(visible: visible, onPressed: _compose),
+            ),
           ),
       ],
     );
@@ -368,7 +398,6 @@ class _ComposeButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return IgnorePointer(
       ignoring: !visible,
       child: AnimatedScale(
@@ -380,16 +409,11 @@ class _ComposeButton extends StatelessWidget {
           duration: const Duration(milliseconds: 160),
           child: InfChrome.of(context).pressable(
             context,
-            child: Builder(
-              builder: (fabContext) => FloatingActionButton(
-                heroTag: null,
-                elevation: 2,
-                tooltip: '发微博',
-                backgroundColor: scheme.primaryContainer,
-                foregroundColor: scheme.onPrimaryContainer,
-                onPressed: () => onPressed(fabContext),
-                child: const Icon(Icons.edit_rounded),
-              ),
+            child: InfChrome.of(context).floatingButton(
+              context,
+              tooltip: '发微博',
+              icon: const Icon(Icons.edit_rounded),
+              onPressed: onPressed,
             ),
           ),
         ),

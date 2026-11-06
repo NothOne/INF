@@ -18,6 +18,7 @@ import '../../core/touches.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/smart_image.dart';
 import 'cast_sheet.dart';
+import 'video_surface.dart';
 
 class VideoPage extends StatefulWidget {
   const VideoPage({super.key, required this.url, this.coverUrl});
@@ -33,13 +34,16 @@ class VideoPage extends StatefulWidget {
 enum _Drag { none, seek, brightness, volume, dismiss }
 
 class _VideoPageState extends State<VideoPage> with WidgetsBindingObserver {
-  late final VideoPlayerController _controller = VideoPlayerController.networkUrl(
-    Uri.parse(secureUrl(widget.url)),
-    httpHeaders: {
-      'Referer': 'https://m.weibo.cn/',
-      'User-Agent': Session.instance.userAgent,
-    },
-  );
+  late VideoPlayerController _controller = _newController(preferredVideoView());
+
+  VideoPlayerController _newController(VideoViewType viewType) => VideoPlayerController.networkUrl(
+        Uri.parse(secureUrl(widget.url)),
+        httpHeaders: {
+          'Referer': 'https://m.weibo.cn/',
+          'User-Agent': Session.instance.userAgent,
+        },
+        viewType: viewType,
+      );
   bool _ready = false;
   bool _error = false;
   bool _controls = true;
@@ -107,9 +111,20 @@ class _VideoPageState extends State<VideoPage> with WidgetsBindingObserver {
     super.dispose();
   }
 
+  void _swapController(VideoPlayerController next) {
+    if (next == _controller) return;
+    _controller.removeListener(_onTick);
+    _controller.dispose();
+    _controller = next..addListener(_onTick);
+  }
+
   void _initialize({bool resume = false}) {
-    _controller.initialize().then((_) async {
-      if (!mounted) return;
+    startVideo(_controller, _newController).then((started) async {
+      if (!mounted) {
+        if (started != _controller) started.dispose();
+        return;
+      }
+      setState(() => _swapController(started));
       final saved = resume ? Prefs.instance.videoPosition(widget.url) : null;
       final duration = _controller.value.duration;
       if (saved != null && saved > const Duration(seconds: 3) && saved < duration - const Duration(seconds: 3)) {
@@ -546,6 +561,7 @@ class _VideoPageState extends State<VideoPage> with WidgetsBindingObserver {
                         setState(() {
                           _error = false;
                           _ready = false;
+                          _swapController(_newController(preferredVideoView()));
                         });
                         _initialize();
                       },

@@ -23,6 +23,7 @@ class RichStatusText extends StatefulWidget {
   const RichStatusText({
     super.key,
     required this.text,
+    this.prefix,
     this.style,
     this.color,
     this.maxLines = 1000,
@@ -36,6 +37,9 @@ class RichStatusText extends StatefulWidget {
   });
 
   final String text;
+
+  /// Drawn before [text] in the same paragraph, so a name and the body it heads wrap together.
+  final InlineSpan? prefix;
 
   /// What the post drew for the links in [text], by address.
   final Map<String, WeiboLink> links;
@@ -86,7 +90,9 @@ class _RichStatusTextState extends State<RichStatusText> {
     return ListenableBuilder(
       listenable: EmojiStore.instance,
       builder: (context, _) {
-        final spans = <InlineSpan>[];
+        final spans = <InlineSpan>[
+          if (widget.prefix != null) widget.prefix!,
+        ];
         for (final token in _tokenize(widget.text)) {
           switch (token.kind) {
             case _TokenKind.plain:
@@ -106,7 +112,7 @@ class _RichStatusTextState extends State<RichStatusText> {
                 callback == null ? null : () => callback(_topicName(token.value)),
               ));
             case _TokenKind.url:
-              final imageUrl = _inlineImageUrl(token.value);
+              final imageUrl = inlineImageUrl(token.value);
               if (imageUrl != null && !widget.inlineImages) {
                 final callback = widget.onOpenImage;
                 final tag = _imageTag(token.start);
@@ -273,10 +279,13 @@ bool isVideoLink(String url) {
   return object.startsWith('1034:');
 }
 
-String? _inlineImageUrl(String value) {
+/// The picture address a link in running text points at, when it is one: an image link reads as
+/// 查看图片 rather than as a URL.
+String? inlineImageUrl(String value) {
   var candidate = value;
   final parsed = Uri.tryParse(value);
-  if (parsed != null && parsed.host == 'weibo.cn' && parsed.path.contains('sinaurl')) {
+  final host = parsed?.host ?? '';
+  if ((host == 'weibo.cn' || host.endsWith('.weibo.cn')) && (parsed!.path.contains('sinaurl'))) {
     candidate = parsed.queryParameters['u'] ?? value;
   }
   final clean = sanitizeImageUrl(candidate);
@@ -285,6 +294,18 @@ String? _inlineImageUrl(String value) {
     if (path.endsWith(extension)) return clean;
   }
   return null;
+}
+
+/// Every picture address [text] links to, so a caller holding the comment's picture list can tell
+/// which of them the text already shows and which need their own 查看图片.
+List<String> inlineImageUrls(String text) {
+  final urls = <String>[];
+  for (final token in _tokenize(text)) {
+    if (token.kind != _TokenKind.url) continue;
+    final url = inlineImageUrl(token.value);
+    if (url != null) urls.add(url);
+  }
+  return urls;
 }
 
 String _mentionName(String token) => token.startsWith('@') ? token.substring(1) : token;

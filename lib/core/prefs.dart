@@ -214,6 +214,15 @@ class Prefs extends ChangeNotifier {
     }
   }
 
+  /// Set once a video failed to start on the texture path on this device (Huawei's OMX.hisi
+  /// decoders cannot allocate buffers on its ImageReader); from then on videos use a SurfaceView.
+  /// Not a user-facing setting, so it does not notify.
+  bool get videoSurfaceView => _prefs.getBool('video_surface_view') ?? false;
+
+  Future<void> setVideoSurfaceView() async {
+    if (!videoSurfaceView) await _prefs.setBool('video_surface_view', true);
+  }
+
   bool get recordHistory => _prefs.getBool('record_history') ?? true;
 
   Future<void> setRecordHistory(bool enabled) async {

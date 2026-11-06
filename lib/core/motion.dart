@@ -18,6 +18,11 @@ class InfMotion {
   static const hero = Duration(milliseconds: 300);
   static const breath = Duration(milliseconds: 1250);
 
+  /// The shell's bars sliding out of the way and back, bottom and top together.
+  static const bar = Duration(milliseconds: 240);
+  static const barFade = Duration(milliseconds: 180);
+  static const barCurve = Curves.easeOutCubic;
+
   static const enter = Cubic(0.2, 0.0, 0.0, 1.0);
   static const exit = Cubic(0.3, 0.0, 1.0, 1.0);
   static const emphasized = Curves.easeOutCubic;

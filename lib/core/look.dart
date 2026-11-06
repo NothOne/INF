@@ -47,14 +47,14 @@ class InfLook extends ThemeExtension<InfLook> {
   /// Liquid glass tint over the page, for chrome with little text on it.
   double liquidTintAlpha(Brightness brightness) {
     final dark = brightness == Brightness.dark;
-    final thick = dark ? 0.62 : 0.66;
-    final thin = dark ? 0.10 : 0.12;
+    final thick = dark ? 0.48 : 0.52;
+    final thin = dark ? 0.04 : 0.05;
     return thick + (thin - thick) * liquidClarity;
   }
 
-  /// Liquid glass keeps a light frost so text over a busy feed stays legible; most of its
-  /// look comes from the edge, not the blur.
-  double get liquidBlurSigma => 1.5 + 6.5 * (1 - liquidClarity);
+  /// A gaussian in a backdrop layer, not the old ring of taps, so it reads stronger at the same
+  /// number: liquid glass stays light, and most of its look comes from the edge.
+  double get liquidBlurSigma => 1 + 5 * (1 - liquidClarity);
 
   /// 0 is sharp glass, 1 the heaviest frost. The default still lands on the previous sigma,
   /// so opening the clear end does not shift a setting the user has not touched.

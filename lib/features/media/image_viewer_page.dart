@@ -15,6 +15,7 @@ import '../../core/share.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/image_grid.dart';
 import '../../core/widgets/smart_image.dart';
+import 'video_surface.dart';
 
 class ImageViewerPage extends StatefulWidget {
   const ImageViewerPage({
@@ -986,8 +987,9 @@ class _LiveOverlayState extends State<_LiveOverlay> {
           headers: weiboImageHeaders(),
         );
         if (!mounted) return;
-        controller = VideoPlayerController.file(file);
-        await controller.initialize();
+        final first = controller = VideoPlayerController.file(file, viewType: preferredVideoView());
+        controller = await startVideo(first, (viewType) => VideoPlayerController.file(file, viewType: viewType));
+        if (controller != first) first.dispose();
         if (!mounted) {
           controller.dispose();
           return;

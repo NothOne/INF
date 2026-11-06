@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show PlatformDispatcher;
 
 import 'package:dio/dio.dart';
 
@@ -11,7 +12,11 @@ import 'session.dart';
 
 class LoginRequiredException implements Exception {
   final String? loginUrl;
-  LoginRequiredException([this.loginUrl]);
+
+  /// The answer was not JSON. A signed-out client gets the passport page here, but so does one
+  /// caught by risk control or a captive portal, so this alone does not prove the session ended.
+  final bool unparsable;
+  LoginRequiredException([this.loginUrl, this.unparsable = false]);
   @override
   String toString() => '需要登录微博';
 }
@@ -22,6 +27,12 @@ class ApiException implements Exception {
   ApiException(this.message, {this.code});
   @override
   String toString() => message;
+}
+
+/// A write Weibo will take only after its captcha; [captchaId] is what the puzzle is issued for.
+class CaptchaRequiredException extends ApiException {
+  final String captchaId;
+  CaptchaRequiredException(super.message, {required this.captchaId});
 }
 
 /// Calls the JSON endpoints used by m.weibo.cn, with the same paths, parameters and headers the
@@ -323,13 +334,40 @@ class WeiboApi {
     return 'SUB=$sub; SUBP=${textOf(data?['subp']) ?? ''}';
   }
 
+  /// A QR code for the m.weibo.cn SSO entry. Confirming it in the Weibo app needs no captcha: the
+  /// app is already signed in.
+  Future<QrLogin> qrLogin() async {
+    final login = parseQrLogin(await _getPublic(
+      'https://passport.weibo.com/sso/v2/qrcode/image',
+      query: {'entry': 'wapsso', 'size': '180'},
+      referer: Session.loginUrl,
+      whole: true,
+    ));
+    if (login == null) throw ApiException('二维码获取失败');
+    return login;
+  }
+
+  Future<QrLoginStatus> qrLoginStatus(String qrid) async => parseQrLoginStatus(await _getPublic(
+        'https://passport.weibo.com/sso/v2/qrcode/check',
+        query: {
+          'entry': 'wapsso',
+          'source': 'wapssowb',
+          'url': 'https://m.weibo.cn/',
+          'qrid': qrid,
+          'rid': 'norid',
+          'ver': '20250520',
+        },
+        referer: Session.loginUrl,
+        whole: true,
+      ));
+
   Future<SearchSuggestions> searchSuggestions(String query) async {
     final data = await _getPublic('https://weibo.com/ajax/side/search', query: {'q': query});
     return parseSearchSuggestions(data);
   }
 
-  Future<PageResult<Status>> searchStatuses(String query, String? cursor) =>
-      _containerStatuses('100103type=1&q=$query', cursor);
+  Future<PageResult<Status>> searchStatuses(String query, String? cursor, {SearchSort sort = SearchSort.all}) =>
+      _containerStatuses('100103type=${sort.type}&q=$query', cursor);
 
   Future<PageResult<Status>> topicStatuses(String name, String? keyword, String? cursor) =>
       _containerStatuses(topicQuery(name, keyword), cursor);
@@ -565,10 +603,13 @@ class WeiboApi {
     });
   }
 
-  Future<PageResult<Comment>> comments(String statusId, String? cursor) async {
+  /// [byTime] asks the first page to come back newest-first: the hot flow with
+  /// `max_id_type=1` and no cursor is the same list in reverse chronological order, and its own
+  /// cursor continues paging it. Later pages follow the cursor either way.
+  Future<PageResult<Comment>> comments(String statusId, String? cursor, {bool byTime = false}) async {
     final parts = cursor?.split(':');
     final maxId = (parts != null && parts.length == 2) ? parts[0] : null;
-    final maxIdType = (parts != null && parts.length == 2) ? parts[1] : '0';
+    final maxIdType = (parts != null && parts.length == 2) ? parts[1] : (byTime ? '1' : '0');
     final data = await _get(
       'comments/hotflow',
       query: {
@@ -612,6 +653,20 @@ class WeiboApi {
       'id': statusId,
       'attitude': 'heart',
     }, referer: '${_web}/detail/$statusId');
+  }
+
+  Future<void> setCommentLiked(String commentId, bool liked, {String? statusId}) async {
+    final path = liked ? 'api/likes/update' : 'api/likes/destroy';
+    try {
+      await _post(path, {
+        'id': commentId,
+        'type': 'comment',
+      }, referer: statusId == null ? null : '$_web/detail/$statusId');
+    } on ApiException catch (error) {
+      // m.weibo.cn's own comment like answers the same for an account it holds back.
+      if (error.code == 20000) throw ApiException('微博暂时不让这个账号给评论点赞（网页版同样失败），请稍后再试', code: 20000);
+      rethrow;
+    }
   }
 
   /// m.weibo.cn's own menu posts these; the path names are its own.
@@ -725,8 +780,10 @@ class WeiboApi {
       if (status >= 400) throw ApiException('HTTP $status');
       final body = response.data;
       final map = asMap(body is String ? jsonDecode(body) : body);
-      // weibo.com answers {ok: 1}, m.s.weibo.com {code: "100000"}.
-      if (map == null || (intOf(map['ok']) != 1 && textOf(map['code']) != '100000')) {
+      // weibo.com answers {ok: 1}, m.s.weibo.com {code: "100000"}; passport's {retcode} is read
+      // by its parser, since a QR code still waiting for its scan is an answer too.
+      final passport = map != null && map.containsKey('retcode');
+      if (map == null || (!passport && intOf(map['ok']) != 1 && textOf(map['code']) != '100000')) {
         throw ApiException(textOf(map?['msg']) ?? '接口返回格式错误');
       }
       return whole ? map : map['data'];
@@ -737,7 +794,35 @@ class WeiboApi {
     }
   }
 
+  /// m.weibo.cn adds the screen size in CSS pixels to every post.
+  String get _screen {
+    final view = PlatformDispatcher.instance.implicitView;
+    if (view == null) return 'screen:412x915';
+    final size = view.physicalSize / view.devicePixelRatio;
+    return 'screen:${size.width.round()}x${size.height.round()}';
+  }
+
+  /// Shows Weibo's captcha and completes with the fields to resend the refused write with, or
+  /// null when the reader gave up. Set by the app, which owns the UI.
+  static Future<Map<String, String>?> Function(String captchaId)? captchaSolver;
+
   Future<dynamic> _post(
+    String path,
+    Map<String, String?> fields, {
+    String? referer,
+  }) async {
+    try {
+      return await _postOnce(path, fields, referer: referer);
+    } on CaptchaRequiredException catch (error) {
+      final solve = captchaSolver;
+      if (solve == null) rethrow;
+      final passed = await solve(error.captchaId);
+      if (passed == null) throw ApiException('没有完成安全验证，操作未执行');
+      return _postOnce(path, {...fields, ...passed}, referer: referer);
+    }
+  }
+
+  Future<dynamic> _postOnce(
     String path,
     Map<String, String?> fields, {
     String? referer,
@@ -750,6 +835,7 @@ class WeiboApi {
           for (final entry in fields.entries)
             if (entry.value != null) entry.key: entry.value!,
           'st': st,
+          '_spr': _screen,
         },
         options: Options(
           contentType: Headers.formUrlEncodedContentType,
@@ -809,7 +895,7 @@ class WeiboApi {
       try {
         root = jsonDecode(body);
       } catch (_) {
-        throw LoginRequiredException(null);
+        throw LoginRequiredException(null, true);
       }
     } else {
       root = body;
@@ -822,6 +908,10 @@ class WeiboApi {
     if (envelope.needsLogin) {
       session.onLoginRequired();
       throw LoginRequiredException(envelope.loginUrl);
+    }
+    final captchaId = textOf(map['extra']);
+    if (envelope.ok == 0 && textOf(map['error_type']) == 'captcha' && captchaId != null) {
+      throw CaptchaRequiredException(envelope.message ?? '需要完成安全验证', captchaId: captchaId);
     }
     final code = envelope.errno ?? envelope.ok;
     if (emptyIsOk && (code == 0 || code == 100011)) return null;

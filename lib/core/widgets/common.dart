@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../chrome.dart';
 import '../layout.dart';
+
+/// The current style's snackbar. Build it while the context is still mounted: a page that closes
+/// itself needs the bar in hand before it pops.
+SnackBar infSnackBar(BuildContext context, Widget content) => InfChrome.of(context).snackBar(context, content);
 
 void showMessage(BuildContext context, String? message) {
   if (message == null || message.trim().isEmpty) return;
@@ -8,7 +13,7 @@ void showMessage(BuildContext context, String? message) {
   if (messenger == null) return;
   messenger
     ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(content: Text(message)));
+    ..showSnackBar(infSnackBar(context, Text(message)));
 }
 
 class ErrorRetry extends StatelessWidget {

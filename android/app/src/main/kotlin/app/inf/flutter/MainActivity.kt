@@ -153,6 +153,7 @@ class MainActivity : FlutterActivity() {
                                 result.success(target != null && openExternal(url, target) || openExternal(url))
                             }
                         }
+                        "sdkInt" -> result.success(Build.VERSION.SDK_INT)
                         "isMetered" -> {
                             val manager = getSystemService(ConnectivityManager::class.java)
                             result.success(manager?.isActiveNetworkMetered ?: true)

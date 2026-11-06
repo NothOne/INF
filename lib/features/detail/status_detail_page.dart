@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/layout.dart';
+import '../../core/liquid_glass.dart';
 import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/container_route.dart';
+import '../../core/image_url.dart';
 import '../../core/models.dart';
 import '../../core/navigation.dart';
 import '../../core/paging.dart';
@@ -22,6 +24,9 @@ import '../../core/widgets/smart_image.dart';
 import '../../core/widgets/share_sheet.dart';
 import '../../core/widgets/status_card.dart';
 import '../../core/widgets/transitions.dart';
+
+/// 按热度 is what the hot flow returns; 按时间 asks the same list newest first.
+enum CommentSort { hot, time }
 
 class StatusDetailPage extends StatefulWidget {
   const StatusDetailPage({
@@ -41,19 +46,46 @@ class _StatusDetailPageState extends State<StatusDetailPage> {
   late Status? _status = widget.seed;
   late bool _loading = widget.seed == null;
   String? _error;
-  late final PagingController<Comment> _comments;
+
+  /// A long post's whole text once it has arrived, to put on whatever the requests return.
+  ({String text, Map<String, WeiboLink> links})? _long;
+
+  /// The route animations this page is waiting on before changing how tall it is.
+  final List<(Animation<double>, AnimationStatusListener)> _waiting = [];
+
+  /// The transition this page is drawn by, read where a lookup is allowed.
+  Animation<double>? _routeAnimation;
+
+  late PagingController<Comment> _comments;
   late final PagingController<Status> _reposts;
+  CommentSort _sort = CommentSort.hot;
   bool _showingReposts = false;
   bool _repostsStarted = false;
+
+  PagingController<Comment> _commentsPager(CommentSort sort) => PagingController<Comment>(
+        fetch: (cursor) => WeiboApi.instance.comments(
+          widget.statusId,
+          cursor,
+          byTime: sort == CommentSort.time,
+        ),
+        id: (comment) => comment.id,
+      );
 
   @override
   void initState() {
     super.initState();
-    if (widget.seed != null) StatusStore.instance.seed(widget.seed!);
-    _comments = PagingController<Comment>(
-      fetch: (cursor) => WeiboApi.instance.comments(widget.statusId, cursor),
-      id: (comment) => comment.id,
-    );
+    final seed = widget.seed;
+    if (seed != null) {
+      StatusStore.instance.seed(seed);
+      // The tap that opened this page asked for the rest of a long post, and by now it may be
+      // here: the page then opens already showing what it will show, instead of growing taller
+      // while it is still growing out of the card.
+      if (seed.isLongText) {
+        _long = StatusStore.instance.longTextNow(seed.id);
+        if (_long != null) _status = _withLongText(seed);
+      }
+    }
+    _comments = _commentsPager(_sort);
     _reposts = PagingController<Status>(
       fetch: (cursor) => WeiboApi.instance.reposts(widget.statusId, cursor),
       id: (status) => status.id,
@@ -63,10 +95,64 @@ class _StatusDetailPageState extends State<StatusDetailPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _routeAnimation = ModalRoute.of(context)?.animation;
+  }
+
+  @override
   void dispose() {
+    for (final (animation, listener) in _waiting) {
+      animation.removeStatusListener(listener);
+    }
+    _waiting.clear();
     _comments.dispose();
     _reposts.dispose();
     super.dispose();
+  }
+
+  Status _withLongText(Status status) => _long == null
+      ? status
+      : status.copyWith(
+          text: _long!.text,
+          links: {...status.links, ..._long!.links},
+          isLongText: false,
+        );
+
+  /// Runs [apply] now, or once the page has finished opening. While it is still growing out of
+  /// the card its content is copied and scaled, so more text arriving then is seen as the page
+  /// jumping, and the copy that later shrinks back is not the one the card grew from. [immediately]
+  /// is for a change that does not alter the shape, such as a skeleton giving way to the post.
+  void _whenSettled(VoidCallback apply, {bool immediately = false}) {
+    if (!mounted) return;
+    final animation = immediately ? null : _routeAnimation;
+    if (animation == null || animation.isCompleted) {
+      apply();
+      return;
+    }
+    late final AnimationStatusListener listener;
+    listener = (status) {
+      if (status != AnimationStatus.completed && status != AnimationStatus.dismissed) return;
+      animation.removeStatusListener(listener);
+      _waiting.removeWhere((entry) => entry.$2 == listener);
+      if (mounted && status == AnimationStatus.completed) apply();
+    };
+    animation.addStatusListener(listener);
+    _waiting.add((animation, listener));
+  }
+
+  /// Another order is another list: the cursor of one means nothing to the other.
+  void _setSort(CommentSort sort) {
+    if (sort == _sort) return;
+    Haptic.selection.play();
+    final previous = _comments;
+    final next = _commentsPager(sort);
+    setState(() {
+      _sort = sort;
+      _comments = next;
+    });
+    next.refresh();
+    previous.dispose();
   }
 
   void _showReposts(bool value) {
@@ -80,27 +166,30 @@ class _StatusDetailPageState extends State<StatusDetailPage> {
   }
 
   Future<void> _load() async {
+    // A long post's whole text is asked for beside the post itself, not after it: one request
+    // after another would still be running when the page has finished opening. The tap usually
+    // started it already, and the store shares that request rather than sending another. Without
+    // a seed there is nothing to tell it is long until the post arrives.
+    final seed = _status;
+    final needsLong = seed != null && seed.isLongText && _long == null;
+    final pendingLong = needsLong ? _pullLongText(seed.id) : null;
+    pendingLong?.ignore();
     try {
       final status = await WeiboApi.instance.status(widget.statusId);
       if (status == null) throw ApiException('这条微博不存在或已被删除');
       if (!mounted) return;
-      setState(() {
-        _status = status;
-        _loading = false;
-        _error = null;
-      });
       StatusStore.instance.seed(status);
       StatusStore.instance.recordViewed(status, enabled: Prefs.instance.recordHistory);
-      if (status.isLongText) {
-        final long = await WeiboApi.instance.longText(status.id);
-        if (long != null && mounted) {
-          setState(() => _status = status.copyWith(
-                text: long.text,
-                links: {...status.links, ...long.links},
-                isLongText: false,
-              ));
-        }
-      }
+      // A skeleton has to be replaced at once; only text changing on a page that already has some
+      // waits, as that is what makes the copy jump while it is still growing out of the card.
+      _whenSettled(() {
+        setState(() {
+          _status = _withLongText(status);
+          _loading = false;
+          _error = null;
+        });
+      }, immediately: seed == null);
+      if (status.isLongText && _long == null) await (pendingLong ?? _pullLongText(status.id));
     } catch (error) {
       if (!mounted) return;
       final message = error is ApiException ? error.message : '加载失败';
@@ -114,6 +203,18 @@ class _StatusDetailPageState extends State<StatusDetailPage> {
         });
       }
     }
+  }
+
+  /// Holds on to the whole text and puts it on whatever the page shows, once the page has stopped
+  /// growing. Throws like the request did, so a failure is reported as before.
+  Future<void> _pullLongText(String id) async {
+    final long = await StatusStore.instance.longText(id);
+    if (long == null || !mounted) return;
+    _long = long;
+    _whenSettled(() {
+      final status = _status;
+      if (status != null) setState(() => _status = _withLongText(status));
+    });
   }
 
   Future<void> _toggleLike() async {
@@ -190,6 +291,8 @@ class _StatusDetailPageState extends State<StatusDetailPage> {
                   status: applied,
                   comments: _comments,
                   reposts: _reposts,
+                  sort: _sort,
+                  onSort: _setSort,
                   showingReposts: _showingReposts,
                   onShowReposts: () => _showReposts(true),
                   onShowComments: () => _showReposts(false),
@@ -212,6 +315,8 @@ class _DetailBody extends StatefulWidget {
     required this.status,
     required this.comments,
     required this.reposts,
+    required this.sort,
+    required this.onSort,
     required this.showingReposts,
     required this.onShowReposts,
     required this.onShowComments,
@@ -222,6 +327,8 @@ class _DetailBody extends StatefulWidget {
   final Status status;
   final PagingController<Comment> comments;
   final PagingController<Status> reposts;
+  final CommentSort sort;
+  final ValueChanged<CommentSort> onSort;
   final bool showingReposts;
   final VoidCallback onShowReposts;
   final VoidCallback onShowComments;
@@ -242,6 +349,14 @@ class _DetailBodyState extends State<_DetailBody> {
   bool _commentIntroClosed = false;
   bool _repostIntroClosed = false;
 
+  /// A horizontal fling over the lists changes tab; a drag that starts at the screen edge belongs
+  /// to the system back gesture instead.
+  static const double _swipeCommit = 64;
+  static const double _swipeVelocity = 300;
+  static const double _edgeGuard = 24;
+  double _swipeDistance = 0;
+  bool _swipeFromEdge = false;
+
   @override
   void initState() {
     super.initState();
@@ -257,6 +372,10 @@ class _DetailBodyState extends State<_DetailBody> {
     if (oldWidget.comments != widget.comments) {
       oldWidget.comments.removeListener(_captureCommentIntro);
       widget.comments.addListener(_captureCommentIntro);
+      _commentIntro.clear();
+      _commentPlayed.clear();
+      _commentIntroClosed = false;
+      _captureCommentIntro();
     }
     if (oldWidget.reposts != widget.reposts) {
       oldWidget.reposts.removeListener(_captureRepostIntro);
@@ -311,6 +430,7 @@ class _DetailBodyState extends State<_DetailBody> {
         return false;
       },
       child: InfRefreshIndicator(
+        notificationPredicate: nestedScrollRefreshPredicate,
         onRefresh: () async {
           final list = widget.showingReposts ? reposts.refresh() : comments.refresh();
           final results = await Future.wait<Object?>([list, WeiboApi.instance.status(status.id)]);
@@ -322,26 +442,26 @@ class _DetailBodyState extends State<_DetailBody> {
             SliverPadding(
               padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top).add(sides),
               sliver: SliverToBoxAdapter(
-              child: StatusCard(
-                status: status,
-                detail: true,
-                onOpenStatus: (id) => openStatus(context, statusId: id),
-                onOpenUser: (uid) => openUser(context, uid),
-                onOpenTopic: (name) => openTopic(context, name),
-                onOpenUrl: (url) => openLink(context, url),
-                onOpenMedia: (media, index, tag) {
-                  if (media[index].kind == MediaKind.video) {
-                    openVideo(context, media[index].url, coverUrl: media[index].previewUrl);
-                  } else {
-                    openImage(context, media: media, index: index, heroTag: tag);
-                  }
-                },
-                onToggleLike: widget.onLike,
-                onRepost: () => openCompose(context, type: DraftType.repost, statusId: status.id),
-                onComment: widget.onComment,
-                onLongImage: () => openLongImage(context, status),
+                child: StatusCard(
+                  status: status,
+                  detail: true,
+                  onOpenStatus: (id) => openStatus(context, statusId: id),
+                  onOpenUser: (uid) => openUser(context, uid),
+                  onOpenTopic: (name) => openTopic(context, name),
+                  onOpenUrl: (url) => openLink(context, url),
+                  onOpenMedia: (media, index, tag) {
+                    if (media[index].kind == MediaKind.video) {
+                      openVideo(context, media[index].url, coverUrl: media[index].previewUrl);
+                    } else {
+                      openImage(context, media: media, index: index, heroTag: tag);
+                    }
+                  },
+                  onToggleLike: widget.onLike,
+                  onRepost: () => openCompose(context, type: DraftType.repost, statusId: status.id),
+                  onComment: widget.onComment,
+                  onLongImage: () => openLongImage(context, status),
+                ),
               ),
-            ),
             ),
             SliverPadding(
               padding: sides,
@@ -361,14 +481,63 @@ class _DetailBodyState extends State<_DetailBody> {
                 ),
               ),
             ),
+            SliverPadding(
+              padding: sides,
+              sliver: SliverToBoxAdapter(
+                // Kept in the header while hidden, so the sliver count does not change under a
+                // NestedScrollView that is already scrolled into it.
+                child: widget.showingReposts
+                    ? const SizedBox.shrink()
+                    : _CommentSortBar(sort: widget.sort, onSort: widget.onSort),
+              ),
+            ),
           ],
-          body: _DiscussionCrossfade(
-            showingReposts: widget.showingReposts,
-            page: (reposts, primary) => reposts ? _repostList(primary) : _commentList(primary),
+          body: GestureDetector(
+            // Opaque so a drag that starts on the empty tail of a short list still counts.
+            behavior: HitTestBehavior.opaque,
+            onHorizontalDragDown: _startSwipe,
+            onHorizontalDragUpdate: _trackSwipe,
+            onHorizontalDragEnd: _endSwipe,
+            onHorizontalDragCancel: () => _swipeDistance = 0,
+            child: _DiscussionCrossfade(
+              showingReposts: widget.showingReposts,
+              page: (reposts, primary) => reposts ? _repostList(primary) : _commentList(primary),
+            ),
           ),
         ),
       ),
     );
+  }
+
+  /// Recorded at the pointer down, before the drag is recognised: by the time the horizontal
+  /// gesture wins, the finger has already moved off the edge.
+  void _startSwipe(DragDownDetails details) {
+    final width = MediaQuery.sizeOf(context).width;
+    final x = details.globalPosition.dx;
+    _swipeDistance = 0;
+    _swipeFromEdge = x < _edgeGuard || x > width - _edgeGuard;
+  }
+
+  void _trackSwipe(DragUpdateDetails details) {
+    _swipeDistance += details.delta.dx;
+  }
+
+  /// The finger moves left to reach the right-hand tab (评论) and right to reach 转发, the way the
+  /// tabs sit. A drag that started at an edge is the system's, and a mostly vertical one is the list's.
+  void _endSwipe(DragEndDetails details) {
+    if (_swipeFromEdge) return;
+    final velocity = details.primaryVelocity ?? 0;
+    final bool left;
+    if (velocity.abs() > _swipeVelocity) {
+      left = velocity < 0;
+    } else if (_swipeDistance.abs() > _swipeCommit) {
+      left = _swipeDistance < 0;
+    } else {
+      return;
+    }
+    if (left && !widget.showingReposts) return;
+    if (!left && widget.showingReposts) return;
+    left ? widget.onShowComments() : widget.onShowReposts();
   }
 
   Widget _pagedList({
@@ -540,6 +709,13 @@ class _DiscussionCrossfadeState extends State<_DiscussionCrossfade> with SingleT
   late final AnimationController _swap = AnimationController(vsync: this, duration: InfMotion.tabIn, value: 1);
   late final Animation<double> _outgoing = ReverseAnimation(_swap);
 
+  /// +1 when the incoming list sits to the right (评论), so it arrives from there and the other
+  /// leaves the other way; a tab switch reads as moving sideways instead of a plain fade.
+  double _direction = 1;
+
+  /// How far the lists drift: enough to read as a direction, not as a page turn.
+  static const double _drift = 18;
+
   @override
   void initState() {
     super.initState();
@@ -555,6 +731,7 @@ class _DiscussionCrossfadeState extends State<_DiscussionCrossfade> with SingleT
     super.didUpdateWidget(oldWidget);
     if (widget.showingReposts == _shown) return;
     _leaving = _shown;
+    _direction = widget.showingReposts ? -1 : 1;
     _shown = widget.showingReposts;
     _swap.value = 0;
     _swap.animateTo(1, curve: InfMotion.enter);
@@ -569,6 +746,12 @@ class _DiscussionCrossfadeState extends State<_DiscussionCrossfade> with SingleT
   @override
   Widget build(BuildContext context) {
     final leaving = _leaving;
+    Widget slide(Animation<double> animation, double from, Widget child) => AnimatedBuilder(
+          animation: animation,
+          builder: (context, child) =>
+              Transform.translate(offset: Offset(_drift * from * (1 - animation.value), 0), child: child),
+          child: child,
+        );
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -578,7 +761,7 @@ class _DiscussionCrossfadeState extends State<_DiscussionCrossfade> with SingleT
             child: IgnorePointer(
               child: KeyedSubtree(
                 key: ValueKey('leave-$leaving'),
-                child: widget.page(leaving, false),
+                child: slide(_outgoing, -_direction, widget.page(leaving, false)),
               ),
             ),
           ),
@@ -586,7 +769,7 @@ class _DiscussionCrossfadeState extends State<_DiscussionCrossfade> with SingleT
           opacity: _swap,
           child: KeyedSubtree(
             key: ValueKey('show-$_shown'),
-            child: widget.page(_shown, true),
+            child: slide(_swap, _direction, widget.page(_shown, true)),
           ),
         ),
       ],
@@ -683,6 +866,120 @@ class _DiscussionSwitch extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 按热度 / 按时间, under the two tabs and only while the comments are the list on screen.
+class _CommentSortBar extends StatelessWidget {
+  const _CommentSortBar({required this.sort, required this.onSort});
+
+  final CommentSort sort;
+  final ValueChanged<CommentSort> onSort;
+
+  int get _index => sort == CommentSort.hot ? 0 : 1;
+
+  CommentSort _sortAt(int index) => index == 0 ? CommentSort.hot : CommentSort.time;
+
+  @override
+  Widget build(BuildContext context) {
+    // One segment per label, and the whole capsule scales with the reader's text size.
+    final segment = MediaQuery.textScalerOf(context).scale(62);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+      child: InfLook.of(context).liquid
+          ? Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Flexible(
+                  // Narrow windows or a large text size clamp the capsule rather than spill it.
+                  child: SizedBox(width: segment * 2, height: 30, child: _track(context)),
+                ),
+              ],
+            )
+          : Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                _chip(context, '按热度', CommentSort.hot),
+                const SizedBox(width: 4),
+                _chip(context, '按时间', CommentSort.time),
+              ],
+            ),
+    );
+  }
+
+  /// A two-segment capsule whose drop springs from one sort to the other, the same control as the
+  /// shell's tab bar. The track itself is a flat wash: a second lens around the drop would only
+  /// cost a layer and read as a heavier chip.
+  Widget _track(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHigh.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(15),
+      ),
+      child: LiquidTabTrack(
+        count: 2,
+        index: _index,
+        onSelect: (index) => onSort(_sortAt(index)),
+        inset: 3,
+        child: Row(
+          children: [
+            for (final value in const [CommentSort.hot, CommentSort.time])
+              Expanded(
+                child: Semantics(
+                  button: true,
+                  selected: sort == value,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => onSort(value),
+                    child: Center(child: _trackLabel(context, value)),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _trackLabel(BuildContext context, CommentSort value) {
+    final scheme = Theme.of(context).colorScheme;
+    final selected = sort == value;
+    return AnimatedDefaultTextStyle(
+      duration: InfMotion.feedback,
+      style: (Theme.of(context).textTheme.labelSmall ?? const TextStyle()).copyWith(
+            color: selected ? scheme.primary : scheme.onSurfaceVariant,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+          ),
+      child: Text(value == CommentSort.hot ? '按热度' : '按时间'),
+    );
+  }
+
+  Widget _chip(BuildContext context, String label, CommentSort value) {
+    final scheme = Theme.of(context).colorScheme;
+    final chrome = InfChrome.of(context);
+    final selected = sort == value;
+    return Material(
+      color: selected
+          ? chrome.fill(scheme, scheme.primaryContainer, 0.85)
+          : chrome.fill(scheme, scheme.surfaceContainerHigh, 0.6),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => onSort(value),
+        child: AnimatedDefaultTextStyle(
+          duration: InfMotion.feedback,
+          style: (Theme.of(context).textTheme.labelSmall ?? const TextStyle()).copyWith(
+                color: selected ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            child: Text(label),
           ),
         ),
       ),
@@ -797,6 +1094,17 @@ Future<void> showCommentActions(
   }
 }
 
+/// Pictures in [comment] that its text does not already link to: those the text links are drawn as
+/// 查看图片 next to the text, so listing them again would repeat the same picture twice.
+List<(int, Media)> _unlinkedPictures(Comment comment) {
+  final linked = inlineImageUrls(comment.text).map(sanitizeImageUrl).toSet();
+  return [
+    for (final (index, image) in comment.images.indexed)
+      if (!linked.contains(sanitizeImageUrl(image.url)) && !linked.contains(sanitizeImageUrl(image.previewUrl)))
+        (index, image),
+  ];
+}
+
 class CommentTile extends StatelessWidget {
   const CommentTile({
     super.key,
@@ -876,13 +1184,13 @@ class CommentTile extends StatelessWidget {
                     Wrap(
                       spacing: 14,
                       children: [
-                        for (var i = 0; i < comment.images.length; i++)
+                        for (final (index, _) in _unlinkedPictures(comment))
                           Builder(
                             builder: (cellContext) {
-                              final tag = 'link-img-comment-' + comment.id + '-' + i.toString();
+                              final tag = 'link-img-comment-${comment.id}-$index';
                               return GestureDetector(
                                 behavior: HitTestBehavior.opaque,
-                                onTap: () => onOpenImage(comment.images, i, tag),
+                                onTap: () => onOpenImage(comment.images, index, tag),
                                 child: Hero(
                                   tag: tag,
                                   child: Material(
@@ -924,25 +1232,16 @@ class CommentTile extends StatelessWidget {
                       ),
                       child: const Text('回复', style: TextStyle(fontSize: 11.5)),
                     ),
-                    if (comment.likesCount > 0) ...[
-                      Icon(
-                        comment.liked ? Icons.thumb_up_rounded : Icons.thumb_up_outlined,
-                        size: 13,
-                        color: comment.liked ? scheme.primary : scheme.onSurfaceVariant,
-                      ),
-                      const SizedBox(width: 3),
-                      Text(
-                        compactCount(comment.likesCount),
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              color: comment.liked ? scheme.primary : scheme.onSurfaceVariant,
-                            ),
-                      ),
-                    ],
+                    _CommentLikeButton(comment: comment),
                   ],
                 ),
                 if (showReplies && comment.replies.isNotEmpty) ...[
                   const SizedBox(height: 6),
-                  _InlineReplies(comment: comment, onTap: onOpenFloor),
+                  _InlineReplies(
+                    comment: comment,
+                    onTap: onOpenFloor,
+                    onOpenImage: onOpenImage,
+                  ),
                 ],
               ],
             ),
@@ -950,6 +1249,51 @@ class CommentTile extends StatelessWidget {
         ],
       ),
       ),
+    );
+  }
+}
+
+class _CommentLikeButton extends StatelessWidget {
+  const _CommentLikeButton({required this.comment});
+
+  final Comment comment;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ListenableBuilder(
+      listenable: StatusStore.instance,
+      builder: (context, _) {
+        final current = StatusStore.instance.applyComment(comment);
+        final color = current.liked ? scheme.primary : scheme.onSurfaceVariant;
+        return InkWell(
+          borderRadius: BorderRadius.circular(13),
+          onTap: () async {
+            final failure = await StatusStore.instance.toggleCommentLike(comment);
+            if (failure != null && context.mounted) showMessage(context, failure);
+          },
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 42, minHeight: 26),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 7),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(current.liked ? Icons.thumb_up_rounded : Icons.thumb_up_outlined, size: 14, color: color),
+                  if (current.likesCount > 0) ...[
+                    const SizedBox(width: 3),
+                    Text(
+                      compactCount(current.likesCount),
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(color: color),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -992,16 +1336,22 @@ class _CommentImages extends StatelessWidget {
 }
 
 class _InlineReplies extends StatelessWidget {
-  const _InlineReplies({required this.comment, required this.onTap});
+  const _InlineReplies({
+    required this.comment,
+    required this.onTap,
+    required this.onOpenImage,
+  });
 
   final Comment comment;
   final VoidCallback onTap;
+  final void Function(List<Media> images, int index, String? heroTag) onOpenImage;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final shown = comment.replies.take(3).toList();
     final fill = InfChrome.of(context).fill(scheme, scheme.surfaceContainerHigh, 0.58);
+    final style = Theme.of(context).textTheme.bodySmall;
     return Material(
       color: fill,
       borderRadius: BorderRadius.circular(8),
@@ -1019,30 +1369,86 @@ class _InlineReplies extends StatelessWidget {
               for (final reply in shown)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 3),
-                  child: RichText(
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    text: TextSpan(
-                      style: Theme.of(context).textTheme.bodySmall,
-                      children: [
-                        TextSpan(
-                          text: '${reply.author.screenName}：',
-                          style: TextStyle(color: scheme.primary),
-                        ),
-                        TextSpan(text: reply.text),
-                      ],
-                    ),
-                  ),
+                  child: _ReplyPreview(reply: reply, style: style, onOpenImage: onOpenImage),
                 ),
               if (comment.repliesCount > shown.length)
                 Text(
                   '共${compactCount(comment.repliesCount)}条回复 >',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: scheme.primary),
+                  style: style?.copyWith(color: scheme.primary),
                 ),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+/// One line of the preview. Its links are only pictures: everything else here opens the floor, so
+/// a tap elsewhere in the row still reaches the [InkWell] above.
+class _ReplyPreview extends StatelessWidget {
+  const _ReplyPreview({required this.reply, required this.style, required this.onOpenImage});
+
+  final Comment reply;
+  final TextStyle? style;
+  final void Function(List<Media> images, int index, String? heroTag) onOpenImage;
+
+  void _open(String url, String? tag) {
+    final target = sanitizeImageUrl(url);
+    final index = reply.images.indexWhere(
+      (image) => sanitizeImageUrl(image.url) == target || sanitizeImageUrl(image.previewUrl) == target,
+    );
+    if (index < 0) {
+      onOpenImage([Media.image(url)], 0, tag);
+    } else {
+      onOpenImage(reply.images, index, tag);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    // A picture the text already links is drawn as 查看图片 there; listing it again would repeat it.
+    final extra = _unlinkedPictures(reply);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        RichStatusText(
+          prefix: TextSpan(text: '${reply.author.screenName}：', style: TextStyle(color: scheme.primary)),
+          text: reply.text,
+          style: style,
+          maxLines: 2,
+          inlineImages: false,
+          onOpenImage: _open,
+        ),
+        if (extra.isNotEmpty)
+          Wrap(
+            spacing: 14,
+            children: [
+              for (final (index, _) in extra)
+                Builder(
+                  builder: (context) {
+                    final tag = 'link-img-reply-${reply.id}-$index';
+                    return GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => onOpenImage(reply.images, index, tag),
+                      child: Hero(
+                        tag: tag,
+                        child: Material(
+                          type: MaterialType.transparency,
+                          child: InlineLinkLabel(
+                            icon: Icons.image_outlined,
+                            label: '查看图片',
+                            style: style?.copyWith(fontSize: 13),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+            ],
+          ),
+      ],
     );
   }
 }

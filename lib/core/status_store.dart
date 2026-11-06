@@ -19,7 +19,41 @@ class StatusStore extends ChangeNotifier {
 
   final Map<String, _LikeState> _likes = {};
   final Map<String, bool> _favorites = {};
+  final Map<String, _LikeState> _commentLikes = {};
   final ValueNotifier<int> feedRevision = ValueNotifier(0);
+
+  /// The feed cuts a long post at six lines and links to the rest, so the detail page has to ask
+  /// for the whole text — by the time it is pushed the tap has usually already started that.
+  final Map<String, Future<({String text, Map<String, WeiboLink> links})?>> _longTextRequests = {};
+  final Map<String, ({String text, Map<String, WeiboLink> links})> _longTexts = {};
+
+  /// How many long texts stay around: enough for the posts a session opens, and the oldest goes
+  /// first. Each one is a few kilobytes of text.
+  static const int _longTextKept = 50;
+
+  /// The whole text of a long post, fetched once per id while it is remembered. A failure is not
+  /// remembered, so the next tap asks again; there is no retry loop, which Weibo reads as abuse.
+  /// Errors reach whoever asked, as before; a prefetch taps the future's errors away.
+  Future<({String text, Map<String, WeiboLink> links})?> longText(String id) {
+    final done = _longTexts[id];
+    if (done != null) return Future.value(done);
+    final pending = _longTextRequests[id];
+    if (pending != null) return pending;
+    return _longTextRequests[id] = WeiboApi.instance.longText(id).then((value) {
+      _longTextRequests.remove(id);
+      if (value != null) {
+        _longTexts[id] = value;
+        if (_longTexts.length > _longTextKept) _longTexts.remove(_longTexts.keys.first);
+      }
+      return value;
+    }, onError: (Object error, StackTrace stack) {
+      _longTextRequests.remove(id);
+      Error.throwWithStackTrace(error, stack);
+    });
+  }
+
+  /// The whole text if it has already arrived, so a page can show it on its first frame.
+  ({String text, Map<String, WeiboLink> links})? longTextNow(String id) => _longTexts[id];
 
   Status apply(Status status) {
     final state = _likes[status.id];
@@ -60,6 +94,28 @@ class StatusStore extends ChangeNotifier {
       return null;
     } catch (error) {
       _likes[status.id] = _LikeState(current.liked, current.likesCount);
+      notifyListeners();
+      Haptic.error.play();
+      return error is ApiException ? error.message : '操作失败';
+    }
+  }
+
+  Comment applyComment(Comment comment) {
+    final state = _commentLikes[comment.id];
+    return state == null ? comment : comment.copyWith(liked: state.liked, likesCount: state.count);
+  }
+
+  Future<String?> toggleCommentLike(Comment comment) async {
+    final current = applyComment(comment);
+    final next = !current.liked;
+    _commentLikes[comment.id] = _LikeState(next, (current.likesCount + (next ? 1 : -1)).clamp(0, 1 << 62));
+    notifyListeners();
+    (next ? Haptic.toggleOn : Haptic.toggleOff).play();
+    try {
+      await WeiboApi.instance.setCommentLiked(comment.id, next, statusId: comment.statusId);
+      return null;
+    } catch (error) {
+      _commentLikes[comment.id] = _LikeState(current.liked, current.likesCount);
       notifyListeners();
       Haptic.error.play();
       return error is ApiException ? error.message : '操作失败';

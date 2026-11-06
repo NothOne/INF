@@ -534,6 +534,18 @@ enum HotTopicTab {
   const HotTopicTab(this.label, this.type);
 }
 
+/// The order a search's posts come back in, from the same container ids as [HotTopicTab] minus
+/// the video stream the results page does not offer.
+enum SearchSort {
+  all('综合', 1),
+  realtime('实时', 61),
+  hot('热门', 60);
+
+  final String label;
+  final int type;
+  const SearchSort(this.label, this.type);
+}
+
 /// One run of a topic on a Weibo board: 热搜榜, 文娱榜, 社会榜 …
 class TopicBoardStint {
   final String board;
@@ -854,4 +866,25 @@ class PageResult<T> {
   final List<T> items;
   final String? nextCursor;
   const PageResult(this.items, this.nextCursor);
+}
+
+/// A passport QR login: [imageUrl] draws the code, [scanUrl] is what it encodes, which the Weibo
+/// app on the same phone can open directly instead of scanning.
+class QrLogin {
+  final String qrid;
+  final String imageUrl;
+  final String scanUrl;
+  const QrLogin({required this.qrid, required this.imageUrl, required this.scanUrl});
+}
+
+enum QrLoginState { waiting, scanned, failed, confirmed }
+
+class QrLoginStatus {
+  final QrLoginState state;
+  final String? message;
+
+  /// On [QrLoginState.confirmed], the first hop of the SSO chain; the WebView has to follow it so
+  /// the signed-in cookies land where m.weibo.cn reads them.
+  final String? url;
+  const QrLoginStatus(this.state, {this.message, this.url});
 }

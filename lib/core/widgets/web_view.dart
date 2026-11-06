@@ -2,6 +2,8 @@ import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
+import '../native.dart';
+
 /// Weibo's own pages (the birthday gifts, old activity pages) still link pictures as
 /// http://ww*.sinaimg.cn, which Android will not fetch; the same pictures are served over HTTPS.
 /// Run once a page has loaded; it also catches pictures the page adds later.
@@ -30,8 +32,10 @@ const upgradeSinaimgScript = r'''
 })();
 ''';
 
-/// A WebView that Android composites itself. The default texture-backed mode never shows a page
-/// under Impeller on some devices.
+/// A WebView that Android composites itself from Android 10 on. There the default texture-backed
+/// mode renders through a SurfaceProducer and never shows a page under Impeller on some devices.
+/// Below Android 10 Flutter draws with Skia and the texture mode uses a plain SurfaceTexture,
+/// while hybrid composition copies every frame through main memory and can stay blank.
 class InfWebView extends StatelessWidget {
   const InfWebView({super.key, required this.controller});
 
@@ -40,7 +44,9 @@ class InfWebView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final platform = controller.platform;
-    if (platform is! AndroidWebViewController) return WebViewWidget(controller: controller);
+    if (platform is! AndroidWebViewController || (Native.sdkInt ?? 29) < 29) {
+      return WebViewWidget(controller: controller);
+    }
     return WebViewWidget.fromPlatformCreationParams(
       params: AndroidWebViewWidgetCreationParams(
         controller: platform,

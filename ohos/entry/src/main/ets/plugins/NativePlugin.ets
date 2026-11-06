@@ -110,6 +110,7 @@ export default class NativePlugin implements FlutterPlugin, AbilityAware, Method
         result.success(false);
         break;
       case 'peakRefreshRate':
+      case 'sdkInt':
         result.success(null);
         break;
       case 'saveImage':

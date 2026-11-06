@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -9,6 +10,7 @@ import '../../core/haptics.dart';
 import '../../core/hot_search_store.dart';
 import '../../core/links.dart';
 import '../../core/models.dart';
+import '../../core/motion.dart';
 import '../../core/navigation.dart';
 import '../../core/paging.dart';
 import '../../core/parse.dart';
@@ -36,12 +38,14 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
 
   PagingController<Status>? _results;
   String? _submitted;
+  SearchSort _sort = SearchSort.all;
   List<User>? _users;
   bool _usersLoading = false;
   String? _usersError;
   final Map<String, bool> _following = {};
   final Set<String> _followBusy = {};
   List<String> _history = [];
+  bool _historyExpanded = false;
   Timer? _suggestTimer;
   final Map<String, SearchSuggestions> _suggestions = {};
 
@@ -160,14 +164,30 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
       _history = Prefs.instance.searchHistory;
       _users = null;
       _usersError = null;
+      _startResults(query);
     });
-    _results?.dispose();
-    _results = PagingController<Status>(
-      fetch: (cursor) => WeiboApi.instance.searchStatuses(query, cursor),
-      id: (status) => status.id,
-    );
     _results!.refresh();
     if (_tabs.index == 1) _loadUsers(query);
+  }
+
+  /// A fresh pager for [query] in the chosen [SearchSort]; the caller still has to refresh it.
+  void _startResults(String query) {
+    _results?.dispose();
+    _results = PagingController<Status>(
+      fetch: (cursor) => WeiboApi.instance.searchStatuses(query, cursor, sort: _sort),
+      id: (status) => status.id,
+    );
+  }
+
+  void _selectSort(SearchSort sort) {
+    final query = _submitted;
+    if (sort == _sort || query == null) return;
+    Haptic.selection.play();
+    setState(() {
+      _sort = sort;
+      _startResults(query);
+    });
+    _results!.refresh();
   }
 
   void _clearResults() {
@@ -278,32 +298,47 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
         if (_history.isNotEmpty) ...[
           SectionHeader(
             title: '搜索历史',
-            action: TextButton(
-              onPressed: () async {
-                await Prefs.instance.clearSearchHistory();
-                if (mounted) setState(() => _history = const []);
-              },
-              child: const Text('清空'),
-            ),
+            action: TextButton(onPressed: _confirmClearHistory, child: const Text('清空')),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                for (final entry in _history)
-                  InputChip(
-                    label: Text(entry, maxLines: 1, overflow: TextOverflow.ellipsis),
-                    onPressed: () => _submit(entry),
-                    onDeleted: () async {
-                      await Prefs.instance.removeSearch(entry);
-                      if (mounted) setState(() => _history = Prefs.instance.searchHistory);
-                    },
-                    deleteIcon: const Icon(Icons.close_rounded, size: 15),
-                    visualDensity: VisualDensity.compact,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final maxWidth = constraints.maxWidth;
+                const spacing = 8.0;
+                final widths = [for (final entry in _history) historyChipWidth(context, entry)];
+                final toggleWidth = plainChipWidth(context, '收起');
+                // Everything already fits in two rows: folding would hide nothing, so show it all.
+                final foldable = collapsedChipCount(
+                  widths,
+                  maxWidth: maxWidth,
+                  trailingWidth: toggleWidth,
+                  spacing: spacing,
+                );
+                final canFold = foldable < _history.length;
+                final shown = _historyExpanded && canFold ? _history.length : foldable;
+                return AnimatedSize(
+                  duration: InfMotion.content,
+                  curve: InfMotion.emphasized,
+                  alignment: Alignment.topCenter,
+                  child: Wrap(
+                    spacing: spacing,
+                    runSpacing: 6,
+                    children: [
+                      for (final entry in _history.take(shown)) _historyChip(context, entry),
+                      if (canFold)
+                        ActionChip(
+                          label: Text(_historyExpanded ? '收起' : '展开'),
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () {
+                            Haptic.selection.play();
+                            setState(() => _historyExpanded = !_historyExpanded);
+                          },
+                        ),
+                    ],
                   ),
-              ],
+                );
+              },
             ),
           ),
         ],
@@ -423,6 +458,42 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
     );
   }
 
+  Future<void> _confirmClearHistory() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('清空搜索历史？'),
+        content: const Text('搜索记录只保存在本机，清空后无法恢复。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('清空')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await Prefs.instance.clearSearchHistory();
+    if (!mounted) return;
+    setState(() {
+      _history = const [];
+      _historyExpanded = false;
+    });
+  }
+
+  Future<void> _removeHistory(String entry) async {
+    await Prefs.instance.removeSearch(entry);
+    if (mounted) setState(() => _history = Prefs.instance.searchHistory);
+  }
+
+  Widget _historyChip(BuildContext context, String entry) {
+    return InputChip(
+      label: Text(entry, maxLines: 1, overflow: TextOverflow.ellipsis),
+      onPressed: () => _submit(entry),
+      onDeleted: () => _removeHistory(entry),
+      deleteIcon: const Icon(Icons.close_rounded, size: 15),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
   Widget _resultsBody(BuildContext context) {
     final pager = _results;
     return Padding(
@@ -440,6 +511,24 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
             ],
           ),
         ),
+        if (_tabs.index == 0)
+          ContentColumn(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final sort in SearchSort.values)
+                    _SortChip(
+                      label: sort.label,
+                      selected: sort == _sort,
+                      onTap: () => _selectSort(sort),
+                    ),
+                ],
+              ),
+            ),
+          ),
         Expanded(
           child: _tabs.index == 0
               ? (pager == null
@@ -493,6 +582,116 @@ String _userAbout(User user) {
   ].join(' · ');
   return about.isEmpty ? '用户' : about;
 }
+
+/// 综合 / 实时 / 热门 above the results, shaped like the chips on the hot-search boards.
+class _SortChip extends StatelessWidget {
+  const _SortChip({required this.label, required this.selected, required this.onTap});
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final chrome = InfChrome.of(context);
+    return Material(
+      color: selected ? chrome.fill(scheme, scheme.primaryContainer, 1) : chrome.fill(scheme, scheme.surfaceContainerHigh, 0.6),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: AnimatedDefaultTextStyle(
+          duration: InfMotion.feedback,
+          style: Theme.of(context).textTheme.labelLarge!.copyWith(
+                color: selected ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            child: Text(label),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// How many of [widths] fit in the first [rows] rows of a [Wrap] whose line is [maxWidth] wide,
+/// leaving room on the last of them for a control [trailingWidth] wide. Everything when nothing
+/// would be hidden, so the caller can compare with the entry count to know whether to offer the
+/// fold at all.
+int collapsedChipCount(
+  List<double> widths, {
+  required double maxWidth,
+  required double trailingWidth,
+  int rows = 2,
+  double spacing = 8,
+}) {
+  if (maxWidth <= 0) return 0;
+  if (_wrapRows(widths, maxWidth: maxWidth, spacing: spacing) <= rows) return widths.length;
+  var count = 0;
+  for (var shown = 1; shown < widths.length; shown++) {
+    if (_wrapRows([...widths.take(shown), trailingWidth], maxWidth: maxWidth, spacing: spacing) <= rows) {
+      count = shown;
+    }
+  }
+  // A line too narrow for the control beside any chip still shows one, which reads better than
+  // nothing above the fold.
+  return math.max(count, 1);
+}
+
+int _wrapRows(List<double> widths, {required double maxWidth, double spacing = 8}) {
+  var rows = 1;
+  var used = 0.0;
+  for (final width in widths) {
+    final item = math.min(width, maxWidth);
+    if (used > 0 && used + spacing + item > maxWidth) {
+      rows++;
+      used = item;
+    } else {
+      used += (used > 0 ? spacing : 0) + item;
+    }
+  }
+  return rows;
+}
+
+/// What a history chip adds around its label at 1× text: padding, the delete icon and the border.
+/// Measured against the app theme; it grows with the text scale, which the label width already
+/// carries, so a little more is added on top of it.
+const _historyChipChrome = 53.0;
+
+/// The [ActionChip] that folds and unfolds the history, which has no delete icon.
+const _plainChipChrome = 34.0;
+
+/// How much a chip's chrome grows per unit of text scale past 1 (measured 53 → 64 from 1× to 2×).
+const _chromeGrowth = 11.0;
+
+double _textScale(BuildContext context) => MediaQuery.textScalerOf(context).scale(14) / 14;
+
+/// The width [text] takes as a chip label, one point over so the estimate never comes up short.
+double chipLabelWidth(BuildContext context, String text) {
+  final painter = TextPainter(
+    text: TextSpan(text: text, style: Theme.of(context).textTheme.labelLarge),
+    textDirection: Directionality.of(context),
+    textScaler: MediaQuery.textScalerOf(context),
+    maxLines: 1,
+  )..layout();
+  final width = painter.width;
+  painter.dispose();
+  return width + 1;
+}
+
+double _chipChrome(BuildContext context, double base) => base + _chromeGrowth * math.max(0, _textScale(context) - 1);
+
+/// One history chip as a [Wrap] lays it out: as wide as its label plus [InputChip]'s padding,
+/// delete icon and border.
+double historyChipWidth(BuildContext context, String entry) =>
+    chipLabelWidth(context, entry) + _chipChrome(context, _historyChipChrome);
+
+/// The same for the [ActionChip] that folds and unfolds the history.
+double plainChipWidth(BuildContext context, String label) =>
+    chipLabelWidth(context, label) + _chipChrome(context, _plainChipChrome);
 
 /// [text] with the characters of [query] it contains picked out, the way completions read.
 class _Highlighted extends StatelessWidget {

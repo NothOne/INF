@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'core/api.dart';
 import 'core/layout.dart';
 import 'core/look.dart';
 import 'core/native.dart';
+import 'core/navigation.dart';
 import 'core/prefs.dart';
 import 'core/session.dart';
 import 'core/theme.dart';
@@ -53,6 +55,7 @@ class _InfAppState extends State<InfApp> {
   void initState() {
     super.initState();
     Prefs.instance.addListener(_onPrefs);
+    WeiboApi.captchaSolver = solveCaptcha;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       Native.requestPeakRefreshRate();
       await Session.instance.init();
@@ -83,6 +86,7 @@ class _InfAppState extends State<InfApp> {
       liquidClarity: appearance.liquidClarity ?? InfLook.defaultLiquidClarity,
     );
     return MaterialApp(
+      navigatorKey: rootNavigatorKey,
       title: 'INF',
       debugShowCheckedModeBanner: false,
       theme: infTheme(Brightness.light, appearance.accent, look),

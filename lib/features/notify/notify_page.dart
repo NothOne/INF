@@ -15,6 +15,7 @@ import '../../core/widgets/comment_sheet.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/refresh.dart';
 import '../../core/widgets/rich_text.dart';
+import '../../core/widgets/shell_top_bar.dart';
 import '../../core/widgets/smart_image.dart';
 import '../../core/widgets/transitions.dart';
 
@@ -43,36 +44,38 @@ class _NotifyPageState extends State<NotifyPage> with SingleTickerProviderStateM
         final counts = UnreadMonitor.instance.counts;
         return Scaffold(
           backgroundColor: Colors.transparent,
-          extendBodyBehindAppBar: InfChrome.of(context).extendsBehindBars,
-          appBar: AppBar(
-            title: const Text('通知'),
-            flexibleSpace: lookBarBackground(context),
-            bottom: PreferredSize(
-              preferredSize: const Size.fromHeight(47),
-              child: Material(
-                color: Colors.transparent,
-                child: ContentColumn(child: TabBar(
-                  controller: _tabs,
-                  indicatorSize: TabBarIndicatorSize.label,
-                  dividerColor: scheme.outlineVariant.withValues(alpha: 0.4),
-                  labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-                  tabs: [
-                    for (final kind in NotificationKind.values)
-                      Tab(
-                        height: 46,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(kind.label, style: const TextStyle(fontSize: 13.5)),
-                            if (counts.of(kind) > 0) ...[
-                              const SizedBox(width: 4),
-                              CountBadge(count: counts.of(kind)),
+          // The bar keeps its height when it leaves; the list is padded by it below instead.
+          extendBodyBehindAppBar: true,
+          appBar: ShellTopBar(
+            child: AppBar(
+              title: const Text('通知'),
+              bottom: PreferredSize(
+                preferredSize: const Size.fromHeight(47),
+                child: Material(
+                  color: Colors.transparent,
+                  child: ContentColumn(child: TabBar(
+                    controller: _tabs,
+                    indicatorSize: TabBarIndicatorSize.label,
+                    dividerColor: scheme.outlineVariant.withValues(alpha: 0.4),
+                    labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+                    tabs: [
+                      for (final kind in NotificationKind.values)
+                        Tab(
+                          height: 46,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(kind.label, style: const TextStyle(fontSize: 13.5)),
+                              if (counts.of(kind) > 0) ...[
+                                const SizedBox(width: 4),
+                                CountBadge(count: counts.of(kind)),
+                              ],
                             ],
-                          ],
+                          ),
                         ),
-                      ),
-                  ],
-                )),
+                    ],
+                  )),
+                ),
               ),
             ),
           ),
@@ -122,7 +125,10 @@ class _NotifyListState extends State<_NotifyList> with AutomaticKeepAliveClientM
 
   void _innerTabChanged() {
     if (widget.tabs.indexIsChanging || currentShellTab.value != shellTab) return;
-    if (widget.tabs.index == widget.position) onTabShown(first: false);
+    if (widget.tabs.index != widget.position) return;
+    // Swiping between sub-tabs is not scrolling a list, so the bar comes back with the page.
+    showShellBars();
+    onTabShown(first: false);
   }
 
   /// Loading a list can mark it read on Weibo's side, so only the sub-tab in view refreshes.

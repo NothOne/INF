@@ -5,6 +5,7 @@ import '../core/links.dart';
 import '../core/models.dart';
 import '../core/pane.dart';
 import '../core/prefs.dart';
+import '../features/captcha/captcha_dialog.dart';
 import '../features/compose/compose_page.dart';
 import '../features/detail/status_detail_page.dart';
 import '../features/friends/friends_page.dart';
@@ -35,6 +36,19 @@ import '../features/web/web_page.dart';
 /// [pane] marks a page that may open in the [DetailPane] beside a list, and names what it shows
 /// so the list can mark it; it does whenever [context] is in or beside one. Everything else opens
 /// over the whole screen, also when asked for from inside the pane.
+/// The app's root navigator, for what is shown without a widget asking: Weibo's captcha.
+final rootNavigatorKey = GlobalKey<NavigatorState>();
+
+/// Hands Weibo's captcha to the reader on whatever screen is up; null when nothing can show it.
+/// Writes refused together share one dialog.
+Future<Map<String, String>?> solveCaptcha(String captchaId) {
+  final context = rootNavigatorKey.currentContext;
+  if (context == null) return Future.value();
+  return _captcha ??= showCaptchaDialog(context, captchaId).whenComplete(() => _captcha = null);
+}
+
+Future<Map<String, String>?>? _captcha;
+
 Future<T?> pushInf<T>(BuildContext context, Widget page, {bool overlay = false, String? pane}) {
   if (pane != null) {
     final detail = DetailPane.maybeOf(context);

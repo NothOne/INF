@@ -191,6 +191,15 @@ class _StatusCardState extends State<StatusCard> {
     open(id);
   }
 
+  /// The detail page shows the whole of a long post, and the feed only has its first six lines.
+  /// Asking on the way down of the finger gives that request the head start of the tap, so the
+  /// page can open on the full text instead of growing taller mid-animation as it arrives. Never
+  /// on sight or on scroll: a list would send one request per post it passes.
+  void _prefetch(Status status) {
+    if (widget.detail || !status.isLongText) return;
+    StatusStore.instance.longText(status.id).ignore();
+  }
+
   /// A 「…的微博视频」 link in the text is the video the post already carries: it plays here
   /// instead of opening the video's web page.
   ValueChanged<String>? _urlHandler(Status status) {
@@ -235,6 +244,7 @@ class _StatusCardState extends State<StatusCard> {
         children: [
           Positioned.fill(
             child: InkWell(
+              onTapDown: widget.detail ? null : (_) => _prefetch(status),
               onTap: widget.detail ? null : () => _openSelf(status.id),
               onLongPress: () => _openMenu(status),
               enableFeedback: false,
@@ -252,6 +262,7 @@ class _StatusCardState extends State<StatusCard> {
               if (status.text.trim().isNotEmpty || status.isLongText)
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
+                onTapDown: widget.detail ? null : (_) => _prefetch(status),
                 onTap: widget.detail ? null : () => _openSelf(status.id),
                 onLongPress: () => _openMenu(status),
                 child: RichStatusText(
@@ -271,6 +282,7 @@ class _StatusCardState extends State<StatusCard> {
               if (status.isLongText && !widget.detail) ...[
                 const SizedBox(height: 3),
                 GestureDetector(
+                  onTapDown: (_) => _prefetch(status),
                   onTap: () => _openSelf(status.id),
                   child: Text(
                     '全文',
@@ -623,6 +635,12 @@ class _RepostBlock extends StatelessWidget {
       onOpen();
     }
 
+    // Tapping anywhere here opens the original's own page, which shows it whole; see
+    // [_StatusCardState._prefetch]. This block opens it from a detail page too.
+    void prefetch() {
+      if (original.isLongText) StatusStore.instance.longText(original.id).ignore();
+    }
+
     return Material(
       color: InfChrome.of(context).fill(scheme, scheme.surfaceContainerHigh, 0.62),
       borderRadius: BorderRadius.circular(12),
@@ -631,6 +649,7 @@ class _RepostBlock extends StatelessWidget {
           Positioned.fill(
             child: InkWell(
               borderRadius: BorderRadius.circular(12),
+              onTapDown: detail ? null : (_) => prefetch(),
               onTap: open,
               child: const SizedBox.expand(),
             ),
@@ -642,6 +661,7 @@ class _RepostBlock extends StatelessWidget {
             children: [
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
+                onTapDown: detail ? null : (_) => prefetch(),
                 onTap: open,
                 child: RichStatusText(
                   text: '$prefix${original.text}',
