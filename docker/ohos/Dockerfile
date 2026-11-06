@@ -59,6 +59,15 @@ ENV PATH="${JAVA_HOME}/bin:${COMMANDLINE_TOOL_DIR}/tool/node/bin:${COMMANDLINE_T
 # Flutter has no ohos target. Pinned so the image and .metadata agree.
 ARG FLUTTER_OHOS_REF=oh-3.47.7-preview
 ENV FLUTTER_HOME=/opt/flutter-ohos
+
+# GitHub's checkout step insists the workspace is owned by the runner user. Flutter is cloned as
+# that user too: git refuses a checkout owned by someone else, and the tool writes its own cache.
+RUN useradd -m -u 1001 runner \
+    && mkdir -p /workspace "$FLUTTER_HOME" \
+    && chown runner:runner /workspace "$FLUTTER_HOME"
+
+USER runner
+
 # precache pulls the engine artifacts now so app builds do not pay for them.
 RUN git clone --depth 1 -b "$FLUTTER_OHOS_REF" \
         https://gitcode.com/openharmony-tpc/flutter_flutter.git "$FLUTTER_HOME" \
@@ -68,11 +77,6 @@ RUN git clone --depth 1 -b "$FLUTTER_OHOS_REF" \
         --no-windows --no-macos --no-fuchsia
 
 ENV PATH="${FLUTTER_HOME}/bin:${PATH}"
-
-# GitHub's checkout step insists the workspace is owned by the runner user.
-RUN useradd -m -u 1001 runner && mkdir -p /workspace && chown runner:runner /workspace
-
-USER runner
 WORKDIR /workspace
 
 # Fail the image build, not the app build, if the toolchain is broken.
