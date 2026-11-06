@@ -39,8 +39,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
 
-# Unpacked in one layer so the tarball itself is never part of the image.
-ADD clt.tar.xz /opt/
+# Unpacked in one layer so the tarball itself is never part of the image. The tarball keeps a
+# local install's 0700 directories owned by uid 1000; the build user (uid 1001) must be able to
+# read and run it, so permissions are opened in the same layer.
+RUN --mount=type=bind,source=clt.tar.xz,target=/tmp/clt.tar.xz \
+    tar -xJf /tmp/clt.tar.xz -C /opt --no-same-owner \
+    && chmod -R a+rX /opt/command-line-tools
 
 ENV COMMANDLINE_TOOL_DIR=/opt/command-line-tools \
     DEVECO_SDK_HOME=/opt/command-line-tools/sdk \

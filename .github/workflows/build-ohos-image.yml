@@ -44,11 +44,11 @@ jobs:
             curl_args+=(-H "Authorization: Bearer $CLT_TOKEN")
           fi
           curl "${curl_args[@]}" "$CLT_URL" -o /tmp/clt.archive
-          # ADD in the Dockerfile expects this exact name; the archive is an
+          # The Dockerfile's bind mount expects this exact name; the archive is an
           # .tar.xz built by the tar command documented there.
           mv /tmp/clt.archive docker/ohos/clt.tar.xz
           ls -lh docker/ohos/clt.tar.xz
-          # The Dockerfile unpacks it with ADD, which only handles tar archives.
+          # The Dockerfile unpacks it with tar -J, so it must be a .tar.xz.
           tar -tf docker/ohos/clt.tar.xz | head -3
 
       # Image names must be lowercase; the repository is NothOne/INF.
