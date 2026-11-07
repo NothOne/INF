@@ -210,7 +210,10 @@ class _CommentSheetState extends State<CommentSheet> {
                           quoted,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                fontSize: 12.5,
+                                color: scheme.onSurfaceVariant,
+                              ),
                         ),
                       ),
                     ],

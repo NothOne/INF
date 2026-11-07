@@ -100,7 +100,7 @@ main()
 | `page_cache.dart` | `PageCache.instance` | 磁盘缓存若干列表的第一页原始 JSON（按账号隔离），启动时全部读入内存 |
 | `prefs.dart` | `Prefs.instance` `AccentTheme` `VisualStyle` `HapticLevel` `ImagePreload` `PageMotion` | SharedPreferences 封装：外观、页面动效（`pageMotion`：展开 / 推入，默认推入）、触感档位、搜索历史、草稿、浏览记录、首页来源、推荐频道、热搜榜单顺序（`hotBoards`）、本机屏蔽名单（`blockedUsers`/`isBlocked`，信息流和 `PagedStatusList` 跳过，用户主页不跳过）、表情 |
 | `emoji.dart` | `EmojiStore.instance` | 表情短码 → 图片 URL，从接口返回中学习并持久化 |
-| `image_url.dart` | `sanitizeImageUrl` `secureUrl` `sinaimgSized` `weiboImageHeaders` | 图片 URL 规范化、http→https、sinaimg 尺寸替换、防盗链请求头（Referer 只发给微博自己的域名，B 站等图床带了会 403）。不含 Widget，状态层也可以用 |
+| `image_url.dart` | `sanitizeImageUrl` `secureUrl` `signedUrlExpired` `sinaimgSized` `weiboImageHeaders` | `signedUrlExpired` 判断视频 CDN 地址的 `Expires` 是否已过；图片 URL 规范化、http→https、sinaimg 尺寸替换、防盗链请求头（Referer 只发给微博自己的域名，B 站等图床带了会 403）。不含 Widget，状态层也可以用 |
 | `links.dart` | `linkTargetOf` `LinkTarget` `linkKindOf` `linkKindLabel` `expandShortLink` `unwrapWeiboRedirect` `weiboAppBrowserUrl` `appNameOf` `siteNameOf` `linkInText` | 链接归类：任意 http(s) / `sinaweibo://` 地址 → 微博、用户、话题、超话、t.cn 短链、网页、仅客户端可开（`ClientPageTarget`：m.weibo.cn 的 wbox 小程序页、文章专栏 `a/hot/<cid>_1.html` / `p/232718<cid>`，网页版只显示「打开微博客户端体验」，兜底页经 `sinaweibo://browser?url=` 交给微博客户端）；`appNameOf` / `siteNameOf` 给网页想唤起的 App 和卡片站点起名；`linkInText` 从一段粘贴文字里找出链接；`linkKindOf` 按地址和 `timeline_card_small_*` 图标判断位置/超话/投票/抽奖/群聊等。纯逻辑，有测试 |
 
 ### 3.3 `lib/core/` —— 状态与服务（L2）
@@ -120,11 +120,11 @@ main()
 | 文件 | 主要符号 | 职责 |
 |---|---|---|
 | `theme.dart` | `infTheme` `accentColor` | 构造 `ThemeData`，包括 `PageTransitionsTheme`（预测性返回） |
-| `chrome.dart` `chrome_classic.dart` `chrome_glass.dart` `chrome_liquid.dart` | `InfChrome` `ClassicChrome` `GlassChrome` `LiquidChrome` | 三种风格分开实现的界面外壳：顶栏背景、页面底色、底部输入栏 `edgePanel`、悬浮控件 `floatingPanel`、输入面板 `typingSheet`、操作面板、小块底色 `fill`、按压反馈 `pressable`、圆形悬浮按钮 `floatingButton`（发微博）、悬浮胶囊 `floatingCapsule`（信息流「N 条新微博」）、提示条 `snackBar`。页面只调 `InfChrome.of(context)`，不自己判断风格；经典实现全部不透明，模糊和半透明只出现在 `GlassChrome` / `LiquidChrome`。液态的这四处各是一块透镜：发微博是主色薄雾的圆盘，胶囊是主色 0.75 的胶囊，提示条是深色近乎不透明的透镜条，其余沿用毛玻璃 |
-| `look.dart` | `InfLook`（ThemeExtension） `GlassSurface` `GlassBarBackground` `GlassSheet` `lookBarBackground` | 经典 / 毛玻璃风格。控件用 `InfLook.of(context)` 读取，不直接读 `Prefs`。玻璃分三档：静止的顶栏是浅乳白薄霜加细线，内容滑入下方后全霜；悬浮控件（底栏、热搜榜切换胶囊）全霜并用 `lifted` 投影；输入用的面板（评论框）不用玻璃。模糊一律走 `FadeSafeBackdrop`。液态玻璃的数字也在这里：`liquidTintAlpha`（厚 0.48/0.52 → 薄 0.04/0.05，默认 0.5 约 0.26–0.29）和 `liquidBlurSigma`（`1 + 5 × (1 - 通透度)`，默认 3.5），改数字只改这两处 |
-| `liquid_glass.dart` | `LiquidSurface` `LiquidLens` `LiquidEdges` `LiquidPress` `LiquidBarBackground` `LiquidSheet` `LiquidTabTrack` `LiquidShader` | 液态玻璃：透镜折射、色散、高光描边。磨砂不在这层做——`_LiquidLayer` 先垫一层真正的 `ImageFilter.blur`（逻辑像素 σ，`insideFade` 时两层都不推），再叠 `shaders/liquid_glass.frag` 的透镜，所以着色器只采样一次，不再有稀疏采样叠出的网格 |
+| `chrome.dart` `chrome_classic.dart` `chrome_glass.dart` `chrome_liquid.dart` | `InfChrome` `ClassicChrome` `GlassChrome` `LiquidChrome` | 三种风格分开实现的界面外壳：顶栏背景、页面底色、底部输入栏 `edgePanel`、悬浮控件 `floatingPanel`、输入面板 `typingSheet`、操作面板、小块底色 `fill`、圆形悬浮按钮 `floatingButton`（发微博）、悬浮胶囊 `floatingCapsule`（信息流「N 条新微博」）、提示条 `snackBar`、顶栏返回键 `actionIconTheme`（进 `theme.dart`）、顶栏右侧按钮组 `barActions`、顶栏下的分区标签 `barTabs`（通知、私信）。页面只调 `InfChrome.of(context)`，不自己判断风格；经典实现全部不透明，模糊和半透明只出现在 `GlassChrome` / `LiquidChrome`。`LiquidChrome` 的悬浮控件用 `liquid_glass_widgets`：悬浮面板是 `GlassContainer`，操作面板是 `GlassSheet`，发微博是白色图标的 56 `GlassButton`，主色透明度随「通透度」在 0.95–0.45 之间变（厚度、折射、高光本来就跟着 `LiquidGlassTheme`），胶囊是主色 0.8 的 `GlassButton.custom`，提示条是深色 0.78 的 `GlassContainer`；顶栏背景、底部输入栏 `edgePanel` 和页面底色都是纯页面色（不加光晕、不渐隐、不模糊），顶栏上的玻璃只有三处：40 的圆形返回 / 关闭键、右侧按钮收进一个玻璃胶囊、通知和私信的分区标签是 38 高的玻璃胶囊，输入面板 `typingSheet` 沿用毛玻璃的实心面板 |
+| `look.dart` | `InfLook`（ThemeExtension） `GlassSurface` `GlassBarBackground` `GlassSheet` `lookBarBackground` | 经典 / 毛玻璃风格。控件用 `InfLook.of(context)` 读取，不直接读 `Prefs`。玻璃分三档：静止的顶栏是浅乳白薄霜加细线，内容滑入下方后全霜；悬浮控件（底栏、热搜榜切换胶囊）全霜并用 `lifted` 投影；输入用的面板（评论框）不用玻璃。模糊一律走 `FadeSafeBackdrop`。液态玻璃只在这里存三个滑块值 `refraction` / `liquidClarity` / `liquidShine`（默认都是 0.5），换算成玻璃参数在 `liquid_glass.dart` |
+| `liquid_glass.dart` | `liquidGlassTheme` `LiquidGlassTheme` | 液态玻璃用 pub 包 `liquid_glass_widgets`（iOS 26 风格的现成控件，不自己写着色器）。`main.dart` 里 `LiquidGlassWidgets.initialize()` 预载着色器，`wrap(brightnessResolver: Theme.maybeBrightnessOf)` 让玻璃跟随应用的深浅色；`app.dart` 用 `LiquidGlassTheme` 包住整个应用。`liquidGlassTheme` 把设置里的三个滑块换算成 `GlassThemeSettings`，三者都在 0.5 时正好是包里的 `ios27Light` / `ios27Dark`：折射 → 厚度 12–52、折射率 1.1–1.38；通透度 → 玻璃底色透明度（浅 0.85→0.21、深 0.22→0.02）和磨砂 28→0；高光 → 边缘亮线 0–2 倍。`tint` 给发微博、胶囊、提示条换底色。顶栏背景不是玻璃，是纯页面色。用到包里控件的地方：`RootShell` 底栏 `GlassTabBar.bottom`（58 高、和其他风格同样的边距；按下就把光斑移到手指下的那项，松手才真正切换页面）、横屏/平板侧边栏是同一个 `GlassTabBar.bottom` 套 `GlassVerticalBar` 变成竖向（平时只显示图标，按住才展开文字，光斑跟手，松手切换）、详情页「转发 / 评论」和评论排序 `GlassSegmentedControl`、详情页底部写评论栏（悬浮的 `GlassButton.custom` 胶囊加转发、点赞两个圆形 `GlassButton.custom`，评论列表从下面滚过）、`LiquidChrome` 各处、设置页预览。玻璃每帧都要重新折射下方内容，页面转场时下面的页面由 `CoveredSnapshot` 画成一张快照 |
 | `link_preview.dart` | `LinkPreviews` `LinkPreview` | 链接预览：解开跳转和 t.cn，微博/用户/话题走接口或直接起名，普通网页读前 192 KB HTML 的 og:title / description / image；微博自家网页不抓（未登录只会拿到登录页），登录墙标题丢掉；按地址缓存 |
-| `fade_safe_backdrop.dart` | `FadeSafeBackdrop` `insideFade` | 合成时发现自己处在半透明的 `OpacityLayer` 或任何 `ImageFilterLayer` 里（切换底部标签、页面展开/推入的淡入淡出）就跳过模糊：否则背景模糊采样的是淡入层里的空白，整块玻璃变灰闪一下。`GlassSurface` 和液态玻璃都用它；新加的模糊不要直接用 `BackdropFilter` |
+| `fade_safe_backdrop.dart` | `FadeSafeBackdrop` `insideFade` | 合成时发现自己处在半透明的 `OpacityLayer` 或任何 `ImageFilterLayer` 里（切换底部标签、页面展开/推入的淡入淡出）就跳过模糊：否则背景模糊采样的是淡入层里的空白，整块玻璃变灰闪一下。`GlassSurface` 用它（液态玻璃的控件自带折射，不经过这里）；新加的模糊不要直接用 `BackdropFilter` |
 | `motion.dart` | `InfMotion` `showInfSheet` `showActionSheet` `afterFrame` | 所有时长和曲线常量；底部面板和操作菜单 |
 | `container_route.dart` | `ContainerOrigin` `ContainerTransformRoute` | 「展开」动效：页面从点到的控件放大展开（卡片 → 详情对齐正文、楼中楼回复框 → 评论详情、按钮 → 编辑页），没有控件时从手指按下处（`ContainerOrigin.atTouch`）展开；含返回手势驱动。手机上卡片用对齐版（卡片内容和详情正文对齐着放大），`containerAlignProfile(t)` 给出那一刻的透明度 / 模糊 / 位移：整页和下面的真卡片交叉淡入淡出（路由没有遮挡层，半透明的页面露出的就是原卡片，所以收尾时不会出现「详情内容缩在卡片框里、再跳成卡片」），淡出用的 `t` 段贴近卡片一端，淡变期间页面停在卡片上方不动，模糊只在页面不可见和已稳定处为零、交叉过半时已 4σ 以上；平板/侧栏布局信息流列和全屏详情宽度不一样，对不齐，所以只做形状缩放 + 页面淡入并叠一层随透明度减弱的动态模糊（`ImageFiltered`） |
 | `layout.dart` | `WindowClass` `InfLayout` `contentGutter` `ContentColumn` `ContentBar` `ContentArea` `ShellLayout` | 平板适配：按窗口宽度分紧凑（< 600）/ 中等（600–840）/ 宽屏（≥ 840），叠加设置里的「设备布局」（自动 / 手机 / 平板）。非紧凑时外壳换成侧边栏，内容限宽 `kContentMaxWidth` 居中 |
@@ -143,7 +143,8 @@ main()
 | `hot_search_row.dart` | `HotSearchRow` `HotLabel` `rankColor` | 热搜榜单行（排名、新/热/沸标签、热度，`detailed` 时加分类与上榜时间） |
 | `people_pager_list.dart` | `PeoplePagerList` | 分页用户列表 + 关注按钮 |
 | `rich_text.dart` | `RichStatusText` `linkKindIcon` | 正文富文本：@提及、#话题#、链接、表情（`linkColor` 可换链接色，私信里自己发的气泡用）；链接用 `Status.links` 里微博给的文字和类型（地名、超话名、抽奖详情…） |
-| `image_grid.dart` | `StatusImageGrid` `thumbnailUrl` | 九宫格，带 Hero tag |
+| `image_grid.dart` | `StatusImageGrid` `thumbnailUrl` | 九宫格，每格包 `ViewerHero` |
+| `viewer_hero.dart` | `ViewerHero` `viewerHeroTags` | 所有能点开大图的图片（九宫格、正文/评论里的图和「查看图片」）都用它当 Hero：原图位置不再被 Hero 一直藏到关闭，只隐藏查看器当前所在那张（`ViewerHero.showing`，`openImage` 设、翻页时改、关闭动画结束时清），左右滑过再拖回不会错位；`viewerHeroTags` 从点开的那个 tag 推出每页的 tag（按在全部媒体里的序号，视频不算页但占号） |
 | `smart_image.dart` | `SmartImage` `weiboImageProvider` `isImageInMemory` | 带防盗链 Referer 的网络图片；带签名（`Expires`/`ssig`）的地址去掉查询串作 `cacheKey`，同一头像换了签名仍命中内存和磁盘缓存，显示过就不再淡入；`Avatar` 64 以下统一按 192 解码，各页面共用一份 |
 | `comment_sheet.dart` | `showCommentSheet` `CommentSheet` | 评论 / 回复底部面板，首页、详情、通知和 `PagedStatusList` 共用；两种风格下都是实心面板（`InfChrome.typingSheet`） |
 | `mention_picker.dart` | `showMentionPicker` `EmojiKeyboard` `EmojiKeyboardSlot` `EmojiPanel` | @ 用户选择器和表情面板，评论面板、编辑页、私信共用 |
@@ -151,8 +152,9 @@ main()
 | `refresh.dart` | `InfRefreshIndicator` `nestedScrollRefreshPredicate` | 下拉刷新（触发点触感、失败提示）；`NestedScrollView` 里顶部下拉由内层列表（depth 1）上报，要传 `nestedScrollRefreshPredicate` |
 | `shell_top_bar.dart` | `ShellTopBar` `ShellBarBand` | 四个 Tab 页的顶栏：随 `shellBarsVisible` 上滑收起，占位高度不变（页面 `extendBodyBehindAppBar: true`，列表不跳），状态栏那一条始终被背景盖住；`ShellBarBand` 给吸在顶栏下的控件（首页热搜榜单条）跟着走 |
 | `transitions.dart` | `StateSwitcher` `RefreshingBar` `AppearIn` `RowListSkeleton` | 状态切换、后台刷新条、入场动画、骨架 |
-| `common.dart` | `showMessage` `infSnackBar` `ErrorRetry` `EmptyHint` `CountBadge` `SectionHeader` `SkeletonBox` `StatusListSkeleton` `LoadingFooter` `KeepAlivePage` `formatBytes` | 杂项基础控件。提示条一律 `showMessage` / `infSnackBar`，由 `InfChrome.snackBar` 决定外观（液态是透镜条）；要在 pop 之前建好再交给 messenger |
-| `paper.dart` | `PaperBackground` | 页面背景，`RootShell` 外层统一提供，内容由 `InfChrome.backdrop` 决定：经典是纸感渐变，毛玻璃是顶部两团极淡的主色/第三色光晕；页面直接用 `Scaffold` |
+| `common.dart` | `showMessage` `infSnackBar` `ErrorRetry` `EmptyHint` `CountBadge` `SectionHeader` `SkeletonBox` `StatusListSkeleton` `LoadingFooter` `KeepAlivePage` `formatBytes` | 杂项基础控件。提示条一律 `showMessage` / `infSnackBar`，由 `InfChrome.snackBar` 决定外观（液态是深色玻璃条）；要在 pop 之前建好再交给 messenger |
+| `paper.dart` | `PaperBackground` | 页面背景，`RootShell` 外层统一提供，内容由 `InfChrome.backdrop` 决定：经典是纸感渐变，毛玻璃是顶部两团极淡的主色/第三色光晕，液态是纯页面色；页面直接用 `Scaffold` |
+| `covered_snapshot.dart` | `CoveredSnapshot` | 整页页面（`RootShell` 和 `pushInf` 打开的每一页）在另一整页打开或关闭期间画成一张快照（Flutter 的 `SnapshotWidget`），正在动的那一页保持实时；每页监听自己路由的动画，所以底部面板、对话框、半透明浮层不触发。液态玻璃在转场时实时折射会让 GPU 每帧约 20ms，快照后回到 1–9ms |
 | `web_view.dart` | `InfWebView` `upgradeSinaimgScript` | 统一 WebView（Android 10+ 用 hybrid composition 规避 Impeller 白屏；Android 10 以下引擎走 Skia，用默认纹理模式，hybrid composition 在那里会空白）；`upgradeSinaimgScript` 页面加载后把 `http://*.sinaimg.cn` 图片改成 https（Android 不加载明文图片，生日页的礼物图就是这种） |
 
 ### 3.6 `lib/core/` —— 路由（L4）与平台（L0）
@@ -176,14 +178,14 @@ main()
 
 | 目录 | 入口 | 说明 | 打开方式 |
 |---|---|---|---|
-| `shell/` | `RootShell` | 底栏 4 Tab、fade-through、底栏随滚动收起、发微博按钮；宽窗口下换成左侧 `_SideRail`（Tab 区域用 GlobalKey 保留，切换布局不重建） | `InfApp.home` |
+| `shell/` | `RootShell` | 底栏 4 Tab、fade-through、底栏随滚动收起、发微博按钮；宽窗口或手机横屏下换成左侧 `_SideRail`（Tab 区域用 GlobalKey 保留，切换布局不重建；Tab 区域的 `MediaQuery` 要在 `Scaffold` 下面读，否则键盘高度会被各 Tab 的 `Scaffold` 再扣一次，平板分屏左半边整个缩没） | `InfApp.home` |
 | `feed/` | `FeedPage` + `FeedController` | 首页顶栏三个等宽标签、推荐居中，三页可左右滑动，每页再点一次标题打开选择器：关注（全部关注流，切分组）、推荐（默认「热门」= 登录账号的 m.weibo.cn 102803 个性化流；「推荐」及其余频道 = weibo.com 游客推荐频道；`recommend_channels_sheet.dart` 选频道）、热搜（`HotBoardChips` 切榜单，标题处打开榜单管理）；底栏「首页」单击作用于当前页（回顶/刷新） | Tab 0 |
 | `notify/` | `NotifyPage` | 通知四个子 Tab | Tab 1 |
 | `captcha/` | `showCaptchaDialog` | 微博安全验证：写接口返回 `error_type: captcha` 时，用 m.weibo.cn 自己的 `validate-loader` + 网易易盾弹出拼图，完成后把返回字段并进原请求重发一次；关闭则操作不执行 | `solveCaptcha`（`WeiboApi.captchaSolver`，经 `rootNavigatorKey` 弹在当前页面上） |
 | `place/` | `showPlaceSheet` | 地点面板：图、名称、到访统计、地址（可复制），地点详情网页、用地图导航（`geo:` 交给地图 App，没有就开高德网页） | `openPlace`（正文里的位置链接、卡片位置行） |
 | `message/` | `MessagePage` `ChatPage` `chat_link_sheet` | 私信列表、单聊/群聊、私信链接面板；消息里的链接在气泡下显示预览卡（`LinkPreviews`）；消息列表倒序（offset 0 是最新），首帧就停在底部；按会话在内存里记住最近消息，再次进入直接显示；对方头像用列表传进来的那张（`openChat(avatar:)`） | Tab 2 / `openChat` |
 | `profile/` | `ProfilePage` | 「我」、菜单入口、退出 | Tab 3 |
-| `detail/` | `StatusDetailPage` `CommentTile` `showCommentActions` `CommentFloorPage` | 微博详情、评论/转发切换（点标签或左右滑）、评论按热度/按时间（`comments/hotflow` 的 `max_id_type` 0/1）、楼中楼（顶部显示主评论，取自 `hotFlowChild` 的 `rootComment`）；评论下的回复预览里图片显示为「查看图片」，点开直接看图 | `openStatus` |
+| `detail/` | `StatusDetailPage` `CommentTile` `showCommentActions` `CommentFloorPage` | 微博详情、评论/转发切换（点标签或左右滑）、评论按热度/按时间（`comments/hotflow` 的 `max_id_type` 0/1）、楼中楼（顶部显示主评论，取自 `hotFlowChild` 的 `rootComment`）；评论下的回复预览和转发列表里，图片显示为「查看图片」，点开直接看图 | `openStatus` |
 | `compose/` | `ComposePage` | 发博/转发、多图、草稿 | `openCompose` |
 | `user/` | `UserPage` | 他人主页 + 时间线 | `openUser` |
 | `topic/` | `HotTopicPage` `TopicPage` `SuperTopicsPage` | 热搜/话题详情：头部只留排名与标签、两行导语、主持人、一行热度摘要（点开「热点数据」面板看热度/阅读/讨论、24 小时阅读趋势、上榜记录、贡献者/媒体）、单行相关搜索、相关用户和「参与讨论/全站搜索」，下方吸顶「综合/实时/热门/视频」；`TopicPage` 用于赞过、container 流和话题内关键词搜索 | `openTopic` `openHotTopic` `openLiked` `openTopicFeed` `openSuperTopics` |
@@ -191,7 +193,7 @@ main()
 | `relations/` | `RelationsPage` | 关注/粉丝 | `openRelations` |
 | `friends/` | `FriendsPage` | 好友 | `openFriends` |
 | `history/` | `DraftsPage` `ViewedPage` | 草稿箱、浏览记录 | `openDrafts` `openViewed` |
-| `media/` | `ImageViewerPage` `VideoPage` `cast_sheet` `video_surface` | 图片查看器（Hero、缩放、拖动关闭）、视频（PiP、下载、投屏）；`startVideo` 先走纹理，起不来就换 SurfaceView（`VideoViewType.platformView`）重建，并记进 `Prefs.videoSurfaceView`（华为海思解码器在纹理的 ImageReader 上分配不了缓冲区） | `openImage` `openVideo` |
+| `media/` | `ImageViewerPage` `VideoPage` `cast_sheet` `video_surface` | 图片查看器（Hero、缩放、拖动关闭；`viewerPictureBox` 定布局：比竖屏还细长的才算长图，在屏幕短边宽的一栏里滚动，平板横屏不会放大到整屏宽，其余图片完整放进屏幕；`viewerDecodeWidth` 让超过 GPU 最大纹理（鸿蒙平板 8192）的长图按比例缩窄解码，Impeller 超限时会把宽高各自截断，长图被压扁成放大、裁边、发糊）、视频（PiP、下载、投屏；`openVideo` 带上 `statusId`，地址签名过期或起播失败时重新取一次这条微博换新地址，只换一次）；`startVideo` 先走纹理，起不来就换 SurfaceView（`VideoViewType.platformView`）重建，并记进 `Prefs.videoSurfaceView`（华为海思解码器在纹理的 ImageReader 上分配不了缓冲区） | `openImage` `openVideo` |
 | `longimage/` | `LongImagePage` | 长图截图分享：底色随主题 `surface`、无外边距，`InfLogo` 放在底部「长图由 INF 生成」左边 | `openLongImage` |
 | `login/` | `LoginPage` `QrLoginPanel` | 登录方式选择：扫码 / 本机微博 App 确认（`qr_login_panel.dart`，确认后把 passport 给的跳转地址交给 WebView 走完 SSO 链）；短信验证码、账号密码、网页登录都在官方登录页的 WebView 里完成，前两者加载后用 JS 点开对应 Tab | `openLogin` |
 | `settings/` | `SettingsPage` | 外观、毛玻璃调节、页面动效、触感、缓存 | `openSettings` |
@@ -267,9 +269,9 @@ Widget  ──创建──▶ PagingController<T>(fetch: (cursor) => WeiboApi.in
 
 | 文件 | 行数 | 备注 |
 |---|---|---|
-| `features/detail/status_detail_page.dart` | ~1260 | 详情 + 评论/转发两个列表 + 交叉淡化 |
+| `features/detail/status_detail_page.dart` | ~1740 | 详情 + 评论/转发两个列表 + 交叉淡化 |
 | `core/parse.dart` | ~1210 | 所有解析 |
-| `features/media/image_viewer_page.dart` | ~920 | 手势状态机 |
+| `features/media/image_viewer_page.dart` | ~1100 | 手势状态机 |
 | `core/api.dart` | ~675 | 所有接口 |
 | `features/compose/compose_page.dart` / `core/widgets/status_card.dart` | ~590 | |
 

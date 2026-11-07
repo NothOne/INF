@@ -5,6 +5,8 @@ import '../core/links.dart';
 import '../core/models.dart';
 import '../core/pane.dart';
 import '../core/prefs.dart';
+import '../core/widgets/covered_snapshot.dart';
+import '../core/widgets/viewer_hero.dart';
 import '../features/captcha/captcha_dialog.dart';
 import '../features/compose/compose_page.dart';
 import '../features/detail/status_detail_page.dart';
@@ -75,12 +77,13 @@ Future<T?> pushInf<T>(BuildContext context, Widget page, {bool overlay = false, 
     );
   }
   final origin = ContainerOrigin.take();
+  final full = CoveredSnapshot(child: page);
   if (Prefs.instance.pageMotion == PageMotion.slide) {
-    return navigator.push<T>(MaterialPageRoute<T>(builder: (context) => page));
+    return navigator.push<T>(MaterialPageRoute<T>(builder: (context) => full));
   }
   return navigator.push<T>(ContainerTransformRoute<T>(
     origin: origin ?? ContainerOrigin.atTouch(MediaQuery.sizeOf(context)),
-    builder: (context) => page,
+    builder: (context) => full,
   ));
 }
 
@@ -227,8 +230,9 @@ Future<void> openLinkFallback(BuildContext context, String url, {String? appUrl,
 /// Where a post was sent from: its address, and the way there in a map app.
 Future<void> openPlace(BuildContext context, Place place) => showPlaceSheet(context, place);
 
-Future<void> openVideo(BuildContext context, String url, {String? coverUrl}) =>
-    pushInf(context, VideoPage(url: url, coverUrl: coverUrl), overlay: true);
+/// [statusId] is the post the video came with, fetched again for a fresh address if [url] fails.
+Future<void> openVideo(BuildContext context, String url, {String? coverUrl, String? statusId}) =>
+    pushInf(context, VideoPage(url: url, coverUrl: coverUrl, statusId: statusId), overlay: true);
 
 Future<void> openImage(
   BuildContext context, {
@@ -237,9 +241,9 @@ Future<void> openImage(
   String? heroTag,
 }) {
   final images = media.where((m) => m.kind == MediaKind.image).toList();
-  if (images.isEmpty) return Future.value();
-  final target = media[index];
-  final initial = images.indexOf(target);
+  final initial = images.indexOf(media[index]);
+  final heroTags = viewerHeroTags(heroTag, media, index);
+  ViewerHero.showing.value = heroTags[initial];
   // The image viewer is a Hero-first route: fading the whole route while the
   // Hero shrinks makes the full-screen image flash for one frame on pop.
   // No barrier colour: the viewer paints its own backdrop so a drag can thin it.
@@ -250,8 +254,8 @@ Future<void> openImage(
       reverseTransitionDuration: const Duration(milliseconds: 300),
       pageBuilder: (context, animation, secondaryAnimation) => ImageViewerPage(
         images: images,
-        initialIndex: initial < 0 ? 0 : initial,
-        heroTag: heroTag,
+        initialIndex: initial,
+        heroTags: heroTags,
       ),
       transitionsBuilder: (context, animation, secondaryAnimation, child) => child,
     ),

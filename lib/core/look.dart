@@ -18,6 +18,7 @@ class InfLook extends ThemeExtension<InfLook> {
     this.clarity = defaultClarity,
     this.refraction = defaultRefraction,
     this.liquidClarity = defaultLiquidClarity,
+    this.liquidShine = defaultLiquidShine,
   });
 
   final VisualStyle style;
@@ -28,33 +29,25 @@ class InfLook extends ThemeExtension<InfLook> {
   /// How much of what is behind glass shows through its tint, 0–1.
   final double clarity;
 
-  /// How far liquid glass bends what is behind its edges, 0–1.
+  /// How far liquid glass bends what is behind its edges, 0–1 (see `liquidGlassTheme`).
   final double refraction;
 
-  /// How see-through liquid glass is, 0–1: thinner tint and less blur towards 1.
+  /// How see-through liquid glass is, 0–1: thinner body and less frost towards 1.
   final double liquidClarity;
+
+  /// How bright the rim of liquid glass is, 0–1.
+  final double liquidShine;
 
   static const defaultBlur = 0.6;
   static const defaultClarity = 0.4;
   static const defaultRefraction = 0.5;
   static const defaultLiquidClarity = 0.5;
+  static const defaultLiquidShine = 0.5;
 
   /// Both glass styles: content runs behind the bars, and panels are panes rather than paper.
   bool get glass => style != VisualStyle.classic;
 
   bool get liquid => style == VisualStyle.liquid;
-
-  /// Liquid glass tint over the page, for chrome with little text on it.
-  double liquidTintAlpha(Brightness brightness) {
-    final dark = brightness == Brightness.dark;
-    final thick = dark ? 0.48 : 0.52;
-    final thin = dark ? 0.04 : 0.05;
-    return thick + (thin - thick) * liquidClarity;
-  }
-
-  /// A gaussian in a backdrop layer, not the old ring of taps, so it reads stronger at the same
-  /// number: liquid glass stays light, and most of its look comes from the edge.
-  double get liquidBlurSigma => 1 + 5 * (1 - liquidClarity);
 
   /// 0 is sharp glass, 1 the heaviest frost. The default still lands on the previous sigma,
   /// so opening the clear end does not shift a setting the user has not touched.
@@ -91,6 +84,7 @@ class InfLook extends ThemeExtension<InfLook> {
     double? clarity,
     double? refraction,
     double? liquidClarity,
+    double? liquidShine,
   }) =>
       InfLook(
         style ?? this.style,
@@ -98,6 +92,7 @@ class InfLook extends ThemeExtension<InfLook> {
         clarity: clarity ?? this.clarity,
         refraction: refraction ?? this.refraction,
         liquidClarity: liquidClarity ?? this.liquidClarity,
+        liquidShine: liquidShine ?? this.liquidShine,
       );
 
   @override
@@ -109,6 +104,7 @@ class InfLook extends ThemeExtension<InfLook> {
       clarity: lerpDouble(clarity, other.clarity, t)!,
       refraction: lerpDouble(refraction, other.refraction, t)!,
       liquidClarity: lerpDouble(liquidClarity, other.liquidClarity, t)!,
+      liquidShine: lerpDouble(liquidShine, other.liquidShine, t)!,
     );
   }
 }

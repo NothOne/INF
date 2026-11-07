@@ -27,7 +27,7 @@ enum AccentTheme {
 enum VisualStyle {
   classic('经典', '纸感卡片，干净稳定'),
   glass('毛玻璃', '半透明的栏和面板，内容从下方透出'),
-  liquid('液态玻璃', '像一块透镜：边缘折射下方内容，高光沿边流动，控件按下会回弹');
+  liquid('液态玻璃', 'iOS 26 式的液态玻璃：悬浮的玻璃控件折射下方内容，按下会形变回弹，顶栏不加底色');
 
   final String label;
   final String description;
@@ -55,7 +55,7 @@ enum ImagePreload {
 /// Which layout the shell uses; [auto] goes by the width of the window (see `WindowClass`).
 enum DeviceLayout {
   auto('自动', '窗口够宽时（平板、横屏、折叠屏展开）换成侧边导航和居中的内容列'),
-  phone('手机', '始终用底部导航，内容铺满屏幕'),
+  phone('手机', '竖屏用底部导航、横屏用侧边导航，内容铺满屏幕'),
   tablet('平板', '始终用侧边导航，内容居中，不随窗口宽度切换');
 
   final String label;
@@ -143,15 +143,20 @@ class Prefs extends ChangeNotifier {
   /// How see-through liquid glass is, 0–1 (see `InfLook.liquidClarity`).
   double? get liquidClarity => _prefs.getDouble('liquid_clarity');
 
-  Future<void> setLiquid({double? refraction, double? clarity}) async {
+  /// How bright the rim of liquid glass is, 0–1 (see `InfLook.liquidShine`).
+  double? get liquidShine => _prefs.getDouble('liquid_shine');
+
+  Future<void> setLiquid({double? refraction, double? clarity, double? shine}) async {
     if (refraction != null) await _prefs.setDouble('liquid_refraction', refraction);
     if (clarity != null) await _prefs.setDouble('liquid_clarity', clarity);
+    if (shine != null) await _prefs.setDouble('liquid_shine', shine);
     notifyListeners();
   }
 
   Future<void> resetLiquid() async {
     await _prefs.remove('liquid_refraction');
     await _prefs.remove('liquid_clarity');
+    await _prefs.remove('liquid_shine');
     notifyListeners();
   }
 

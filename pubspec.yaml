@@ -1,7 +1,7 @@
 name: inf_flutter
 description: "INF for Android — 微博第三方客户端（Flutter 重写版）"
 publish_to: "none"
-version: 1.4.0+53
+version: 1.4.5+54
 
 environment:
   sdk: ^3.13.5
@@ -50,6 +50,7 @@ dependencies:
       url: https://gitcode.com/openharmony-tpc/flutter_packages.git
       ref: bddb2c981fcf826eaf19ed97f55113708aa55727
       path: packages/webview_flutter/webview_flutter_ohos
+  liquid_glass_widgets: ^1.17.0
 
 dependency_overrides:
   # sqflite (under flutter_cache_manager) with its ohos implementation.
@@ -73,5 +74,3 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  shaders:
-    - shaders/liquid_glass.frag

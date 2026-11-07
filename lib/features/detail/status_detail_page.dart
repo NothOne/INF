@@ -2,9 +2,10 @@ import '../../core/motion.dart';
 import '../../core/haptics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
+    show GlassButton, GlassSegment, GlassSegmentedControl, LiquidOval, LiquidRoundedSuperellipse;
 
 import '../../core/layout.dart';
-import '../../core/liquid_glass.dart';
 import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/container_route.dart';
@@ -24,6 +25,7 @@ import '../../core/widgets/smart_image.dart';
 import '../../core/widgets/share_sheet.dart';
 import '../../core/widgets/status_card.dart';
 import '../../core/widgets/transitions.dart';
+import '../../core/widgets/viewer_hero.dart';
 
 /// 按热度 is what the hot flow returns; 按时间 asks the same list newest first.
 enum CommentSort { hot, time }
@@ -251,7 +253,7 @@ class _StatusDetailPageState extends State<StatusDetailPage> {
           appBar: AppBar(
             flexibleSpace: lookBarBackground(context),
             title: const Text('微博正文'),
-            actions: [
+            actions: InfChrome.of(context).barActions(context, [
               if (status != null)
                 IconButton(
                   icon: const Icon(Icons.share_outlined),
@@ -272,8 +274,7 @@ class _StatusDetailPageState extends State<StatusDetailPage> {
                     onLongImage: () => openLongImage(context, status),
                   ),
                 ),
-              const SizedBox(width: 4),
-            ],
+            ]),
           ),
           bottomNavigationBar: _BottomBar(
             liked: applied?.liked ?? false,
@@ -451,7 +452,7 @@ class _DetailBodyState extends State<_DetailBody> {
                   onOpenUrl: (url) => openLink(context, url),
                   onOpenMedia: (media, index, tag) {
                     if (media[index].kind == MediaKind.video) {
-                      openVideo(context, media[index].url, coverUrl: media[index].previewUrl);
+                      openVideo(context, media[index].url, coverUrl: media[index].previewUrl, statusId: status.id);
                     } else {
                       openImage(context, media: media, index: index, heroTag: tag);
                     }
@@ -823,6 +824,25 @@ class _DiscussionSwitch extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (InfLook.of(context).liquid) {
+      final scheme = Theme.of(context).colorScheme;
+      final label = Theme.of(context).textTheme.titleSmall ?? const TextStyle();
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+        child: GlassSegmentedControl(
+          useOwnLayer: true,
+          height: 38,
+          segments: [
+            GlassSegment(label: _caption('转发', reposts)),
+            GlassSegment(label: _caption('评论', comments)),
+          ],
+          selectedIndex: showingReposts ? 0 : 1,
+          onSegmentSelected: (index) => index == 0 ? onShowReposts() : onShowComments(),
+          selectedTextStyle: label.copyWith(color: scheme.primary, fontWeight: FontWeight.w700),
+          unselectedTextStyle: label.copyWith(color: scheme.onSurfaceVariant, fontWeight: FontWeight.w500),
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
       child: Row(
@@ -834,10 +854,12 @@ class _DiscussionSwitch extends StatelessWidget {
     );
   }
 
+  static String _caption(String label, int count) => count > 0 ? '$label ${compactCount(count)}' : label;
+
   Widget _tab(BuildContext context, String label, int count, bool selected, VoidCallback onTap) {
     final scheme = Theme.of(context).colorScheme;
     final color = selected ? scheme.primary : scheme.onSurfaceVariant;
-    final caption = count > 0 ? '$label ${compactCount(count)}' : label;
+    final caption = _caption(label, count);
     return Expanded(
       child: InkWell(
         onTap: onTap,
@@ -896,7 +918,7 @@ class _CommentSortBar extends StatelessWidget {
               children: [
                 Flexible(
                   // Narrow windows or a large text size clamp the capsule rather than spill it.
-                  child: SizedBox(width: segment * 2, height: 30, child: _track(context)),
+                  child: SizedBox(width: segment * 2, child: _segmented(context)),
                 ),
               ],
             )
@@ -911,51 +933,17 @@ class _CommentSortBar extends StatelessWidget {
     );
   }
 
-  /// A two-segment capsule whose drop springs from one sort to the other, the same control as the
-  /// shell's tab bar. The track itself is a flat wash: a second lens around the drop would only
-  /// cost a layer and read as a heavier chip.
-  Widget _track(BuildContext context) {
+  Widget _segmented(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHigh.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(15),
-      ),
-      child: LiquidTabTrack(
-        count: 2,
-        index: _index,
-        onSelect: (index) => onSort(_sortAt(index)),
-        inset: 3,
-        child: Row(
-          children: [
-            for (final value in const [CommentSort.hot, CommentSort.time])
-              Expanded(
-                child: Semantics(
-                  button: true,
-                  selected: sort == value,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => onSort(value),
-                    child: Center(child: _trackLabel(context, value)),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _trackLabel(BuildContext context, CommentSort value) {
-    final scheme = Theme.of(context).colorScheme;
-    final selected = sort == value;
-    return AnimatedDefaultTextStyle(
-      duration: InfMotion.feedback,
-      style: (Theme.of(context).textTheme.labelSmall ?? const TextStyle()).copyWith(
-            color: selected ? scheme.primary : scheme.onSurfaceVariant,
-            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-          ),
-      child: Text(value == CommentSort.hot ? '按热度' : '按时间'),
+    final label = Theme.of(context).textTheme.labelSmall ?? const TextStyle();
+    return GlassSegmentedControl(
+      useOwnLayer: true,
+      height: 30,
+      segments: const [GlassSegment(label: '按热度'), GlassSegment(label: '按时间')],
+      selectedIndex: _index,
+      onSegmentSelected: (index) => onSort(_sortAt(index)),
+      selectedTextStyle: label.copyWith(color: scheme.primary, fontWeight: FontWeight.w700),
+      unselectedTextStyle: label.copyWith(color: scheme.onSurfaceVariant, fontWeight: FontWeight.w500),
     );
   }
 
@@ -1039,6 +1027,8 @@ class _RepostTile extends StatelessWidget {
                     onMention: (uid) => openUser(context, uid),
                     onTopic: (name) => openTopic(context, name),
                     onUrl: (url) => openLink(context, url),
+                    inlineImages: false,
+                    onOpenImage: (url, tag) => openImage(context, media: [Media.image(url)], heroTag: tag),
                   ),
                 ],
               ),
@@ -1185,25 +1175,17 @@ class CommentTile extends StatelessWidget {
                       spacing: 14,
                       children: [
                         for (final (index, _) in _unlinkedPictures(comment))
-                          Builder(
-                            builder: (cellContext) {
-                              final tag = 'link-img-comment-${comment.id}-$index';
-                              return GestureDetector(
-                                behavior: HitTestBehavior.opaque,
-                                onTap: () => onOpenImage(comment.images, index, tag),
-                                child: Hero(
-                                  tag: tag,
-                                  child: Material(
-                                    type: MaterialType.transparency,
-                                    child: InlineLinkLabel(
-                                      icon: Icons.image_outlined,
-                                      label: '查看图片',
-                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 13),
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => onOpenImage(comment.images, index, 'link-img-comment-${comment.id}-$index'),
+                            child: ViewerHero(
+                              tag: 'link-img-comment-${comment.id}-$index',
+                              child: InlineLinkLabel(
+                                icon: Icons.image_outlined,
+                                label: '查看图片',
+                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 13),
+                              ),
+                            ),
                           ),
                       ],
                     )
@@ -1314,7 +1296,7 @@ class _CommentImages extends StatelessWidget {
           GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: () => onOpen(images, i, 'comment-$commentId-$i'),
-            child: Hero(
+            child: ViewerHero(
               tag: 'comment-$commentId-$i',
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(6),
@@ -1426,25 +1408,17 @@ class _ReplyPreview extends StatelessWidget {
             spacing: 14,
             children: [
               for (final (index, _) in extra)
-                Builder(
-                  builder: (context) {
-                    final tag = 'link-img-reply-${reply.id}-$index';
-                    return GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => onOpenImage(reply.images, index, tag),
-                      child: Hero(
-                        tag: tag,
-                        child: Material(
-                          type: MaterialType.transparency,
-                          child: InlineLinkLabel(
-                            icon: Icons.image_outlined,
-                            label: '查看图片',
-                            style: style?.copyWith(fontSize: 13),
-                          ),
-                        ),
-                      ),
-                    );
-                  },
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => onOpenImage(reply.images, index, 'link-img-reply-${reply.id}-$index'),
+                  child: ViewerHero(
+                    tag: 'link-img-reply-${reply.id}-$index',
+                    child: InlineLinkLabel(
+                      icon: Icons.image_outlined,
+                      label: '查看图片',
+                      style: style?.copyWith(fontSize: 13),
+                    ),
+                  ),
                 ),
             ],
           ),
@@ -1480,23 +1454,23 @@ class _PopLikeButtonState extends State<_PopLikeButton> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final color = widget.liked ? scheme.primary : scheme.onSurfaceVariant;
-    return IconButton(
-      onPressed: widget.enabled ? _tap : null,
-      tooltip: '赞',
-      icon: AnimatedScale(
-        scale: _popped ? 1.28 : 1,
-        duration: const Duration(milliseconds: 140),
-        curve: Curves.easeOutBack,
-        child: TweenAnimationBuilder<Color?>(
-          tween: ColorTween(end: color),
-          duration: const Duration(milliseconds: 160),
-          builder: (context, value, _) => Icon(
-            widget.liked ? Icons.thumb_up_rounded : Icons.thumb_up_outlined,
-            color: value,
-          ),
+    final icon = AnimatedScale(
+      scale: _popped ? 1.28 : 1,
+      duration: const Duration(milliseconds: 140),
+      curve: Curves.easeOutBack,
+      child: TweenAnimationBuilder<Color?>(
+        tween: ColorTween(end: color),
+        duration: const Duration(milliseconds: 160),
+        builder: (context, value, _) => Icon(
+          widget.liked ? Icons.thumb_up_rounded : Icons.thumb_up_outlined,
+          color: value,
         ),
       ),
     );
+    if (InfLook.of(context).liquid) {
+      return Tooltip(message: '赞', child: _glassRound(enabled: widget.enabled, onTap: _tap, child: icon));
+    }
+    return IconButton(onPressed: widget.enabled ? _tap : null, tooltip: '赞', icon: icon);
   }
 }
 
@@ -1519,6 +1493,7 @@ class _BottomBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final chrome = InfChrome.of(context);
+    if (InfLook.of(context).liquid) return _liquid(context);
     final bar = SafeArea(
       top: false,
       child: Padding(
@@ -1556,7 +1531,68 @@ class _BottomBar extends StatelessWidget {
     );
     return chrome.edgePanel(context, child: ContentColumn(child: bar));
   }
+
+  /// No panel along the edge: a glass capsule and two glass discs float over the comments, which
+  /// scroll on beneath them.
+  Widget _liquid(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final bar = SafeArea(
+      top: false,
+      minimum: const EdgeInsets.only(bottom: 10),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+        child: Row(
+          children: [
+            Expanded(
+              child: GlassButton.custom(
+                useOwnLayer: true,
+                height: 46,
+                shape: const LiquidRoundedSuperellipse(borderRadius: 23),
+                enabled: enabled,
+                onTap: onComment,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                  child: Row(
+                    children: [
+                      Icon(Icons.edit_outlined, size: 18, color: scheme.onSurfaceVariant),
+                      const SizedBox(width: 8),
+                      Text(
+                        '写评论…',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Tooltip(
+              message: '转发',
+              child: _glassRound(
+                enabled: enabled,
+                onTap: onRepost,
+                child: Icon(Icons.repeat_rounded, color: scheme.onSurfaceVariant),
+              ),
+            ),
+            const SizedBox(width: 10),
+            _PopLikeButton(liked: liked, enabled: enabled, onLike: onLike),
+          ],
+        ),
+      ),
+    );
+    return ContentColumn(child: bar);
+  }
 }
+
+Widget _glassRound({required bool enabled, required VoidCallback onTap, required Widget child}) => GlassButton.custom(
+      useOwnLayer: true,
+      width: 46,
+      height: 46,
+      shape: const LiquidOval(),
+      enabled: enabled,
+      onTap: onTap,
+      child: child,
+    );
 
 class StatusDetailSkeleton extends StatelessWidget {
   const StatusDetailSkeleton({super.key});

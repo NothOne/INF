@@ -3,35 +3,52 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:inf_flutter/core/liquid_glass.dart';
 import 'package:inf_flutter/core/look.dart';
 import 'package:inf_flutter/core/prefs.dart' show VisualStyle;
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart' show GlassButton, GlassContainer, GlassThemeSettings;
 
 void main() {
-  group('liquid glass numbers', () {
-    const liquid = InfLook(VisualStyle.liquid);
+  group('liquid glass theme', () {
+    GlassThemeSettings light(InfLook look) => liquidGlassTheme(look).light.settings!;
+    GlassThemeSettings dark(InfLook look) => liquidGlassTheme(look).dark.settings!;
 
-    test('the default is thin tint and a light frost', () {
-      expect(liquid.liquidTintAlpha(Brightness.light), closeTo(0.285, 1e-9));
-      expect(liquid.liquidTintAlpha(Brightness.dark), closeTo(0.26, 1e-9));
-      expect(liquid.liquidBlurSigma, closeTo(3.5, 1e-9));
+    test('the default sliders are the iOS 27 glass', () {
+      const look = InfLook(VisualStyle.liquid);
+      for (final (ours, preset) in [
+        (light(look), GlassThemeSettings.ios27Light),
+        (dark(look), GlassThemeSettings.ios27Dark),
+      ]) {
+        expect(ours.thickness, closeTo(preset.thickness!, 1e-9));
+        expect(ours.refractiveIndex, closeTo(preset.refractiveIndex!, 1e-9));
+        expect(ours.frost, closeTo(preset.frost!, 1e-9));
+        expect(ours.rimLight, closeTo(preset.rimLight!, 1e-9));
+        expect(ours.glassColor!.a, closeTo(preset.glassColor!.a, 0.01));
+      }
     });
 
-    test('clearer means less tint and less blur, never more', () {
-      for (final brightness in Brightness.values) {
-        var last = double.infinity;
-        for (var i = 0; i <= 10; i++) {
-          final alpha = InfLook(VisualStyle.liquid, liquidClarity: i / 10).liquidTintAlpha(brightness);
-          expect(alpha, lessThan(last));
-          last = alpha;
-        }
-        // The clear end still tints a little, so text on a bar keeps a floor under it.
-        expect(InfLook(VisualStyle.liquid, liquidClarity: 1).liquidTintAlpha(brightness), greaterThan(0));
-        expect(InfLook(VisualStyle.liquid, liquidClarity: 0).liquidTintAlpha(brightness), lessThan(0.55));
-      }
-      var lastSigma = double.infinity;
+    test('each slider moves its glass one way only', () {
+      var last = (alpha: double.infinity, frost: double.infinity, thickness: 0.0, rim: 0.0);
       for (var i = 0; i <= 10; i++) {
-        final sigma = InfLook(VisualStyle.liquid, liquidClarity: i / 10).liquidBlurSigma;
-        expect(sigma, lessThan(lastSigma));
-        lastSigma = sigma;
+        final t = i / 10;
+        final clear = light(InfLook(VisualStyle.liquid, liquidClarity: t));
+        final bent = light(InfLook(VisualStyle.liquid, refraction: t));
+        final shiny = light(InfLook(VisualStyle.liquid, liquidShine: t));
+        if (i > 0) {
+          expect(clear.glassColor!.a, lessThan(last.alpha));
+          expect(clear.frost!, lessThan(last.frost));
+          expect(bent.thickness!, greaterThan(last.thickness));
+          expect(shiny.rimLight!, greaterThan(last.rim));
+        }
+        last = (alpha: clear.glassColor!.a, frost: clear.frost!, thickness: bent.thickness!, rim: shiny.rimLight!);
       }
+      // The clear end still tints a little, so text on glass keeps a floor under it.
+      expect(light(const InfLook(VisualStyle.liquid, liquidClarity: 1)).glassColor!.a, greaterThan(0));
+      expect(dark(const InfLook(VisualStyle.liquid, liquidClarity: 1)).glassColor!.a, greaterThan(0));
+    });
+
+    test('a tint replaces the glass colour', () {
+      const tint = Color(0xCC112233);
+      final theme = liquidGlassTheme(const InfLook(VisualStyle.liquid), tint: tint);
+      expect(theme.light.settings!.glassColor, tint);
+      expect(theme.dark.settings!.glassColor, tint);
     });
 
     test('each style keeps its own chrome', () {
@@ -41,7 +58,7 @@ void main() {
     });
   });
 
-  testWidgets('only liquid draws its snackbar as a pane', (tester) async {
+  testWidgets('only liquid draws its snackbar as glass', (tester) async {
     Future<SnackBar> capture(InfChrome chrome) async {
       late SnackBar bar;
       await tester.pumpWidget(MaterialApp(
@@ -64,10 +81,10 @@ void main() {
     final liquid = await capture(const LiquidChrome());
     expect(liquid.backgroundColor, Colors.transparent);
     expect(liquid.elevation, 0);
-    expect(liquid.content, isA<LiquidSurface>());
+    expect((liquid.content as LiquidGlassTheme).child, isA<GlassContainer>());
   });
 
-  testWidgets('the liquid compose button is a 56 round pane that reports its own context', (tester) async {
+  testWidgets('the liquid compose button is a glass button that reports its own context', (tester) async {
     BuildContext? pressed;
     await tester.pumpWidget(MaterialApp(
       theme: ThemeData(extensions: const [InfLook(VisualStyle.liquid)]),
@@ -77,16 +94,16 @@ void main() {
             child: const LiquidChrome().floatingButton(
               context,
               tooltip: '发微博',
-              icon: Icon(Icons.edit_rounded),
+              icon: const Icon(Icons.edit_rounded),
               onPressed: (buttonContext) => pressed = buttonContext,
             ),
           ),
         ),
       ),
     ));
-    expect(tester.getSize(find.byType(LiquidSurface)), const Size(56, 56));
+    expect(tester.getSize(find.byType(GlassButton)), const Size(56, 56));
     await tester.tap(find.byIcon(Icons.edit_rounded));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(pressed, isNotNull);
   });
 }

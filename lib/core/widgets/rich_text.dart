@@ -6,6 +6,7 @@ import '../image_url.dart';
 import '../links.dart';
 import '../models.dart';
 import 'smart_image.dart';
+import 'viewer_hero.dart';
 
 enum _TokenKind { plain, mention, topic, url, emoji }
 
@@ -121,10 +122,7 @@ class _RichStatusTextState extends State<RichStatusText> {
                   link = GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTap: () => callback(imageUrl, tag),
-                    child: Hero(
-                      tag: tag,
-                      child: Material(type: MaterialType.transparency, child: link),
-                    ),
+                    child: ViewerHero(tag: tag, child: link),
                   );
                 }
                 spans.add(WidgetSpan(alignment: PlaceholderAlignment.middle, child: link));
@@ -143,10 +141,7 @@ class _RichStatusTextState extends State<RichStatusText> {
                   picture = GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTap: () => callback(imageUrl, tag),
-                    child: Hero(
-                      tag: tag,
-                      child: Material(type: MaterialType.transparency, child: picture),
-                    ),
+                    child: ViewerHero(tag: tag, child: picture),
                   );
                 }
                 spans.add(WidgetSpan(alignment: PlaceholderAlignment.middle, child: picture));

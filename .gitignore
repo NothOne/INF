@@ -52,3 +52,6 @@ app.*.map.json
 
 # Gradle output when building from android/ directly
 /android/build/
+
+# Built packages handed out for testing
+/dist/

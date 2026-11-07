@@ -7,9 +7,11 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../core/api.dart';
 import '../../core/haptics.dart';
 import '../../core/image_url.dart';
 import '../../core/layout.dart';
+import '../../core/models.dart';
 import '../../core/native.dart';
 import '../../core/prefs.dart';
 import '../../core/session.dart';
@@ -21,10 +23,11 @@ import 'cast_sheet.dart';
 import 'video_surface.dart';
 
 class VideoPage extends StatefulWidget {
-  const VideoPage({super.key, required this.url, this.coverUrl});
+  const VideoPage({super.key, required this.url, this.coverUrl, this.statusId});
 
   final String url;
   final String? coverUrl;
+  final String? statusId;
 
   @override
   State<VideoPage> createState() => _VideoPageState();
@@ -34,10 +37,12 @@ class VideoPage extends StatefulWidget {
 enum _Drag { none, seek, brightness, volume, dismiss }
 
 class _VideoPageState extends State<VideoPage> with WidgetsBindingObserver {
+  late String _url = widget.url;
+  bool _refreshed = false;
   late VideoPlayerController _controller = _newController(preferredVideoView());
 
   VideoPlayerController _newController(VideoViewType viewType) => VideoPlayerController.networkUrl(
-        Uri.parse(secureUrl(widget.url)),
+        Uri.parse(secureUrl(_url)),
         httpHeaders: {
           'Referer': 'https://m.weibo.cn/',
           'User-Agent': Session.instance.userAgent,
@@ -118,30 +123,52 @@ class _VideoPageState extends State<VideoPage> with WidgetsBindingObserver {
     _controller = next..addListener(_onTick);
   }
 
-  void _initialize({bool resume = false}) {
-    startVideo(_controller, _newController).then((started) async {
-      if (!mounted) {
-        if (started != _controller) started.dispose();
-        return;
-      }
-      setState(() => _swapController(started));
-      final saved = resume ? Prefs.instance.videoPosition(widget.url) : null;
-      final duration = _controller.value.duration;
-      if (saved != null && saved > const Duration(seconds: 3) && saved < duration - const Duration(seconds: 3)) {
-        await _controller.seekTo(saved);
-        if (!mounted) return;
-        _resumedFrom = saved;
-        _resumeTimer = Timer(const Duration(seconds: 5), () {
-          if (mounted) setState(() => _resumedFrom = null);
-        });
-      }
-      setState(() => _ready = true);
-      _controller.setLooping(false);
-      _controller.play();
-      _scheduleHide();
-    }).catchError((Object error) {
+  /// A list restored from disk, or simply left open a while, holds video addresses past their
+  /// signature; the post fetched again carries fresh ones. Only once, so a video that fails for
+  /// any other reason still ends on the error.
+  Future<bool> _refreshUrl() async {
+    final id = widget.statusId;
+    if (_refreshed || id == null) return false;
+    _refreshed = true;
+    final status = await WeiboApi.instance.status(id).catchError((Object _) => null);
+    final videos = [...?status?.media, ...?status?.repostOf?.media].where((m) => m.kind == MediaKind.video);
+    final fresh = videos.where((m) => m.previewUrl == widget.coverUrl).firstOrNull ?? videos.firstOrNull;
+    if (!mounted || fresh == null || fresh.url == _url) return false;
+    _url = fresh.url;
+    _swapController(_newController(preferredVideoView()));
+    return true;
+  }
+
+  Future<void> _initialize({bool resume = false}) async {
+    if (signedUrlExpired(_url, DateTime.now())) await _refreshUrl();
+    if (!mounted) return;
+    final VideoPlayerController started;
+    try {
+      started = await startVideo(_controller, _newController);
+    } catch (_) {
+      if (await _refreshUrl()) return _initialize(resume: resume);
       if (mounted) setState(() => _error = true);
-    });
+      return;
+    }
+    if (!mounted) {
+      if (started != _controller) started.dispose();
+      return;
+    }
+    setState(() => _swapController(started));
+    final saved = resume ? Prefs.instance.videoPosition(widget.url) : null;
+    final duration = _controller.value.duration;
+    if (saved != null && saved > const Duration(seconds: 3) && saved < duration - const Duration(seconds: 3)) {
+      await _controller.seekTo(saved);
+      if (!mounted) return;
+      _resumedFrom = saved;
+      _resumeTimer = Timer(const Duration(seconds: 5), () {
+        if (mounted) setState(() => _resumedFrom = null);
+      });
+    }
+    setState(() => _ready = true);
+    _controller.setLooping(false);
+    _controller.play();
+    _scheduleHide();
   }
 
   void _onTick() {
@@ -246,12 +273,12 @@ class _VideoPageState extends State<VideoPage> with WidgetsBindingObserver {
   }
 
   Future<void> _share() async {
-    await shareText(widget.url);
+    await shareText(_url);
   }
 
   Future<void> _download() async {
     if (_downloading) return;
-    if (widget.url.contains('.m3u8')) {
+    if (_url.contains('.m3u8')) {
       showMessage(context, '流媒体地址暂不支持直接下载');
       return;
     }
@@ -271,7 +298,7 @@ class _VideoPageState extends State<VideoPage> with WidgetsBindingObserver {
         headers['Cookie'] = Session.instance.cookieHeader;
       }
       await Dio().download(
-        widget.url,
+        _url,
         file.path,
         options: Options(headers: headers, followRedirects: true),
         onReceiveProgress: (received, total) {
@@ -588,7 +615,7 @@ class _VideoPageState extends State<VideoPage> with WidgetsBindingObserver {
                       ),
                       const Spacer(),
                       IconButton(
-                        onPressed: () => showCastSheet(context, widget.url),
+                        onPressed: () => showCastSheet(context, _url),
                         icon: const Icon(Icons.cast_rounded, color: Colors.white),
                         tooltip: '投屏',
                       ),

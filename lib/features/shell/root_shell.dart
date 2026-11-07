@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
+    show GlassTab, GlassTabBar, GlassVerticalBar, GlassVerticalBarData, GlassVerticalBarEdge, GlassVerticalBarMetrics;
 
 import '../../core/container_route.dart';
 import '../../core/haptics.dart';
 import '../../core/layout.dart';
-import '../../core/liquid_glass.dart';
 import '../../core/look.dart';
 import '../../core/motion.dart';
 import '../../core/native.dart';
@@ -251,18 +254,22 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
         bottomBar: !_rail,
         child: ContentArea(
           width: width,
-          child: MediaQuery.removePadding(
-            context: context,
-            removeLeft: _rail,
-            child: NotificationListener<ScrollNotification>(
-              onNotification: _onScroll,
-              child: Stack(
-                children: [
-                  // The entering tab is painted last, over the one leaving.
-                  for (var i = 0; i < _tabs.length; i++)
-                    if (_visited.contains(i) && i != _index) _tabSlot(i),
-                  _tabSlot(_index),
-                ],
+          // Read below the Scaffold, which has already taken the keyboard out of the insets: the
+          // shell's own MediaQuery still has it, and the tab's Scaffold would shrink for it again.
+          child: Builder(
+            builder: (context) => MediaQuery.removePadding(
+              context: context,
+              removeLeft: _rail,
+              child: NotificationListener<ScrollNotification>(
+                onNotification: _onScroll,
+                child: Stack(
+                  children: [
+                    // The entering tab is painted last, over the one leaving.
+                    for (var i = 0; i < _tabs.length; i++)
+                      if (_visited.contains(i) && i != _index) _tabSlot(i),
+                    _tabSlot(_index),
+                  ],
+                ),
               ),
             ),
           ),
@@ -274,9 +281,9 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
   @override
   Widget build(BuildContext context) {
     final window = WindowClass.of(context);
-    _rail = window.wide;
-    _split = window == WindowClass.expanded;
-    // The rail does not cover anything, so a window that becomes wide shows the bars again.
+    // A landscape phone is too short for a bar along the bottom, whatever the layout setting.
+    _rail = window.wide || MediaQuery.orientationOf(context) == Orientation.landscape;
+    _split = window == WindowClass.expanded;    // The rail does not cover anything, so a window that becomes wide shows the bars again.
     if (_rail && !shellBarsVisible.value) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _rail) _setBarsVisible(true);
@@ -407,14 +414,11 @@ class _ComposeButton extends StatelessWidget {
         child: AnimatedOpacity(
           opacity: visible ? 1 : 0,
           duration: const Duration(milliseconds: 160),
-          child: InfChrome.of(context).pressable(
+          child: InfChrome.of(context).floatingButton(
             context,
-            child: InfChrome.of(context).floatingButton(
-              context,
-              tooltip: '发微博',
-              icon: const Icon(Icons.edit_rounded),
-              onPressed: onPressed,
-            ),
+            tooltip: '发微博',
+            icon: const Icon(Icons.edit_rounded),
+            onPressed: onPressed,
           ),
         ),
       ),
@@ -445,7 +449,6 @@ class _SideRail extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final padding = MediaQuery.paddingOf(context);
-    final liquid = InfLook.of(context).liquid;
     final tabColumn = Column(
       children: [
         for (var i = 0; i < tabs.length; i++)
@@ -456,55 +459,45 @@ class _SideRail extends StatelessWidget {
               tab: tabs[i],
               selected: i == index,
               badge: badges[i],
-              markGap: !liquid,
               onTap: () => onSelect(i),
             ),
           ),
       ],
     );
-    final items = SizedBox(
-      width: _panelWidth,
-      height: _itemHeight * tabs.length + 12,
-      child: liquid
-          ? Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: LiquidTabTrack(
-                count: tabs.length,
-                index: index,
-                onSelect: onSelect,
-                axis: Axis.vertical,
-                child: tabColumn,
+    final panel = InfLook.of(context).liquid
+        ? _liquidRail(context)
+        : InfChrome.of(context).floatingPanel(
+            context,
+            radius: BorderRadius.circular(26),
+            body: 0.16,
+            child: SizedBox(
+              width: _panelWidth,
+              height: _itemHeight * tabs.length + 12,
+              child: Stack(
+                children: [
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 240),
+                    curve: Curves.easeOutCubic,
+                    left: (_panelWidth - 18) / 2,
+                    top: 6 + index * _itemHeight + _itemHeight - 9,
+                    width: 18,
+                    height: 3,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(color: scheme.primary, borderRadius: BorderRadius.circular(2)),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: tabColumn,
+                  ),
+                ],
               ),
-            )
-          : Stack(
-            children: [
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 240),
-                curve: Curves.easeOutCubic,
-                left: (_panelWidth - 18) / 2,
-                top: 6 + index * _itemHeight + _itemHeight - 9,
-                width: 18,
-                height: 3,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(color: scheme.primary, borderRadius: BorderRadius.circular(2)),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: tabColumn,
-              ),
-            ],
-          ),
-    );
+            ),
+          );
     final column = Column(
       children: [
         const Spacer(),
-        InfChrome.of(context).floatingPanel(
-          context,
-          radius: BorderRadius.circular(26),
-          body: 0.16,
-          child: items,
-        ),
+        panel,
         const Spacer(),
       ],
     );
@@ -521,6 +514,45 @@ class _SideRail extends StatelessWidget {
       ),
     );
   }
+
+  /// The bottom bar's own glass, standing up: [GlassTabBar] lays itself out as the vertical capsule
+  /// it uses in a side strip. The capsule shows icons; a finger on it lifts a lens that follows
+  /// along, brings the labels out, and picks the tab under it on release.
+  Widget _liquidRail(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    // The strip's control is 48 wide, 12 in from the strip's inner edge: a strip this wide
+    // centres it in the rail.
+    const strip = (width + GlassVerticalBarMetrics.controlExtent) / 2 + GlassVerticalBarMetrics.inset;
+    return SizedBox(
+      width: width,
+      height: 12 + tabs.length * GlassVerticalBarMetrics.itemExtent,
+      child: GlassVerticalBar(
+        data: const GlassVerticalBarData(edge: GlassVerticalBarEdge.leading, width: strip, top: 0, bottom: 0),
+        child: GlassTabBar.bottom(
+          selectedIndex: index,
+          onTabSelected: onSelect,
+          selectedIconColor: scheme.primary,
+          unselectedIconColor: scheme.onSurfaceVariant,
+          iconSize: 24,
+          tabs: [
+            for (var i = 0; i < tabs.length; i++)
+              GlassTab(
+                icon: _badged(i, tabs[i].outline),
+                activeIcon: _badged(i, tabs[i].icon),
+                label: tabs[i].label,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _badged(int i, IconData icon) => Badge.count(
+        count: badges[i],
+        isLabelVisible: badges[i] > 0,
+        offset: const Offset(8, -3),
+        child: Icon(icon),
+      );
 }
 
 class _BottomBar extends StatelessWidget {
@@ -540,11 +572,17 @@ class _BottomBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final bottom = MediaQuery.paddingOf(context).bottom;
+    final padding = EdgeInsets.fromLTRB(16, 0, 16, bottom > 0 ? bottom : 10);
+    if (InfLook.of(context).liquid) {
+      return Padding(
+        padding: padding,
+        child: _LiquidBottomBar(index: index, tabs: tabs, badges: badges, onSelect: onSelect),
+      );
+    }
     final radius = BorderRadius.circular(26);
     // A short mark under the label, never a wash behind the icon and the word.
     // A tinted capsule sat on the glyphs and, once translucent, let the feed
     // show through them — worse under glass, where the blur stacked on top.
-    final liquid = InfLook.of(context).liquid;
     final row = Row(
       children: [
         for (var i = 0; i < tabs.length; i++)
@@ -553,7 +591,6 @@ class _BottomBar extends StatelessWidget {
               tab: tabs[i],
               selected: i == index,
               badge: badges[i],
-              markGap: !liquid,
               onTap: () => onSelect(i),
             ),
           ),
@@ -561,39 +598,123 @@ class _BottomBar extends StatelessWidget {
     );
     final items = SizedBox(
       height: 58,
-      child: liquid
-          ? LiquidTabTrack(count: tabs.length, index: index, onSelect: onSelect, child: row)
-          : LayoutBuilder(
-            builder: (context, constraints) {
-              final itemWidth = constraints.maxWidth / tabs.length;
-              return Stack(
-                children: [
-                  AnimatedPositioned(
-                    duration: const Duration(milliseconds: 240),
-                    curve: Curves.easeOutCubic,
-                    left: index * itemWidth + (itemWidth - 18) / 2,
-                    bottom: 6,
-                    width: 18,
-                    height: 3,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: scheme.primary,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final itemWidth = constraints.maxWidth / tabs.length;
+          return Stack(
+            children: [
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 240),
+                curve: Curves.easeOutCubic,
+                left: index * itemWidth + (itemWidth - 18) / 2,
+                bottom: 6,
+                width: 18,
+                height: 3,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: scheme.primary,
+                    borderRadius: BorderRadius.circular(2),
                   ),
-                  row,
-                ],
-              );
-            },
-          ),
+                ),
+              ),
+              row,
+            ],
+          );
+        },
+      ),
     );
     return Padding(
-      padding: EdgeInsets.fromLTRB(16, 0, 16, bottom > 0 ? bottom : 10),
+      padding: padding,
       // Small glyphs need a thicker frost than a title does.
       child: InfChrome.of(context).floatingPanel(context, radius: radius, body: 0.16, child: items),
     );
   }
+}
+
+/// The bar of the other styles, drawn by [GlassTabBar]: the same 58 high and inset. The bar picks
+/// a tab as the finger lands, and its glass goes there at once; the shell only follows once the
+/// finger lifts. A drag along the bar picks its tab when the drag ends, after the finger is up.
+class _LiquidBottomBar extends StatefulWidget {
+  const _LiquidBottomBar({required this.index, required this.tabs, required this.badges, required this.onSelect});
+
+  final int index;
+  final List<({String label, IconData icon, IconData outline})> tabs;
+  final List<int> badges;
+  final ValueChanged<int> onSelect;
+
+  @override
+  State<_LiquidBottomBar> createState() => _LiquidBottomBarState();
+}
+
+class _LiquidBottomBarState extends State<_LiquidBottomBar> {
+  bool _down = false;
+
+  /// The tab picked under a finger that is still down: the bar shows it, the shell has not gone.
+  int? _pending;
+
+  @override
+  void didUpdateWidget(_LiquidBottomBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.index != oldWidget.index && !_down) _pending = null;
+  }
+
+  void _picked(int index) {
+    if (_down) {
+      setState(() => _pending = index);
+    } else {
+      _pending = null;
+      widget.onSelect(index);
+    }
+  }
+
+  void _lifted() {
+    _down = false;
+    // A drag ends after the pointer is up, in the same event: let it pick its own tab first.
+    scheduleMicrotask(() {
+      final pending = _pending;
+      if (pending == null || !mounted) return;
+      setState(() => _pending = null);
+      widget.onSelect(pending);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Listener(
+      onPointerDown: (_) => _down = true,
+      onPointerUp: (_) => _lifted(),
+      onPointerCancel: (_) => setState(() {
+        _down = false;
+        _pending = null;
+      }),
+      child: GlassTabBar.bottom(
+        barHeight: 58,
+        horizontalPadding: 0,
+        verticalPadding: 0,
+        selectedIndex: _pending ?? widget.index,
+        onTabSelected: _picked,
+        selectedIconColor: scheme.primary,
+        selectedLabelColor: scheme.primary,
+        iconSize: 22,
+        tabs: [
+          for (var i = 0; i < widget.tabs.length; i++)
+            GlassTab(
+              icon: _badged(i, widget.tabs[i].outline),
+              activeIcon: _badged(i, widget.tabs[i].icon),
+              label: widget.tabs[i].label,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _badged(int i, IconData icon) => Badge.count(
+        count: widget.badges[i],
+        isLabelVisible: widget.badges[i] > 0,
+        offset: const Offset(8, -3),
+        child: Icon(icon),
+      );
 }
 
 class _BarItem extends StatelessWidget {
@@ -602,16 +723,12 @@ class _BarItem extends StatelessWidget {
     required this.selected,
     required this.badge,
     required this.onTap,
-    this.markGap = true,
   });
 
   final ({String label, IconData icon, IconData outline}) tab;
   final bool selected;
   final int badge;
   final VoidCallback onTap;
-
-  /// Room under the label for the selection mark; liquid glass marks with a drop instead.
-  final bool markGap;
 
   @override
   Widget build(BuildContext context) {
@@ -621,7 +738,7 @@ class _BarItem extends StatelessWidget {
       onTap: onTap,
       child: Padding(
         // Clears the mark that sits on the bottom edge of the bar.
-        padding: EdgeInsets.only(bottom: markGap ? 8 : 0),
+        padding: const EdgeInsets.only(bottom: 8),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart' show LiquidGlassWidgets;
 
 import 'app.dart';
 import 'core/emoji.dart';
-import 'core/liquid_glass.dart';
 import 'core/native.dart';
 import 'core/page_cache.dart';
 import 'core/perf_log.dart';
@@ -13,7 +13,13 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   Touches.ensureInitialized();
   PerfLog.start();
-  await Future.wait([Prefs.instance.init(), PageCache.instance.init(), LiquidShader.load(), Native.init()]);
+  await Future.wait([
+    Prefs.instance.init(),
+    PageCache.instance.init(),
+    LiquidGlassWidgets.initialize(enablePerformanceMonitor: false),
+    Native.init(),
+  ]);
   EmojiStore.instance.init();
-  runApp(const InfApp());
+  // Glass follows the app's own light/dark setting, not the system's.
+  runApp(LiquidGlassWidgets.wrap(brightnessResolver: Theme.maybeBrightnessOf, child: const InfApp()));
 }

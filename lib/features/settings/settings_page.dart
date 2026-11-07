@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
+    show GlassButton, GlassContainer, LiquidRoundedSuperellipse;
 import 'package:path_provider/path_provider.dart';
 
 import '../../core/haptics.dart';
@@ -487,7 +489,7 @@ class _GlassPreview extends StatelessWidget {
   }
 }
 
-/// Refraction and clarity of liquid glass, over a preview that follows the sliders live.
+/// Refraction, clarity and shine of liquid glass, over a preview that follows the sliders live.
 class _LiquidTuner extends StatefulWidget {
   const _LiquidTuner();
 
@@ -498,8 +500,12 @@ class _LiquidTuner extends StatefulWidget {
 class _LiquidTunerState extends State<_LiquidTuner> {
   late double _refraction = Prefs.instance.liquidRefraction ?? InfLook.defaultRefraction;
   late double _clarity = Prefs.instance.liquidClarity ?? InfLook.defaultLiquidClarity;
+  late double _shine = Prefs.instance.liquidShine ?? InfLook.defaultLiquidShine;
 
-  bool get _isDefault => _refraction == InfLook.defaultRefraction && _clarity == InfLook.defaultLiquidClarity;
+  bool get _isDefault =>
+      _refraction == InfLook.defaultRefraction &&
+      _clarity == InfLook.defaultLiquidClarity &&
+      _shine == InfLook.defaultLiquidShine;
 
   @override
   Widget build(BuildContext context) {
@@ -508,6 +514,7 @@ class _LiquidTunerState extends State<_LiquidTuner> {
       style: VisualStyle.liquid,
       refraction: _refraction,
       liquidClarity: _clarity,
+      liquidShine: _shine,
     );
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
@@ -516,16 +523,8 @@ class _LiquidTunerState extends State<_LiquidTuner> {
         children: [
           Theme(
             data: theme.copyWith(extensions: [look]),
-            child: const _LiquidPreview(),
+            child: const LiquidGlassTheme(child: _LiquidPreview()),
           ),
-          if (!LiquidShader.available)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                '这台设备的图形引擎不支持透镜折射，液态玻璃以高光边缘和轻磨砂代替。',
-                style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-              ),
-            ),
           const SizedBox(height: 6),
           _TunerSlider(
             title: '折射',
@@ -543,6 +542,14 @@ class _LiquidTunerState extends State<_LiquidTuner> {
             onChanged: (v) => setState(() => _clarity = v),
             onChangeEnd: (v) => Prefs.instance.setLiquid(clarity: v),
           ),
+          _TunerSlider(
+            title: '高光',
+            low: '柔和',
+            high: '明亮',
+            value: _shine,
+            onChanged: (v) => setState(() => _shine = v),
+            onChangeEnd: (v) => Prefs.instance.setLiquid(shine: v),
+          ),
           Align(
             alignment: Alignment.centerRight,
             child: TextButton(
@@ -552,6 +559,7 @@ class _LiquidTunerState extends State<_LiquidTuner> {
                       setState(() {
                         _refraction = InfLook.defaultRefraction;
                         _clarity = InfLook.defaultLiquidClarity;
+                        _shine = InfLook.defaultLiquidShine;
                       });
                       Prefs.instance.resetLiquid();
                     },
@@ -564,8 +572,7 @@ class _LiquidTunerState extends State<_LiquidTuner> {
   }
 }
 
-/// A liquid bar and a floating capsule over colourful sample content. The capsule answers a
-/// press the way the tab bar does.
+/// A floating glass panel and a glass button over colourful sample content.
 class _LiquidPreview extends StatelessWidget {
   const _LiquidPreview();
 
@@ -591,7 +598,7 @@ class _LiquidPreview extends StatelessWidget {
         child: Stack(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(14, 30, 14, 14),
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -599,7 +606,7 @@ class _LiquidPreview extends StatelessWidget {
                   Row(children: [tile(scheme.primary), tile(scheme.secondary), tile(scheme.tertiary)]),
                   const SizedBox(height: 8),
                   Text(
-                    '透镜把栏边缘外的内容折进来，折射越强，边缘弯得越明显；越通透，中间越清楚。',
+                    '玻璃折射它下面的内容：折射越强，边缘弯得越明显；越通透，玻璃越薄越清楚；高光是边缘的亮线。发微博按钮跟着一起变。',
                     style: theme.textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 10),
@@ -608,39 +615,36 @@ class _LiquidPreview extends StatelessWidget {
               ),
             ),
             Positioned(
-              left: 0,
-              right: 0,
-              top: 0,
-              height: 58,
-              child: LiquidSurface(
-                lens: const LiquidLens(bezel: 14, edges: LiquidEdges.bottomOnly),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text('首页', style: theme.appBarTheme.titleTextStyle),
-                  ),
-                ),
+              left: 24,
+              top: 30,
+              width: 150,
+              height: 64,
+              child: GlassContainer(
+                useOwnLayer: true,
+                shape: const LiquidRoundedSuperellipse(borderRadius: 24),
+                child: Center(child: Text('首页', style: theme.textTheme.titleMedium)),
+              ),
+            ),
+            Positioned(
+              right: 18,
+              top: 22,
+              child: InfChrome.of(context).floatingButton(
+                context,
+                tooltip: '发微博',
+                icon: const Icon(Icons.edit_rounded),
+                onPressed: (_) {},
               ),
             ),
             Positioned(
               right: 14,
               bottom: 12,
-              child: LiquidPress(
-                child: LiquidSurface(
-                  borderRadius: BorderRadius.circular(22),
-                  lifted: true,
-                  child: SizedBox(
-                    width: 132,
-                    height: 44,
-                    child: Center(
-                      child: Text(
-                        '按住试试',
-                        style: theme.textTheme.labelLarge?.copyWith(color: scheme.onSurface),
-                      ),
-                    ),
-                  ),
-                ),
+              child: GlassButton.custom(
+                useOwnLayer: true,
+                width: 132,
+                height: 44,
+                shape: const LiquidRoundedSuperellipse(borderRadius: 22),
+                onTap: () {},
+                child: Text('按住试试', style: theme.textTheme.labelLarge?.copyWith(color: scheme.onSurface)),
               ),
             ),
           ],

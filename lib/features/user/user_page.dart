@@ -123,15 +123,14 @@ class _UserPageState extends State<UserPage> {
       appBar: AppBar(
         flexibleSpace: lookBarBackground(context),
         title: Text(profile?.user.screenName ?? widget.uid, maxLines: 1, overflow: TextOverflow.ellipsis),
-        actions: [
+        actions: InfChrome.of(context).barActions(context, [
           if (profile != null)
             IconButton(
               onPressed: () => shareText(userShareText(profile.user)),
               tooltip: '分享主页',
               icon: const Icon(Icons.ios_share_rounded),
             ),
-          const SizedBox(width: 4),
-        ],
+        ]),
       ),
       body: StateSwitcher(
         child: Builder(

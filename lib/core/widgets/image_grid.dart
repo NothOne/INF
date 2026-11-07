@@ -4,6 +4,7 @@ import '../../core/image_prefetch.dart';
 import '../../core/image_url.dart';
 import '../../core/models.dart';
 import 'smart_image.dart';
+import 'viewer_hero.dart';
 
 /// What a grid cell shows. A lone picture is drawn several times larger than a grid cell, so it
 /// asks sinaimg for the 690px rendition instead of the 360px thumbnail — except for GIFs (other
@@ -170,11 +171,7 @@ class _Cell extends StatelessWidget {
       );
     }
     if (heroTag != null) {
-      cell = Hero(
-        tag: heroTag!,
-        transitionOnUserGestures: true,
-        child: Material(color: Colors.transparent, child: cell),
-      );
+      cell = ViewerHero(tag: heroTag!, transitionOnUserGestures: true, child: cell);
     }
     return cell;
   }

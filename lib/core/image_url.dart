@@ -12,6 +12,13 @@ String secureUrl(String? value) {
   return url;
 }
 
+/// Weibo's video CDN signs each address with an `Expires` time (Unix seconds); past it the CDN
+/// answers 403. Unsigned addresses never expire.
+bool signedUrlExpired(String url, DateTime now) {
+  final expires = int.tryParse(Uri.tryParse(url)?.queryParameters['Expires'] ?? '');
+  return expires != null && expires * 1000 <= now.millisecondsSinceEpoch;
+}
+
 /// sinaimg wants Weibo as the referrer; other sites' covers in link cards (Bilibili's hdslb.com)
 /// refuse exactly that one, so they get none.
 Map<String, String> weiboImageHeaders([String? url]) {

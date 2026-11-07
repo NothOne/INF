@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/api.dart';
 import '../../core/layout.dart';
+import '../../core/look.dart';
 import '../../core/models.dart';
 import '../../core/navigation.dart';
 import '../../core/paging.dart';
@@ -34,7 +35,6 @@ class _MessagePageState extends State<MessagePage> with SingleTickerProviderStat
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       backgroundColor: Colors.transparent,
       // The bar keeps its height when it leaves; the list is padded by it below instead.
@@ -43,15 +43,14 @@ class _MessagePageState extends State<MessagePage> with SingleTickerProviderStat
         child: AppBar(
           title: const Text('私信'),
           bottom: PreferredSize(
-            preferredSize: const Size.fromHeight(47),
+            preferredSize: const Size.fromHeight(InfChrome.barTabsHeight),
             child: ContentColumn(
-              child: TabBar(
+              child: InfChrome.of(context).barTabs(
+                context,
                 controller: _tabs,
-                indicatorSize: TabBarIndicatorSize.label,
-                dividerColor: scheme.outlineVariant.withValues(alpha: 0.4),
-                tabs: const [
-                  Tab(height: 46, child: Text('关注的人', style: TextStyle(fontSize: 13.5))),
-                  Tab(height: 46, child: Text('未关注人', style: TextStyle(fontSize: 13.5))),
+                labels: const [
+                  Text('关注的人', style: TextStyle(fontSize: 13.5)),
+                  Text('未关注人', style: TextStyle(fontSize: 13.5)),
                 ],
               ),
             ),

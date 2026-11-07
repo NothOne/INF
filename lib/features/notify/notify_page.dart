@@ -40,7 +40,6 @@ class _NotifyPageState extends State<NotifyPage> with SingleTickerProviderStateM
     return AnimatedBuilder(
       animation: UnreadMonitor.instance,
       builder: (context, _) {
-        final scheme = Theme.of(context).colorScheme;
         final counts = UnreadMonitor.instance.counts;
         return Scaffold(
           backgroundColor: Colors.transparent,
@@ -50,28 +49,24 @@ class _NotifyPageState extends State<NotifyPage> with SingleTickerProviderStateM
             child: AppBar(
               title: const Text('通知'),
               bottom: PreferredSize(
-                preferredSize: const Size.fromHeight(47),
+                preferredSize: const Size.fromHeight(InfChrome.barTabsHeight),
                 child: Material(
                   color: Colors.transparent,
-                  child: ContentColumn(child: TabBar(
+                  child: ContentColumn(child: InfChrome.of(context).barTabs(
+                    context,
                     controller: _tabs,
-                    indicatorSize: TabBarIndicatorSize.label,
-                    dividerColor: scheme.outlineVariant.withValues(alpha: 0.4),
                     labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-                    tabs: [
+                    labels: [
                       for (final kind in NotificationKind.values)
-                        Tab(
-                          height: 46,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(kind.label, style: const TextStyle(fontSize: 13.5)),
-                              if (counts.of(kind) > 0) ...[
-                                const SizedBox(width: 4),
-                                CountBadge(count: counts.of(kind)),
-                              ],
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(kind.label, style: const TextStyle(fontSize: 13.5)),
+                            if (counts.of(kind) > 0) ...[
+                              const SizedBox(width: 4),
+                              CountBadge(count: counts.of(kind)),
                             ],
-                          ),
+                          ],
                         ),
                     ],
                   )),

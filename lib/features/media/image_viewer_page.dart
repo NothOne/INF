@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -15,6 +16,7 @@ import '../../core/share.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/image_grid.dart';
 import '../../core/widgets/smart_image.dart';
+import '../../core/widgets/viewer_hero.dart';
 import 'video_surface.dart';
 
 class ImageViewerPage extends StatefulWidget {
@@ -22,12 +24,14 @@ class ImageViewerPage extends StatefulWidget {
     super.key,
     required this.images,
     this.initialIndex = 0,
-    this.heroTag,
+    required this.heroTags,
   });
 
   final List<Media> images;
   final int initialIndex;
-  final String? heroTag;
+
+  /// Per page, the [ViewerHero] it flies back to; see [viewerHeroTags].
+  final List<String?> heroTags;
 
   @override
   State<ImageViewerPage> createState() => _ImageViewerPageState();
@@ -56,6 +60,8 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
   final ValueNotifier<int> _liveReplay = ValueNotifier<int>(0);
   final ValueNotifier<bool> _livePlaying = ValueNotifier<bool>(false);
 
+  Animation<double>? _route;
+
   @override
   void initState() {
     super.initState();
@@ -66,7 +72,23 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context)?.animation;
+    if (route == _route) return;
+    _route?.removeStatusListener(_onRouteStatus);
+    _route = route?..addStatusListener(_onRouteStatus);
+  }
+
+  /// Cleared on the frame the closing flight lands: [dispose] comes a frame later, with the tree
+  /// locked.
+  void _onRouteStatus(AnimationStatus status) {
+    if (status == AnimationStatus.dismissed) ViewerHero.showing.value = null;
+  }
+
+  @override
   void dispose() {
+    _route?.removeStatusListener(_onRouteStatus);
     _pages.dispose();
     _backdrop.dispose();
     _liveReplay.dispose();
@@ -268,22 +290,8 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
     );
   }
 
-  String? _heroTagFor(int index) {
-    final tag = widget.heroTag;
-    if (tag == null) return null;
-    if (tag.startsWith('link-img-')) {
-      return index == widget.initialIndex ? tag : null;
-    }
-    final match = RegExp(r'^(.*)-(\d+)$').firstMatch(tag);
-    if (match == null) return index == widget.initialIndex ? tag : null;
-    return match.group(1)! + '-' + index.toString();
-  }
-
   @override
   Widget build(BuildContext context) {
-    if (widget.images.isEmpty) {
-      return const Scaffold(backgroundColor: Colors.black);
-    }
     final routeAnimation = ModalRoute.of(context)?.animation ?? const AlwaysStoppedAnimation<double>(1);
     final fade = Listenable.merge([routeAnimation, _backdrop]);
     double opacity() => (routeAnimation.value * _backdrop.value).clamp(0.0, 1.0);
@@ -303,6 +311,7 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
             itemCount: widget.images.length,
             onPageChanged: (index) {
               setState(() => _index = index);
+              ViewerHero.showing.value = widget.heroTags[index];
               _livePlaying.value = false;
               _precacheAround(index);
             },
@@ -316,7 +325,7 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
                 onLivePlaying: (playing) => _livePlaying.value = playing,
                 // Only the visible page may fly home; a neighbour the pager keeps alive would
                 // otherwise launch from off screen.
-                heroTag: index == _index ? _heroTagFor(index) : null,
+                heroTag: index == _index ? widget.heroTags[index] : null,
                 onLongPress: () => _showActions(index),
                 onToggleTools: () {
                   setState(() => _tools = !_tools);
@@ -416,6 +425,35 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
       ),
     );
   }
+}
+
+/// Where a picture of width/height [ratio] sits on [screen]. A picture taller than a portrait
+/// screen is long: it scrolls in a column as wide as the screen's short side, so a tablet does
+/// not blow it up to its full width, least of all in landscape. Anything else fits whole; an
+/// unknown [ratio] (0) fills the screen.
+({bool long, Size box}) viewerPictureBox(Size screen, double ratio) {
+  if (ratio <= 0) return (long: false, box: screen);
+  final column = screen.shortestSide;
+  if (ratio < screen.shortestSide / screen.longestSide && column / ratio > screen.height) {
+    return (long: true, box: Size(column, column / ratio));
+  }
+  final fitWidth = Size(screen.width, screen.width / ratio);
+  return (long: false, box: fitWidth.height > screen.height ? Size(screen.height * ratio, screen.height) : fitWidth);
+}
+
+/// The width to decode a [width]×[height] picture at, or null for its own size. Impeller clamps a
+/// decode to the GPU's largest texture ([maxTexture]; 8192 on HarmonyOS tablets) one side at a
+/// time, which squashes a long picture rather than scaling it, so a picture taller than that is
+/// asked for narrower, keeping its shape. An [original] can be tens of megapixels; past 4096 wide
+/// the extra decode buys no visible detail even at full zoom, only memory.
+int? viewerDecodeWidth({required int width, required int height, required bool original, required int maxTexture}) {
+  if (width <= 0 || height <= 0) return null;
+  var decode = width;
+  if (original) decode = math.min(decode, 4096);
+  // Headroom: the API's size can be off by a few pixels from the file's.
+  final fit = maxTexture * 0.95;
+  if (decode * height / width > fit) decode = (fit * width / height).floor();
+  return decode < width ? decode : null;
 }
 
 /// One page of the viewer. The Hero wraps exactly the picture's on-screen box and every drag or
@@ -688,11 +726,12 @@ class _ZoomableImageState extends State<_ZoomableImage> with TickerProviderState
   /// While switching to the original, the picture already on screen stays underneath.
   String get _underlay => _upgraded ? widget.image.url : _preview;
 
-  /// Originals can be tens of megapixels; past this width the extra decode buys no visible detail
-  /// even at full zoom, only memory.
-  static const int _maxDecodeWidth = 4096;
-
-  int? get _cacheWidth => _upgraded && widget.image.width > _maxDecodeWidth ? _maxDecodeWidth : null;
+  int? get _cacheWidth => viewerDecodeWidth(
+        width: widget.image.width,
+        height: widget.image.height,
+        original: _upgraded,
+        maxTexture: Native.isOhos ? 8192 : 16384,
+      );
 
   Widget _picture({double? width, double? height, required BoxFit fit}) {
     Widget picture = SmartImage(
@@ -757,62 +796,55 @@ class _ZoomableImageState extends State<_ZoomableImage> with TickerProviderState
   @override
   Widget build(BuildContext context) {
     final screen = MediaQuery.sizeOf(context);
-    final long = _ratio > 0 && screen.width / _ratio > screen.height;
+    final (:long, :box) = viewerPictureBox(screen, _ratio);
     final routeAnimation = ModalRoute.of(context)?.animation ?? const AlwaysStoppedAnimation<double>(1);
 
-    final Widget heroed;
+    final Widget hero;
     final VoidCallback onDoubleTap;
     if (long) {
-      final length = screen.width / _ratio;
-      onDoubleTap = () => _toggleZoom(screen, Offset.zero & screen, 2);
-      heroed = _hero(
-        InteractiveViewer(
-          transformationController: _transform,
-          minScale: 1,
-          maxScale: _maxScale,
-          panEnabled: _zoomed,
-          onInteractionEnd: _onInteractionEnd,
-          child: SingleChildScrollView(
+      final column = Rect.fromLTWH((screen.width - box.width) / 2, 0, box.width, screen.height);
+      onDoubleTap = () => _toggleZoom(screen, column, (screen.width / box.width).clamp(2.0, _maxScale));
+      hero = SizedBox(
+        width: box.width,
+        height: screen.height,
+        child: _hero(
+          SingleChildScrollView(
             controller: _scroll,
             // Scrolling is driven by the page's own drag so it can hand over to drag-to-close;
             // the parent physics still shapes the fling.
             physics: const NeverScrollableScrollPhysics(parent: ClampingScrollPhysics()),
-            child: _picture(width: screen.width, height: length, fit: BoxFit.cover),
+            child: _picture(width: box.width, height: box.height, fit: BoxFit.cover),
           ),
+          fit: BoxFit.cover,
+          // Start the flight showing the slice that is on screen, not the top of the picture.
+          flightAlignment: () {
+            final travel = box.height - screen.height;
+            if (!_scroll.hasClients || travel <= 0) return -1;
+            return (_scroll.offset / travel * 2 - 1).clamp(-1.0, 1.0);
+          },
         ),
-        fit: BoxFit.cover,
-        // Start the flight showing the slice that is on screen, not the top of the picture.
-        flightAlignment: () {
-          final travel = length - screen.height;
-          if (!_scroll.hasClients || travel <= 0) return -1;
-          return (_scroll.offset / travel * 2 - 1).clamp(-1.0, 1.0);
-        },
       );
     } else {
       final known = _ratio > 0;
-      final box = known ? Size(screen.width, screen.width / _ratio) : screen;
       final content = Rect.fromCenter(center: screen.center(Offset.zero), width: box.width, height: box.height);
-      final fill = (screen.height / box.height).clamp(2.0, _maxScale);
+      final fill = math.max(screen.width / box.width, screen.height / box.height).clamp(2.0, _maxScale);
       onDoubleTap = () => _toggleZoom(screen, content, fill);
-      heroed = InteractiveViewer(
-        transformationController: _transform,
-        minScale: 1,
-        maxScale: _maxScale,
-        panEnabled: _zoomed,
-        onInteractionEnd: _onInteractionEnd,
-        child: SizedBox.expand(
-          child: Center(
-            child: SizedBox.fromSize(
-              size: box,
-              child: _hero(
-                _picture(width: box.width, height: box.height, fit: known ? BoxFit.cover : BoxFit.contain),
-                fit: known ? BoxFit.cover : BoxFit.contain,
-              ),
-            ),
-          ),
+      hero = SizedBox.fromSize(
+        size: box,
+        child: _hero(
+          _picture(width: box.width, height: box.height, fit: known ? BoxFit.cover : BoxFit.contain),
+          fit: known ? BoxFit.cover : BoxFit.contain,
         ),
       );
     }
+    final heroed = InteractiveViewer(
+      transformationController: _transform,
+      minScale: 1,
+      maxScale: _maxScale,
+      panEnabled: _zoomed,
+      onInteractionEnd: _onInteractionEnd,
+      child: SizedBox.expand(child: Center(child: hero)),
+    );
 
     final canDrag = !_zoomed && (!_multiTouch || _dragging);
     final page = GestureDetector(

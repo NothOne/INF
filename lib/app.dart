@@ -4,6 +4,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'core/api.dart';
 import 'core/layout.dart';
+import 'core/liquid_glass.dart';
 import 'core/look.dart';
 import 'core/native.dart';
 import 'core/navigation.dart';
@@ -11,6 +12,7 @@ import 'core/prefs.dart';
 import 'core/session.dart';
 import 'core/theme.dart';
 import 'core/unread_monitor.dart';
+import 'core/widgets/covered_snapshot.dart';
 import 'features/shell/root_shell.dart';
 
 class InfApp extends StatefulWidget {
@@ -26,6 +28,7 @@ typedef _Appearance = ({
   double? clarity,
   double? refraction,
   double? liquidClarity,
+  double? liquidShine,
   AccentTheme accent,
   ThemeMode mode,
   double textScale,
@@ -38,6 +41,7 @@ _Appearance _appearanceOf(Prefs prefs) => (
       clarity: prefs.glassClarity,
       refraction: prefs.liquidRefraction,
       liquidClarity: prefs.liquidClarity,
+      liquidShine: prefs.liquidShine,
       accent: prefs.accent,
       mode: prefs.themeMode,
       textScale: prefs.textScale,
@@ -84,6 +88,7 @@ class _InfAppState extends State<InfApp> {
       clarity: appearance.clarity ?? InfLook.defaultClarity,
       refraction: appearance.refraction ?? InfLook.defaultRefraction,
       liquidClarity: appearance.liquidClarity ?? InfLook.defaultLiquidClarity,
+      liquidShine: appearance.liquidShine ?? InfLook.defaultLiquidShine,
     );
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
@@ -128,11 +133,14 @@ class _InfAppState extends State<InfApp> {
           ),
           child: MediaQuery(
             data: media.copyWith(textScaler: TextScaler.linear(appearance.textScale)),
-            child: InfLayout(device: appearance.layout, child: child ?? const SizedBox.shrink()),
+            child: InfLayout(
+              device: appearance.layout,
+              child: LiquidGlassTheme(child: child ?? const SizedBox.shrink()),
+            ),
           ),
         );
       },
-      home: const RootShell(),
+      home: const CoveredSnapshot(child: RootShell()),
     );
   }
 }

@@ -225,14 +225,13 @@ class FeedPageState extends State<FeedPage> {
                   },
                 ),
               ),
-              actions: [
+              actions: InfChrome.of(context).barActions(context, [
                 IconButton(
                   onPressed: () => openSearch(context),
                   tooltip: '搜索',
                   icon: const Icon(Icons.search_rounded),
                 ),
-                const SizedBox(width: 4),
-              ],
+              ]),
             ),
           ),
           body: PageView(
@@ -1101,7 +1100,12 @@ class _TimelineState extends State<_Timeline> {
               onOpenUrl: (url) => openLink(context, url),
               onOpenMedia: (media, mediaIndex, heroTag) {
                 if (media[mediaIndex].kind == MediaKind.video) {
-                  openVideo(context, media[mediaIndex].url, coverUrl: media[mediaIndex].previewUrl);
+                  openVideo(
+                    context,
+                    media[mediaIndex].url,
+                    coverUrl: media[mediaIndex].previewUrl,
+                    statusId: status.id,
+                  );
                 } else {
                   openImage(context, media: media, index: mediaIndex, heroTag: heroTag);
                 }

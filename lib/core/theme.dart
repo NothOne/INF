@@ -62,6 +62,7 @@ ThemeData infTheme(Brightness brightness, AccentTheme accent, [InfLook look = In
       },
     ),
     colorScheme: scheme,
+    actionIconTheme: InfChrome.forLook(look).actionIconTheme,
     scaffoldBackgroundColor: Colors.transparent,
     canvasColor: scheme.surface,
     splashFactory: InkSparkle.splashFactory,

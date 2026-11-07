@@ -46,14 +46,17 @@ class _WebPageState extends State<WebPage> {
         if (error.isForMainFrame == true && mounted) setState(() => _failed = true);
       },
       // A bad certificate is reported here, not as a resource error. Only Android says which
-      // URL it was for; a failing subresource must not cover a page that loaded.
-      onSslAuthError: (error) {
-        error.cancel();
-        final platform = error.platform;
-        if (platform is! AndroidSslAuthError) return;
-        final host = Uri.tryParse(platform.url)?.host;
-        if (host != null && host == Uri.tryParse(_target)?.host && mounted) setState(() => _failed = true);
-      },
+      // URL it was for; a failing subresource must not cover a page that loaded. The HarmonyOS
+      // port does not implement it, and setting it there throws while the page builds.
+      onSslAuthError: Native.isOhos
+          ? null
+          : (error) {
+              error.cancel();
+              final platform = error.platform;
+              if (platform is! AndroidSslAuthError) return;
+              final host = Uri.tryParse(platform.url)?.host;
+              if (host != null && host == Uri.tryParse(_target)?.host && mounted) setState(() => _failed = true);
+            },
       onNavigationRequest: (request) {
         final uri = Uri.tryParse(request.url);
         final scheme = uri?.scheme.toLowerCase() ?? '';

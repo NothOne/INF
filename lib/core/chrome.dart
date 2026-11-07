@@ -35,6 +35,31 @@ abstract class InfChrome {
   /// The AppBar's `flexibleSpace`.
   Widget? barBackground(BuildContext context);
 
+  /// The theme's back and close buttons; null keeps Material's.
+  ActionIconThemeData? get actionIconTheme => null;
+
+  /// A top bar's trailing buttons, with the gap after them.
+  List<Widget> barActions(BuildContext context, List<Widget> actions) => [...actions, const SizedBox(width: 4)];
+
+  /// Height of [barTabs], for the AppBar's `bottom`.
+  static const barTabsHeight = 47.0;
+
+  /// The row of tabs under a top bar's title.
+  Widget barTabs(
+    BuildContext context, {
+    required TabController controller,
+    required List<Widget> labels,
+    EdgeInsetsGeometry? labelPadding,
+  }) {
+    return TabBar(
+      controller: controller,
+      indicatorSize: TabBarIndicatorSize.label,
+      dividerColor: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4),
+      labelPadding: labelPadding,
+      tabs: [for (final label in labels) Tab(height: barTabsHeight - 1, child: label)],
+    );
+  }
+
   /// What every page is laid on (see `PaperBackground`).
   Widget backdrop(BuildContext context, {required Widget child});
 
@@ -58,9 +83,6 @@ abstract class InfChrome {
   /// [color] at [alpha] for a small surface (a quote box, a pill, a field). Classic flattens it
   /// onto the page colour, so nothing behind it ever shows through.
   Color fill(ColorScheme scheme, Color color, double alpha);
-
-  /// A control that answers a press with its own give (liquid glass swells and springs back).
-  Widget pressable(BuildContext context, {required Widget child}) => child;
 
   /// A round button floating over the page, such as 发微博. [onPressed] gets the button's own
   /// context, which the page it opens grows out of.
@@ -105,7 +127,7 @@ abstract class InfChrome {
   }
 
   /// The transient message at the bottom of the page (see `showMessage`). Classic and glass keep
-  /// the theme's inverse bar; liquid gives it a pane of dark glass.
+  /// the theme's inverse bar; liquid draws it as dark glass.
   SnackBar snackBar(BuildContext context, Widget content) => SnackBar(content: content);
 
   /// How sheets rise; null keeps the sheet's own motion.
