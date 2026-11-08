@@ -67,7 +67,7 @@ Flutter SDK 在工作区外（`../.tools/flutter`），运行时要写它的 `bi
 ## Git
 
 - 在 `dev` 上开发，发布合到 `main`。提交信息用英文，一句话说清这次改了什么（参照 `git log`）。
-- 只推 `main` 和标签，不推 `dev`：`dev` 只在本地，远端只保留发布历史。要同步时把 `dev` 的工作区内容在 `main` 上提交成一次快照提交（`main` 和 `dev` 是两条没有共同祖先的历史，main 被重写过，直接 merge 会拉进一堆重复提交），用 `git checkout main && git checkout dev -- . && git commit`。
+- 只推 `main` 和标签，不推 `dev`：`dev` 只在本地，远端只保留发布历史。`main` 是 `dev` 的祖先（`dev` 上有一个把 `main` 合进来的 merge 提交），要同步时在 `main` 上做快照提交，保持 `main` 一条直线：`git checkout main && git merge --squash dev && git commit`。不要 rebase `dev` 到 `main`，两条历史的内容早已一致，重放 60 多个提交只会撞出一堆冲突。
 - 发版：在 `main` 上打与版本号同名的附注标签（`git tag -a 1.5.0 -m "标题" -m "正文"`）再推标签，`release.yml` 会自动编译 APK 和 HAP 并发 Release。标签名与版本号不一致会直接失败。标签正文原样成为 Release 说明，所以正文要写这个项目整体有什么功能，而不只是本次改了什么。细节见 `README.md`「打标签发版」。
 - 不提交：`.tools/`、`build/`、APK、`android/local.properties`、`android/app/debug.keystore`、日志、截图录屏、Cookie 文件。
 - 不要推送或改动远端，除非用户明确要求。
