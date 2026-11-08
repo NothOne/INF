@@ -209,6 +209,70 @@ class WeiboApi {
 
   Future<User?> user(String uid) async => (await userProfile(uid))?.user;
 
+  /// The sections weibo.com shows on someone's page; the usual four when it does not answer.
+  Future<ProfileExtras> profileExtras(String uid) async {
+    Future<dynamic> visit(String path) => _asVisitor((cookie) => _getPublic(
+          'https://weibo.com/ajax/profile/$path',
+          query: {'uid': uid},
+          referer: 'https://weibo.com/u/$uid',
+          cookie: cookie,
+        ));
+    final detail = visit('detail').then<dynamic>((data) => data, onError: (_) => null);
+    try {
+      return parseProfileExtras(await visit('info'), await detail);
+    } catch (_) {
+      return parseProfileExtras(null, await detail);
+    }
+  }
+
+  /// 精选: what weibo.com calls the account's 热门内容.
+  Future<PageResult<Status>> profileFeatured(String uid, String? cursor) =>
+      _profileContainer(uid, '231002${uid}_-_HOTMBLOG', cursor);
+
+  /// The 微博 tab narrowed to originals, pictures, videos or articles; [ProfilePostFilter.all] is
+  /// [userTimeline].
+  Future<PageResult<Status>> profilePosts(String uid, String suffix, String? cursor) =>
+      _profileContainer(uid, '230413${uid}_-_WEIBO_SECOND_PROFILE_WEIBO${suffix.isEmpty ? '' : '_$suffix'}', cursor);
+
+  /// weibo.com's `profile/feature` hands a visitor m.weibo.cn's profile containers, paged by number.
+  Future<PageResult<Status>> _profileContainer(String uid, String containerId, String? cursor) async {
+    final page = int.tryParse(cursor ?? '') ?? 1;
+    final data = await _asVisitor((cookie) => _getPublic(
+          'https://weibo.com/ajax/profile/feature',
+          query: {'containerid': containerId, if (page > 1) 'page': '$page'},
+          referer: 'https://weibo.com/u/$uid',
+          cookie: cookie,
+        ));
+    return parseContainerStatuses(data, page);
+  }
+
+  Future<PageResult<Status>> profileVideos(String uid, String? cursor) async => parseCursorStatuses(await _asVisitor(
+        (cookie) => _getPublic(
+          'https://weibo.com/ajax/profile/getWaterFallContent',
+          query: {'uid': uid, 'cursor': cursor ?? '0'},
+          referer: 'https://weibo.com/u/$uid',
+          cookie: cookie,
+        ),
+      ));
+
+  Future<PageResult<Status>> profileAudio(String uid, String? cursor) async => parseCursorStatuses(await _asVisitor(
+        (cookie) => _getPublic(
+          'https://weibo.com/ajax/profile/getAudioList',
+          query: {'profile_uid': uid, 'cursor': cursor ?? ''},
+          referer: 'https://weibo.com/u/$uid',
+          cookie: cookie,
+        ),
+      ));
+
+  Future<PageResult<ProfilePhoto>> profilePhotos(String uid, String? cursor) async => parseImageWall(await _asVisitor(
+        (cookie) => _getPublic(
+          'https://weibo.com/ajax/profile/getImageWall',
+          query: {'uid': uid, 'sinceid': cursor ?? '0', 'has_album': cursor == null ? 'true' : 'false'},
+          referer: 'https://weibo.com/u/$uid',
+          cookie: cookie,
+        ),
+      ));
+
   /// weibo.com's board carries rank, badge, category and time on the list; m.weibo.cn's only the
   /// words, so it is the fallback.
   Future<List<HotSearch>> hotSearch() async {
@@ -292,6 +356,15 @@ class WeiboApi {
     return null;
   }
 
+  /// A post's sound with a signed address and its transcript: m.weibo.cn leaves voice posts'
+  /// audio out or unsigned, weibo.com's copy has both.
+  Future<AudioClip?> audioClip(String statusId) async => audioClipOf(await _asVisitor((cookie) => _getPublic(
+        'https://weibo.com/ajax/statuses/show',
+        query: {'id': statusId},
+        cookie: cookie,
+        whole: true,
+      )));
+
   /// A weibo.com request behind the visitor wall; a refused or [accept]-failing answer gets one
   /// more try with a new visitor cookie.
   Future<T> _asVisitor<T>(Future<T> Function(String cookie) request, {bool Function(T result)? accept}) async {
@@ -366,8 +439,29 @@ class WeiboApi {
     return parseSearchSuggestions(data);
   }
 
-  Future<PageResult<Status>> searchStatuses(String query, String? cursor, {SearchSort sort = SearchSort.all}) =>
-      _containerStatuses('100103type=${sort.type}&q=$query', cursor);
+  /// One page of a search channel's posts, and on the first page the channels the search offers.
+  Future<(PageResult<Status>, List<SearchChannel>?)> searchStatuses(String query, int type, String? cursor) async {
+    final page = int.tryParse(cursor ?? '') ?? 1;
+    final data = await _searchPage(query, type, page);
+    return (parseContainerStatuses(data, page), page == 1 ? parseSearchChannels(data) : null);
+  }
+
+  /// A channel whose cards are not posts: topics, super topics, places …
+  Future<PageResult<SearchEntry>> searchEntries(String query, int type, String? cursor) async {
+    final page = int.tryParse(cursor ?? '') ?? 1;
+    final entries = parseSearchEntries(await _searchPage(query, type, page));
+    return PageResult(entries, entries.isEmpty ? null : '${page + 1}');
+  }
+
+  Future<dynamic> _searchPage(String query, int type, int page) => _get(
+        'api/container/getIndex',
+        query: {
+          'containerid': '100103type=$type&q=$query',
+          'page_type': 'searchall',
+          if (page > 1) 'page': page.toString(),
+        },
+        emptyIsOk: true,
+      );
 
   Future<PageResult<Status>> topicStatuses(String name, String? keyword, String? cursor) =>
       _containerStatuses(topicQuery(name, keyword), cursor);

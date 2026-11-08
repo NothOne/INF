@@ -1,7 +1,7 @@
 name: inf_flutter
 description: "INF for Android — 微博第三方客户端（Flutter 重写版）"
 publish_to: "none"
-version: 1.4.5+54
+version: 1.5.0+57
 
 environment:
   sdk: ^3.13.5
@@ -66,6 +66,10 @@ dependency_overrides:
     path: third_party/material_ui
   cupertino_ui:
     path: third_party/cupertino_ui
+  # The pub.dev package with the side rail's pressed lens as a capsule rather than a circle; see
+  # _lensSize in lib/src/widgets/surfaces/tab_bar_vertical_layout.dart.
+  liquid_glass_widgets:
+    path: third_party/liquid_glass_widgets
 
 dev_dependencies:
   flutter_test:

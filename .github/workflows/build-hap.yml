@@ -1,7 +1,8 @@
 name: build-hap
 
-# Manual only: a release HAP takes a few minutes and produces an artifact
+# Manual by default: a release HAP takes a few minutes and produces an artifact
 # nobody needs on every push. Build the image first with build-ohos-image.yml.
+# `release.yml` calls this on a version tag, unsigned.
 on:
   workflow_dispatch:
     inputs:
@@ -9,14 +10,33 @@ on:
         description: "Sign the HAP (needs the OHOS_* secrets; a debug profile only admits registered devices)"
         type: boolean
         default: false
-
-concurrency:
-  group: build-hap-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_call:
+    inputs:
+      sign:
+        type: boolean
+        default: false
+    secrets:
+      OHOS_KEYSTORE_B64:
+        required: false
+      OHOS_CERT_B64:
+        required: false
+      OHOS_PROFILE_B64:
+        required: false
+      OHOS_KEY_ALIAS:
+        required: false
+      OHOS_KEY_PWD:
+        required: false
+      OHOS_KEYSTORE_PWD:
+        required: false
 
 jobs:
   hap:
     runs-on: ubuntu-latest
+    # Job-level, not workflow-level: a called workflow's `concurrency` at the
+    # workflow level is not what the caller waits on.
+    concurrency:
+      group: build-hap-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: read
       packages: read

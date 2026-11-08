@@ -7,6 +7,7 @@ import '../../core/chrome.dart';
 import '../../core/container_route.dart';
 import '../../core/haptics.dart';
 import '../../core/layout.dart';
+import '../../core/media_save.dart';
 import '../../core/models.dart';
 import '../../core/parse.dart';
 import '../../core/native.dart';
@@ -16,6 +17,7 @@ import '../../core/session.dart';
 import '../../core/share.dart';
 import '../../core/status_store.dart';
 import '../../core/touches.dart';
+import 'audio_card.dart';
 import 'avatar.dart';
 import 'common.dart';
 import 'image_grid.dart';
@@ -26,6 +28,7 @@ import 'smart_image.dart';
 /// its own sheet, [showStatusShare].
 Future<void> showStatusActions(BuildContext context, Status status, {VoidCallback? onLongImage}) {
   final own = status.author.id == Session.instance.uid;
+  final images = status.images;
   return showActionSheet<void>(
     context: context,
     frosted: false,
@@ -59,6 +62,12 @@ Future<void> showStatusActions(BuildContext context, Status status, {VoidCallbac
                     if (context.mounted) showMessage(context, message);
                   }),
                 ),
+                if (images.isNotEmpty)
+                  _ActionTile(
+                    icon: Icons.collections_outlined,
+                    label: saveAllLabel(images),
+                    onTap: () => run(() => _saveAll(context, images)),
+                  ),
                 _ActionTile(icon: Icons.copy_rounded, label: '复制文本', onTap: () => copy(status.text)),
                 _ActionTile(icon: Icons.link_rounded, label: '复制链接', onTap: () => copy(statusLink(status.id))),
                 _ActionTile(
@@ -90,6 +99,14 @@ Future<void> showStatusActions(BuildContext context, Status status, {VoidCallbac
       );
     },
   );
+}
+
+Future<void> _saveAll(BuildContext context, List<Media> images) async {
+  showMessage(context, '正在保存 ${images.length} 张图片…');
+  final result = await saveImagesToGallery(images);
+  (result.saved == images.length ? Haptic.success : Haptic.error).play();
+  if (!context.mounted) return;
+  showMessage(context, saveAllMessage(result, images.length));
 }
 
 Future<void> _confirmBlock(BuildContext context, User user) async {
@@ -148,10 +165,14 @@ class StatusCard extends StatefulWidget {
     this.onRepost,
     this.onComment,
     this.onLongImage,
+    this.saveAllButton = false,
   });
 
   final Status status;
   final bool detail;
+
+  /// 保存全部 under the pictures, on the post's own page.
+  final bool saveAllButton;
   final String? heroScope;
   final bool enableImageHeroes;
   final ValueChanged<String>? onOpenStatus;
@@ -290,6 +311,10 @@ class _StatusCardState extends State<StatusCard> {
                   ),
                 ),
               ],
+              if (status.audio != null) ...[
+                const SizedBox(height: 9),
+                AudioCard(audio: status.audio!, statusId: status.id),
+              ],
               if (status.article != null) ...[
                 const SizedBox(height: 9),
                 _ArticleCard(article: status.article!, onOpen: () => widget.onOpenUrl?.call(status.article!.url)),
@@ -322,6 +347,16 @@ class _StatusCardState extends State<StatusCard> {
                   heroEnabled: widget.enableImageHeroes,
                 ),
               ],
+              if (widget.saveAllButton && status.images.length > 1)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: () => _saveAll(context, status.images),
+                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact, foregroundColor: scheme.onSurfaceVariant),
+                    icon: const Icon(Icons.download_rounded, size: 17),
+                    label: Text('保存全部 ${status.images.length} 张'),
+                  ),
+                ),
               if (status.place != null) ...[
                 const SizedBox(height: 7),
                 GestureDetector(
@@ -677,6 +712,10 @@ class _RepostBlock extends StatelessWidget {
                       : (url, tag) => onOpenMedia!([Media.image(url)], 0, tag),
                 ),
               ),
+              if (original.audio != null) ...[
+                const SizedBox(height: 8),
+                AudioCard(audio: original.audio!, statusId: original.id),
+              ],
               if (original.article != null) ...[
                 const SizedBox(height: 8),
                 _ArticleCard(article: original.article!, onOpen: () => onOpenUrl?.call(original.article!.url)),

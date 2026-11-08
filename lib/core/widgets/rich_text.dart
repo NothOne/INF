@@ -245,6 +245,7 @@ class InlineLinkLabel extends StatelessWidget {
 IconData linkKindIcon(LinkKind kind) => switch (kind) {
       LinkKind.web => Icons.link_rounded,
       LinkKind.video => Icons.smart_display_outlined,
+      LinkKind.audio => Icons.graphic_eq_rounded,
       LinkKind.article => Icons.article_outlined,
       LinkKind.place => Icons.place_outlined,
       LinkKind.superTopic => Icons.diamond_outlined,

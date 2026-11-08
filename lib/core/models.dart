@@ -134,8 +134,36 @@ class Place {
   const Place(this.name, {this.url, this.address, this.summary, this.picUrl});
 }
 
+/// Sound a post carries: a voice post's recording (`blog_audio`) or a podcast card.
+class AudioClip {
+  /// m.weibo.cn's copy of a voice post has the address without its signature, which the CDN
+  /// refuses; see [signed] and [WeiboApi.audioUrl].
+  final String url;
+  final String title;
+  final String? author;
+  final String? coverUrl;
+  final int durationMs;
+
+  /// What Weibo heard in a voice post.
+  final String? transcript;
+  final bool voice;
+
+  const AudioClip({
+    required this.url,
+    this.title = '',
+    this.author,
+    this.coverUrl,
+    this.durationMs = 0,
+    this.transcript,
+    this.voice = false,
+  });
+
+  /// False also when m.weibo.cn gave no address at all, only the `[语音…]` line.
+  bool get signed => url.isNotEmpty && (!url.contains('weibocdn.com') || url.contains('ssig='));
+}
+
 /// What a link in a post points at, as far as its address and Weibo's little icon tell.
-enum LinkKind { web, video, article, place, superTopic, vote, lottery, group }
+enum LinkKind { web, video, audio, article, place, superTopic, vote, lottery, group }
 
 /// A link as the post shows it: the address, and the words and kind Weibo draws in its place.
 class WeiboLink {
@@ -189,6 +217,7 @@ class Status {
   final Place? place;
   final Article? article;
   final LinkCard? card;
+  final AudioClip? audio;
 
   /// The links in [text], by address.
   final Map<String, WeiboLink> links;
@@ -213,11 +242,19 @@ class Status {
     this.place,
     this.article,
     this.card,
+    this.audio,
     this.links = const {},
     this.isLongText = false,
     this.region,
     this.pinned = false,
   });
+
+  /// The pictures of the post, or of the post it reposts when it has none of its own.
+  List<Media> get images {
+    final own = media.where((item) => item.kind == MediaKind.image).toList();
+    if (own.isNotEmpty || repostOf == null) return own;
+    return repostOf!.media.where((item) => item.kind == MediaKind.image).toList();
+  }
 
   Status copyWith({
     String? text,
@@ -247,6 +284,7 @@ class Status {
         place: place,
         article: article,
         card: card,
+        audio: audio,
         links: links ?? this.links,
         isLongText: isLongText ?? this.isLongText,
         region: region,
@@ -534,16 +572,119 @@ enum HotTopicTab {
   const HotTopicTab(this.label, this.type);
 }
 
-/// The order a search's posts come back in, from the same container ids as [HotTopicTab] minus
-/// the video stream the results page does not offer.
-enum SearchSort {
-  all('综合', 1),
-  realtime('实时', 61),
-  hot('热门', 60);
+/// How a search channel's results are drawn.
+enum SearchResultKind { statuses, users, entries }
+
+/// One tab of the search results: m.weibo.cn's `100103type=<type>&q=…` container. The list comes
+/// with the first page of 综合 ([parseSearchChannels]); [defaults] is shown until then.
+class SearchChannel {
+  final String name;
+  final int type;
+  const SearchChannel(this.name, this.type);
+
+  static const users = 3;
+  static const topics = 38;
+  static const superTopics = 98;
+
+  /// The streams whose cards are posts. Anything else (地点, 商品 …) is read as plain entries.
+  static const _postTypes = {1, 60, 61, 62, 63, 64, 21, 97, 110};
+
+  SearchResultKind get kind => type == users
+      ? SearchResultKind.users
+      : (_postTypes.contains(type) ? SearchResultKind.statuses : SearchResultKind.entries);
+
+  static const defaults = [
+    SearchChannel('综合', 1),
+    SearchChannel('实时', 61),
+    SearchChannel('热门', 60),
+    SearchChannel('用户', users),
+    SearchChannel('视频', 64),
+    SearchChannel('图片', 63),
+    SearchChannel('关注', 62),
+    SearchChannel('文章', 21),
+    SearchChannel('话题', topics),
+    SearchChannel('超话', superTopics),
+  ];
+
+  @override
+  bool operator ==(Object other) => other is SearchChannel && other.type == type && other.name == name;
+
+  @override
+  int get hashCode => Object.hash(name, type);
+}
+
+/// A search result that is neither a post nor a person: a topic, a super topic, a place …
+class SearchEntry {
+  final String title;
+  final String? subtitle;
+  final String? detail;
+  final String? imageUrl;
+
+  /// Where a tap goes; may be a `sinaweibo://` address, which [openLink] understands.
+  final String? url;
+  const SearchEntry({required this.title, this.subtitle, this.detail, this.imageUrl, this.url});
+
+  /// `#话题#` titles open as a topic.
+  bool get isTopic => title.length > 2 && title.startsWith('#') && title.endsWith('#');
+}
+
+/// The sections of someone's page. weibo.com's `profile/info` names those an account has in
+/// `tabList`; [featured] and [posts] are always there.
+enum ProfileTab {
+  posts('微博', 'feed'),
+  featured('精选', 'hot'),
+  videos('视频', 'newVideo'),
+  photos('相册', 'album'),
+  audio('音频', 'audio'),
+  articles('文章', 'article');
 
   final String label;
-  final int type;
-  const SearchSort(this.label, this.type);
+
+  /// weibo.com's name for it in `tabList`.
+  final String key;
+  const ProfileTab(this.label, this.key);
+
+  static const fallback = [posts, featured, videos, photos];
+}
+
+/// The 微博 tab's filters: m.weibo.cn's second-level profile streams.
+enum ProfilePostFilter {
+  all('全部', ''),
+  original('原创', 'ORI'),
+  pictures('图片', 'PIC'),
+  videos('视频', 'VIDEO');
+
+  final String label;
+  final String suffix;
+  const ProfilePostFilter(this.label, this.suffix);
+}
+
+/// One picture on someone's 相册 wall, and the post it came from.
+class ProfilePhoto {
+  final Media media;
+  final String? statusId;
+  const ProfilePhoto(this.media, {this.statusId});
+}
+
+/// What weibo.com adds to a profile: its tabs, the 转评赞 its posts have had, and short facts
+/// (IP 属地, 生日, 注册时间, 阳光信用, 视频累计播放量 …).
+class ProfileExtras {
+  final List<ProfileTab> tabs;
+
+  /// Null when weibo.com did not say.
+  final int? interactions;
+  final int? likes;
+  final int? comments;
+  final int? reposts;
+  final List<String> facts;
+  const ProfileExtras({
+    this.tabs = ProfileTab.fallback,
+    this.interactions,
+    this.likes,
+    this.comments,
+    this.reposts,
+    this.facts = const [],
+  });
 }
 
 /// One run of a topic on a Weibo board: 热搜榜, 文娱榜, 社会榜 …

@@ -86,7 +86,7 @@ class ContainerTransformRoute<T> extends PageRoute<T> {
   Duration get transitionDuration => const Duration(milliseconds: 450);
 
   @override
-  Duration get reverseTransitionDuration => const Duration(milliseconds: 340);
+  Duration get reverseTransitionDuration => const Duration(milliseconds: 400);
 
   @override
   Widget buildPage(BuildContext context, Animation<double> animation, Animation<double> secondaryAnimation) =>
@@ -275,9 +275,20 @@ class _ContainerTransitionState extends State<_ContainerTransition> {
   /// from fully open, so the shrink is scaled down from this instead of jumping back first.
   double _released = 1;
 
+  /// The page has settled since it last opened, so it leaves as an unaligned page does, shrinking
+  /// into the card as it fades. Aligned, it stayed opaque while the shape cut it down at the
+  /// curve's fastest and only then crossfaded, so leaving a post looked unlike leaving the post
+  /// it reposts. Back out of a page still opening, it keeps the alignment it is already in.
+  bool _settledOnce = false;
+
   /// Starts slowly, so the origin is seen to grow before the page rushes in; a decelerating
   /// curve would make it pop.
   static const _curve = Curves.easeInOutCubicEmphasized;
+
+  /// The way back. The opening's curve flipped does nearly all its travel in a burst at the very
+  /// start, so the page had shrunk into the card within the first ~100ms and the rest of the
+  /// return showed only a fading blur.
+  static const _exitCurve = Curves.easeInOutCubic;
 
   double _progress() {
     final animation = widget.animation;
@@ -289,10 +300,10 @@ class _ContainerTransitionState extends State<_ContainerTransition> {
         _released = value;
         return value;
       }
-      return _released * _curve.flipped.transform(value);
+      return _released * _exitCurve.transform(value);
     }
     _released = 1;
-    return reversing ? _curve.flipped.transform(value) : _curve.transform(value);
+    return reversing ? _exitCurve.transform(value) : _curve.transform(value);
   }
 
   @override
@@ -308,11 +319,16 @@ class _ContainerTransitionState extends State<_ContainerTransition> {
       child: RepaintBoundary(child: widget.child),
       builder: (context, page) {
         final settled = animation.isCompleted;
+        if (settled) {
+          _settledOnce = true;
+        } else if (animation.status == AnimationStatus.forward && !route.popGestureInProgress) {
+          _settledOnce = false;
+        }
         final t = settled ? 1.0 : _progress();
         final screen = Offset.zero & MediaQuery.sizeOf(context);
         final rect = Rect.lerp(origin.rect, screen, t)!;
         final radius = lerpDouble(origin.radius, route.popGestureInProgress ? 22 : 0, t)!;
-        final aligned = origin.alignTop != null;
+        final aligned = origin.alignTop != null && !_settledOnce;
         final profile = containerAlignProfile(t);
         // Aligned, the copy holds over the card for the whole crossfade and only then moves off
         // it; otherwise the page arrives later and slower.

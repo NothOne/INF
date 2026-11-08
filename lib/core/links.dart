@@ -222,6 +222,11 @@ const _siteNames = {
   'youtu.be': 'YouTube',
   'github.com': 'GitHub',
   'music.163.com': '网易云音乐',
+  'y.qq.com': 'QQ 音乐',
+  'kugou.com': '酷狗音乐',
+  'kuwo.cn': '酷我音乐',
+  'ximalaya.com': '喜马拉雅',
+  'xiaoyuzhoufm.com': '小宇宙',
   'taobao.com': '淘宝',
   'tmall.com': '天猫',
   'jd.com': '京东',
@@ -271,6 +276,16 @@ String unwrapWeiboRedirect(String url) {
   return url;
 }
 
+const _audioHosts = {
+  'music.163.com',
+  'y.qq.com',
+  'kugou.com',
+  'kuwo.cn',
+  'ximalaya.com',
+  'xiaoyuzhoufm.com',
+  'podcast.video.weibocdn.com',
+};
+
 /// What the link is, from its address and the icon m.weibo.cn draws in front of it
 /// (`timeline_card_small_<kind>…png`).
 LinkKind linkKindOf(String url, {String? iconUrl}) {
@@ -280,12 +295,16 @@ LinkKind linkKindOf(String url, {String? iconUrl}) {
   if (icon.contains('card_small_video')) return LinkKind.video;
   if (icon.contains('card_small_article')) return LinkKind.article;
   if (icon.contains('card_small_vote')) return LinkKind.vote;
+  if (icon.contains('card_small_music') || icon.contains('card_small_audio') || icon.contains('card_small_podcast')) {
+    return LinkKind.audio;
+  }
   final uri = Uri.tryParse(unwrapWeiboRedirect(url));
   if (uri == null) return LinkKind.web;
   final host = uri.host.toLowerCase();
   final path = uri.path.toLowerCase();
   final container = uri.queryParameters['containerid'] ?? (path.startsWith('/p/') ? path.substring(3) : '');
   if (host == 'video.weibo.com' || (host.endsWith('weibo.com') && path.startsWith('/tv/'))) return LinkKind.video;
+  if (_audioHosts.any((site) => host == site || host.endsWith('.$site'))) return LinkKind.audio;
   if (host == 'vote.weibo.com') return LinkKind.vote;
   if (host == 'lottery.media.weibo.com') return LinkKind.lottery;
   if (host == 'card.weibo.com' || path.startsWith('/ttarticle') || host == 'media.weibo.cn') return LinkKind.article;
@@ -302,6 +321,7 @@ LinkKind linkKindOf(String url, {String? iconUrl}) {
 String linkKindLabel(LinkKind kind) => switch (kind) {
       LinkKind.web => '网页链接',
       LinkKind.video => '查看视频',
+      LinkKind.audio => '音频',
       LinkKind.article => '文章',
       LinkKind.place => '位置',
       LinkKind.superTopic => '超话',

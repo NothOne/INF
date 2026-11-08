@@ -1,0 +1,172 @@
+name: release
+
+# Push a version tag to publish a release:
+#
+#   git tag -a 1.4.6 -m "一句话主题" -m "正文…"   # 附注正文就是 Release 说明
+#   git push origin 1.4.6
+#
+# The builds run only if the tag matches the version in pubspec.yaml,
+# ohos/AppScope/app.json5 and lib/core/version.dart, so a mistyped tag fails
+# in seconds instead of after seven minutes of Gradle.
+on:
+  push:
+    tags:
+      # Version tags, with or without the leading v. This skips clt-* and backup/*.
+      - "[0-9]*"
+      - "v[0-9]*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      build: ${{ steps.v.outputs.build }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The branch containment check below needs main in the history.
+          fetch-depth: 0
+
+      - name: The tag must equal the app version
+        id: v
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          fail() { echo "::error::$1"; exit 1; }
+          # A tag like 1.4.6-rc1 would otherwise reach the name checks below
+          # with a confusing message; reject the shape first.
+          echo "$TAG" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            || fail "Tag $TAG is not a plain version (expected e.g. 1.4.6 or v1.4.6)."
+          PUBSPEC=$(sed -nE 's/^version:[[:space:]]*([^+[:space:]]+)\+([0-9]+).*/\1 \2/p' pubspec.yaml)
+          [ -n "$PUBSPEC" ] || fail "pubspec.yaml has no 'version: x.y.z+build' line."
+          NAME=${PUBSPEC% *}
+          BUILD=${PUBSPEC#* }
+          OHOS=$(sed -nE 's/.*"versionName":[[:space:]]*"([^"]+)".*/\1/p' ohos/AppScope/app.json5)
+          OHOS_CODE=$(sed -nE 's/.*"versionCode":[[:space:]]*([0-9]+).*/\1/p' ohos/AppScope/app.json5)
+          DART=$(sed -nE "s/^const appVersion = '([^']+)'.*/\1/p" lib/core/version.dart)
+          echo "tag=$TAG pubspec=$NAME+$BUILD ohos=$OHOS/$OHOS_CODE dart=$DART"
+          [ "$TAG" = "$NAME" ] || fail "Tag $TAG does not match pubspec version $NAME."
+          [ "$OHOS" = "$NAME" ] || fail "ohos/AppScope/app.json5 says $OHOS, pubspec says $NAME."
+          [ "$DART" = "$NAME" ] || fail "lib/core/version.dart says $DART, pubspec says $NAME."
+          [ "$OHOS_CODE" = "$BUILD" ] || fail "ohos versionCode $OHOS_CODE != pubspec build $BUILD."
+          # Warn only: the tag and a main push may land at the same time, and a
+          # hotfix branch is still a valid thing to release. A tag push checks
+          # out the tag alone, so main has to be fetched before comparing.
+          if git fetch --quiet origin main:refs/remotes/origin/main 2>/dev/null &&
+             ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::warning::Tag $TAG is not on main; releasing a commit that was never merged."
+          fi
+          echo "version=$NAME" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+
+  apk:
+    needs: check-version
+    # From the same commit as this file, so a tag always builds its own workflow.
+    uses: ./.github/workflows/build-apk.yml
+    permissions:
+      contents: read
+    secrets:
+      DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+
+  hap:
+    needs: check-version
+    uses: ./.github/workflows/build-hap.yml
+    permissions:
+      contents: read
+      packages: read
+
+  publish:
+    needs: [check-version, apk, hap]
+    # A failed HAP must not block the APK release: the HarmonyOS image is a
+    # GHCR pull that can be unavailable, and the APK is the one that installs.
+    if: ${{ always() && needs.check-version.result == 'success' && needs.apk.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Full history: a lightweight tag has no message, so the notes fall back
+      # to the commits since the previous release.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Prepare the output directory
+        run: mkdir -p dist
+
+      # Tolerated: when the HAP job failed there is no second artifact, and the
+      # APK release should still go out. The notes step fails if the APK is missing.
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: inf-*
+          path: dist
+          merge-multiple: true
+
+      - name: Write the release notes
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+          BUILD: ${{ needs.check-version.outputs.build }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          ls dist/*.apk > /dev/null || { echo "::error::No APK was downloaded; the apk job must have failed."; exit 1; }
+          {
+            # The tag body is the whole description, headings and all: what the
+            # author writes is exactly what the release shows.
+            if [ "$(git cat-file -t "refs/tags/$TAG")" = tag ]; then
+              BODY=$(git tag -l --format='%(contents:body)' "$TAG")
+              if [ -n "$(printf '%s' "$BODY" | tr -d '[:space:]')" ]; then
+                printf '%s\n' "$BODY"
+              else
+                git tag -l --format='%(contents:subject)' "$TAG"
+              fi
+            else
+              # A lightweight tag carries no message, so fall back to the commits.
+              PREV=$(git describe --tags --abbrev=0 \
+                --exclude='clt-*' --exclude='backup/*' "$TAG^" 2>/dev/null || true)
+              echo "## 本次提交"
+              echo
+              if [ -n "$PREV" ]; then
+                git log --no-merges --pretty=format:'- %s' "$PREV..$TAG"
+              else
+                git log --no-merges --pretty=format:'- %s' "$TAG"
+              fi
+              echo
+            fi
+            echo
+            echo "版本号 \`$VERSION+$BUILD\`（\`versionCode\` $BUILD）。"
+            echo
+            echo "## 安装"
+            echo
+            echo "- **Android**：\`INF-$VERSION.apk\`，直接安装，覆盖旧版本即可升级。"
+            if [ -n "$(ls dist/*.hap 2>/dev/null)" ]; then
+              echo "- **鸿蒙**：\`INF-$VERSION-unsigned.hap\`，未签名，需要在 DevEco Studio 里自行签名后安装。"
+            else
+              echo "- **鸿蒙**：这次构建失败，没有 HAP。"
+            fi
+            echo
+            echo "校验值："
+            for f in dist/*; do
+              echo "- \`$(basename "$f")\` \`sha256 $(sha256sum "$f" | cut -d' ' -f1)\`"
+            done
+            echo
+            echo "构建：[run]($RUN_URL)"
+          } > NOTES.md
+          cat NOTES.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # Re-run of a published tag: replace the assets and the notes.
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --notes-file NOTES.md
+          else
+            gh release create "$TAG" dist/* --verify-tag --title "$TAG" --notes-file NOTES.md
+          fi

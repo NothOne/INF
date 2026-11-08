@@ -43,10 +43,25 @@ flutter build hap --release
 
 ## 在 GitHub Actions 上构建
 
-两个 workflow，都在 Actions 页面手动触发：
+### 打标签发版
 
-- `build-apk.yml`：Android 包。push 到 `dev` / `main` 也会自动跑。需要 secret `DEBUG_KEYSTORE_BASE64`（`base64 -w0 android/debug.keystore`），否则签名那步会失败。
-- `build-hap.yml`：鸿蒙包。要先有 `build-ohos-image.yml` 造出来的构建镜像。
+版本号改好（`pubspec.yaml` 的 `version`、`ohos/AppScope/app.json5` 的 `versionName` / `versionCode`、`lib/core/version.dart` 三处一致）并在 `main` 上之后，打一个和版本号同名的标签推上去，就会自动编译并把 APK 和 HAP 发到 Release：
+
+```bash
+git tag -a 1.5.0 -m "INF 1.5.0" -m "（正文：这个项目有什么功能，概述即可）"
+git push origin main 1.5.0
+```
+
+- 标签名必须是纯版本号（`1.5.0`，`v1.5.0` 也可以），且与 `pubspec.yaml` 里的版本一致；不一致时 `release.yml` 的第一个 job 几秒内就失败，不会白跑 Gradle。`clt-*`、`backup/*` 这类标签不触发。
+- 标签正文原样成为 Release 说明，workflow 只补一行版本号和安装方式、sha256。正文按「这个项目有什么功能」写，概述即可，不必只列本版改动：Release 页是别人第一次看到这个项目的地方。
+- 打轻量标签（`git tag 1.5.0`，没有 `-m`）也可以：说明改成「上个发布标签以来的提交」自动生成。
+- 产物是 `INF-<版本>.apk` 和 `INF-<版本>-unsigned.hap`。重跑同一个标签会覆盖附件和说明，不会重复建 Release。
+- 鸿蒙包在发版流程里只出 unsigned；要签名就在 Actions 页面手动跑 `build-hap.yml` 并勾上 `sign`。
+
+### 其他 workflow
+
+- `build-apk.yml`：Android 包，push 到 `main` 时会跑，也被 `release.yml` 调用。需要 secret `DEBUG_KEYSTORE_BASE64`（`base64 -w0 android/debug.keystore`），否则签名那步会失败。
+- `build-hap.yml`：鸿蒙包，可在 Actions 页面手动触发，也被 `release.yml` 调用。要先有 `build-ohos-image.yml` 造出来的构建镜像。
 
 ### 鸿蒙的构建镜像
 

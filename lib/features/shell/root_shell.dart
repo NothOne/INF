@@ -734,8 +734,12 @@ class _BarItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final color = selected ? scheme.primary : scheme.onSurfaceVariant;
+    // No ink: the mark moving under the tab is the answer to a tap, and the ink's square, drawn on
+    // the page's Material rather than the bar, stood out past the capsule's round ends while held.
     return InkWell(
       onTap: onTap,
+      splashFactory: NoSplash.splashFactory,
+      highlightColor: Colors.transparent,
       child: Padding(
         // Clears the mark that sits on the bottom edge of the bar.
         padding: const EdgeInsets.only(bottom: 8),

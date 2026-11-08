@@ -149,6 +149,14 @@ class _ProfilePageState extends State<ProfilePage> with ShellTabAware {
               ),
               if (signedIn) ...[
                 _MenuTile(
+                  icon: Icons.article_outlined,
+                  title: '我的微博',
+                  onTap: () {
+                    final uid = _user?.id ?? session.uid;
+                    if (uid != null) openUser(context, uid);
+                  },
+                ),
+                _MenuTile(
                   icon: Icons.history_rounded,
                   title: '浏览记录',
                   onTap: () => openViewed(context),

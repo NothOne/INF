@@ -446,6 +446,7 @@ class _DetailBodyState extends State<_DetailBody> {
                 child: StatusCard(
                   status: status,
                   detail: true,
+                  saveAllButton: true,
                   onOpenStatus: (id) => openStatus(context, statusId: id),
                   onOpenUser: (uid) => openUser(context, uid),
                   onOpenTopic: (name) => openTopic(context, name),

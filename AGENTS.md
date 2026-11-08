@@ -52,6 +52,8 @@ Flutter SDK 在工作区外（`../.tools/flutter`），运行时要写它的 `bi
 | 原生能力 | 同时改 `MainActivity.kt` 的 `when`、`NativePlugin.ets` 的 `switch` 和 `Native` 静态方法 |
 | 新偏好 | `Prefs` 里加字段和 `setXxx()`；影响外观的同步进 `app.dart` 的 `_Appearance` |
 
+- 框架和依赖里有现成方案的就用，不自写一份等价实现：动画、手势、滚动、文本排版、图片缩放先查 Flutter 和已引入的包，有对应接口或组件就接过来。液态玻璃那次就是自写的 `liquid_glass.frag` 换成了 `liquid_glass_widgets`。
+- 不写防御性代码：内部调用之间不加多余的 `null` 判断、`try` 兜底和重试，上游保证过的前提直接用。只有平台差异（鸿蒙 WebView、GPU 纹理上限）和实际踩过的问题才加分支，注释里写清是哪次问题。
 - 不依赖单例的纯逻辑要在 `test/` 补测试。
 - 改 `parse.dart`、`api.dart`、`status_detail_page.dart`、`image_viewer_page.dart` 这类大文件前先通读相关部分。
 - 注释只写代码本身表达不了的约束，跟周围代码的密度和语气保持一致。
@@ -65,6 +67,8 @@ Flutter SDK 在工作区外（`../.tools/flutter`），运行时要写它的 `bi
 ## Git
 
 - 在 `dev` 上开发，发布合到 `main`。提交信息用英文，一句话说清这次改了什么（参照 `git log`）。
+- 只推 `main` 和标签，不推 `dev`：`dev` 只在本地，远端只保留发布历史。要同步时把 `dev` 的工作区内容在 `main` 上提交成一次快照提交（`main` 和 `dev` 是两条没有共同祖先的历史，main 被重写过，直接 merge 会拉进一堆重复提交），用 `git checkout main && git checkout dev -- . && git commit`。
+- 发版：在 `main` 上打与版本号同名的附注标签（`git tag -a 1.5.0 -m "标题" -m "正文"`）再推标签，`release.yml` 会自动编译 APK 和 HAP 并发 Release。标签名与版本号不一致会直接失败。标签正文原样成为 Release 说明，所以正文要写这个项目整体有什么功能，而不只是本次改了什么。细节见 `README.md`「打标签发版」。
 - 不提交：`.tools/`、`build/`、APK、`android/local.properties`、`android/app/debug.keystore`、日志、截图录屏、Cookie 文件。
 - 不要推送或改动远端，除非用户明确要求。
 

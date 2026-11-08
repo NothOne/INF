@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/layout.dart';
@@ -20,6 +21,8 @@ import '../../core/widgets/common.dart';
 import '../../core/widgets/hot_board_bar.dart';
 import '../../core/widgets/hot_search_row.dart';
 import '../../core/widgets/paged_status_list.dart';
+import '../../core/widgets/refresh.dart';
+import '../../core/widgets/smart_image.dart';
 import '../../core/widgets/user_row.dart';
 
 class SearchPage extends StatefulWidget {
@@ -31,14 +34,17 @@ class SearchPage extends StatefulWidget {
   State<SearchPage> createState() => _SearchPageState();
 }
 
-class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateMixin {
+class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
   late final TextEditingController _input = TextEditingController(text: widget.initialQuery ?? '');
   late final FocusNode _focus = FocusNode();
-  late final TabController _tabs = TabController(length: 2, vsync: this);
 
-  PagingController<Status>? _results;
+  /// The result tabs; the search's own list replaces the defaults once its first page says.
+  List<SearchChannel> _channels = SearchChannel.defaults;
+  late TabController _tabs = _newTabs(0);
+  final Map<int, PagingController<Status>> _statusPagers = {};
+  final Map<int, PagingController<SearchEntry>> _entryPagers = {};
+
   String? _submitted;
-  SearchSort _sort = SearchSort.all;
   List<User>? _users;
   bool _usersLoading = false;
   String? _usersError;
@@ -49,11 +55,13 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
   Timer? _suggestTimer;
   final Map<String, SearchSuggestions> _suggestions = {};
 
+  TabController _newTabs(int index) =>
+      TabController(length: _channels.length, initialIndex: index, vsync: this)..addListener(_tabChanged);
+
   @override
   void initState() {
     super.initState();
     _history = Prefs.instance.searchHistory;
-    _tabs.addListener(_tabChanged);
     _input.addListener(_inputChanged);
     _focus.addListener(_inputChanged);
     final initial = widget.initialQuery?.trim();
@@ -69,7 +77,7 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
 
   @override
   void dispose() {
-    _results?.dispose();
+    _disposeResults();
     _suggestTimer?.cancel();
     _tabs.removeListener(_tabChanged);
     _input.removeListener(_inputChanged);
@@ -114,10 +122,63 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
 
   void _tabChanged() {
     if (!mounted) return;
-    setState(() {});
-    if (_tabs.index == 1 && _submitted != null && _users == null && !_usersLoading) {
-      _loadUsers(_submitted!);
+    if (_tabs.indexIsChanging) Haptic.selection.play();
+    _startChannel(_channels[_tabs.index]);
+  }
+
+  /// Loads [channel]'s first page the first time it is shown for this query.
+  void _startChannel(SearchChannel channel) {
+    final query = _submitted;
+    if (query == null) return;
+    switch (channel.kind) {
+      case SearchResultKind.users:
+        if (_users == null && !_usersLoading) _loadUsers(query);
+      case SearchResultKind.statuses:
+        if (_statusPagers.containsKey(channel.type)) return;
+        final pager = _statusPagers[channel.type] = PagingController<Status>(
+          fetch: (cursor) async {
+            final (page, channels) = await WeiboApi.instance.searchStatuses(query, channel.type, cursor);
+            if (channels != null) _applyChannels(channels);
+            return page;
+          },
+          id: (status) => status.id,
+        );
+        pager.refresh();
+        setState(() {});
+      case SearchResultKind.entries:
+        if (_entryPagers.containsKey(channel.type)) return;
+        final pager = _entryPagers[channel.type] = PagingController<SearchEntry>(
+          fetch: (cursor) => WeiboApi.instance.searchEntries(query, channel.type, cursor),
+          id: (entry) => '${entry.title}\u001F${entry.url}',
+        );
+        pager.refresh();
+        setState(() {});
     }
+  }
+
+  /// The tabs Weibo offers for this search, keeping the one on screen selected.
+  void _applyChannels(List<SearchChannel> channels) {
+    if (!mounted || listEquals(channels, _channels)) return;
+    final current = _channels[_tabs.index];
+    final index = channels.indexWhere((channel) => channel.type == current.type);
+    final old = _tabs;
+    setState(() {
+      _channels = channels;
+      _tabs = _newTabs(index < 0 ? 0 : index);
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+    if (index < 0) _startChannel(_channels.first);
+  }
+
+  void _disposeResults() {
+    for (final pager in _statusPagers.values) {
+      pager.dispose();
+    }
+    for (final pager in _entryPagers.values) {
+      pager.dispose();
+    }
+    _statusPagers.clear();
+    _entryPagers.clear();
   }
 
   HotBoard _board = shownBoard(HotBoard.realtime);
@@ -164,38 +225,19 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
       _history = Prefs.instance.searchHistory;
       _users = null;
       _usersError = null;
-      _startResults(query);
+      _disposeResults();
     });
-    _results!.refresh();
-    if (_tabs.index == 1) _loadUsers(query);
-  }
-
-  /// A fresh pager for [query] in the chosen [SearchSort]; the caller still has to refresh it.
-  void _startResults(String query) {
-    _results?.dispose();
-    _results = PagingController<Status>(
-      fetch: (cursor) => WeiboApi.instance.searchStatuses(query, cursor, sort: _sort),
-      id: (status) => status.id,
-    );
-  }
-
-  void _selectSort(SearchSort sort) {
-    final query = _submitted;
-    if (sort == _sort || query == null) return;
-    Haptic.selection.play();
-    setState(() {
-      _sort = sort;
-      _startResults(query);
-    });
-    _results!.refresh();
+    _startChannel(_channels[_tabs.index]);
+    // 综合 brings the list of tabs; ask for it even when another tab is on screen.
+    final all = _channels.where((channel) => channel.type == 1).firstOrNull;
+    if (all != null) _startChannel(all);
   }
 
   void _clearResults() {
     setState(() {
       _submitted = null;
       _input.clear();
-      _results?.dispose();
-      _results = null;
+      _disposeResults();
     });
     _focus.requestFocus();
     _loadHot();
@@ -495,55 +537,56 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
   }
 
   Widget _resultsBody(BuildContext context) {
-    final pager = _results;
     return Padding(
+      key: const ValueKey('results'),
       padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top),
       child: Column(
-      key: const ValueKey('results'),
-      children: [
-        ContentColumn(
-          child: TabBar(
-            controller: _tabs,
-            indicatorSize: TabBarIndicatorSize.label,
-            tabs: const [
-              Tab(height: 44, child: Text('微博')),
-              Tab(height: 44, child: Text('用户')),
-            ],
-          ),
-        ),
-        if (_tabs.index == 0)
+        children: [
           ContentColumn(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  for (final sort in SearchSort.values)
-                    _SortChip(
-                      label: sort.label,
-                      selected: sort == _sort,
-                      onTap: () => _selectSort(sort),
-                    ),
-                ],
-              ),
+            child: TabBar(
+              controller: _tabs,
+              isScrollable: true,
+              tabAlignment: TabAlignment.start,
+              indicatorSize: TabBarIndicatorSize.label,
+              labelPadding: const EdgeInsets.symmetric(horizontal: 13),
+              tabs: [for (final channel in _channels) Tab(height: 44, text: channel.name)],
             ),
           ),
-        Expanded(
-          child: _tabs.index == 0
-              ? (pager == null
-                  ? const LoadingFooter()
-                  : PagedStatusList(
-                      pager: pager,
-                      emptyText: '没有找到相关微博',
-                      bottomInset: 18,
-                      underAppBar: false,
-                    ))
-              : _usersTab(),
-        ),
-      ],
+          Expanded(
+            child: TabBarView(
+              controller: _tabs,
+              children: [
+                for (final channel in _channels)
+                  KeepAlivePage(
+                    key: ValueKey('$_submitted-${channel.type}'),
+                    child: _channelBody(channel),
+                  ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
+  }
+
+  Widget _channelBody(SearchChannel channel) {
+    switch (channel.kind) {
+      case SearchResultKind.users:
+        return _usersTab();
+      case SearchResultKind.statuses:
+        final pager = _statusPagers[channel.type];
+        if (pager == null) return const LoadingFooter();
+        return PagedStatusList(
+          pager: pager,
+          emptyText: '没有找到相关${channel.name == '综合' ? '微博' : channel.name}',
+          bottomInset: 18,
+          underAppBar: false,
+        );
+      case SearchResultKind.entries:
+        final pager = _entryPagers[channel.type];
+        if (pager == null) return const LoadingFooter();
+        return _EntryList(pager: pager, emptyText: '没有找到相关${channel.name}');
+    }
   }
 
   Widget _usersTab() {
@@ -583,36 +626,79 @@ String _userAbout(User user) {
   return about.isEmpty ? '用户' : about;
 }
 
-/// 综合 / 实时 / 热门 above the results, shaped like the chips on the hot-search boards.
-class _SortChip extends StatelessWidget {
-  const _SortChip({required this.label, required this.selected, required this.onTap});
+/// A channel of topics, super topics, places and the like: one row each.
+class _EntryList extends StatelessWidget {
+  const _EntryList({required this.pager, required this.emptyText});
 
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
+  final PagingController<SearchEntry> pager;
+  final String emptyText;
+
+  void _open(BuildContext context, SearchEntry entry) {
+    if (entry.isTopic) {
+      openTopic(context, entry.title);
+    } else if (entry.url != null) {
+      openLink(context, entry.url!, title: entry.title);
+    } else {
+      openHotTopic(context, query: entry.title);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final chrome = InfChrome.of(context);
-    return Material(
-      color: selected ? chrome.fill(scheme, scheme.primaryContainer, 1) : chrome.fill(scheme, scheme.surfaceContainerHigh, 0.6),
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: AnimatedDefaultTextStyle(
-          duration: InfMotion.feedback,
-          style: Theme.of(context).textTheme.labelLarge!.copyWith(
-                color: selected ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+    return AnimatedBuilder(
+      animation: pager,
+      builder: (context, _) {
+        if (pager.items.isEmpty) {
+          if (pager.error != null) return Center(child: ErrorRetry(message: pager.error.toString(), onRetry: pager.refresh));
+          if (pager.loading || pager.refreshedAt == null) return const LoadingFooter();
+          return EmptyHint(text: emptyText, icon: Icons.manage_search_rounded);
+        }
+        final scheme = Theme.of(context).colorScheme;
+        return NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            pager.onScroll(notification);
+            return false;
+          },
+          child: InfRefreshIndicator(
+            onRefresh: pager.refresh,
+            child: ListView.builder(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: EdgeInsets.only(
+                bottom: 22 + MediaQuery.paddingOf(context).bottom,
+                left: contentGutter(context),
+                right: contentGutter(context),
               ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: Text(label),
+              itemCount: pager.items.length + 1,
+              itemBuilder: (context, index) {
+                if (index == pager.items.length) {
+                  if (pager.loadingMore) return const LoadingFooter();
+                  return pager.hasMore ? const SizedBox(height: 24) : const LoadingFooter(text: '没有更多了');
+                }
+                final entry = pager.items[index];
+                final about = [entry.subtitle, entry.detail].whereType<String>().join(' · ');
+                return ListTile(
+                  leading: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: SizedBox(
+                      width: 46,
+                      height: 46,
+                      child: entry.imageUrl == null
+                          ? ColoredBox(
+                              color: scheme.surfaceContainerHigh,
+                              child: Icon(entry.isTopic ? Icons.tag_rounded : Icons.link_rounded, color: scheme.onSurfaceVariant),
+                            )
+                          : SmartImage(url: entry.imageUrl, fit: BoxFit.cover),
+                    ),
+                  ),
+                  title: Text(entry.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: about.isEmpty ? null : Text(about, maxLines: 2, overflow: TextOverflow.ellipsis),
+                  onTap: () => _open(context, entry),
+                );
+              },
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

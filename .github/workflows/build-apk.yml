@@ -2,15 +2,20 @@ name: build-apk
 
 on:
   workflow_dispatch:
+  # release.yml calls this on a version tag; the caller passes the keystore secret.
+  workflow_call:
+    secrets:
+      DEBUG_KEYSTORE_BASE64:
+        required: true
   push:
     branches: [dev, main]
 
-concurrency:
-  group: build-apk-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   apk:
+    # Job-level, not workflow-level: this file is also called from release.yml.
+    concurrency:
+      group: build-apk-${{ github.ref }}
+      cancel-in-progress: true
     # Pinned: ubuntu-latest moved to Ubuntu 26, where android-actions/setup-android fails.
     runs-on: ubuntu-24.04
     # The version pinned below is the one pubspec.lock and .metadata were built with.
@@ -65,8 +70,15 @@ jobs:
 
       - run: flutter build apk --release --target-platform android-arm64
 
+      - name: Name the APK
+        run: |
+          version=$(sed -nE 's/^version:[[:space:]]*([^+[:space:]]+).*/\1/p' pubspec.yaml)
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk "dist/INF-$version.apk"
+          ls -lh dist/
+
       - uses: actions/upload-artifact@v4
         with:
           name: inf-apk-${{ github.sha }}
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: dist/*.apk
           if-no-files-found: error

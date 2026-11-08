@@ -50,13 +50,14 @@ ThemeData infTheme(Brightness brightness, AccentTheme accent, [InfLook look = In
     extensions: [look],
     pageTransitionsTheme: PageTransitionsTheme(
       builders: {
-        // Fade-forwards for taps; while the system back gesture is in progress the page shrinks
-        // with the finger and shows the one underneath.
-        TargetPlatform.android: const PredictiveBackPageTransitionsBuilder(),
+        // Fade-forwards, and its reverse for every way back. Not predictive back: the page below
+        // reads the navigator-wide gesture flag too, swapped its transition for the gesture's
+        // own, clipped to the screen's corners, and jumped back once the flag cleared — well after
+        // the page on top had faded, so leaving a post looked unlike leaving the post it reposts.
+        TargetPlatform.android: const FadeForwardsPageTransitionsBuilder(),
         TargetPlatform.iOS: const CupertinoPageTransitionsBuilder(),
         TargetPlatform.macOS: const CupertinoPageTransitionsBuilder(),
-        // HarmonyOS has no predictive back, so it gets the same fade-forwards without it. Found by
-        // name: only the OpenHarmony fork of Flutter has this platform.
+        // Found by name: only the OpenHarmony fork of Flutter has this platform.
         for (final platform in TargetPlatform.values)
           if (platform.name == 'ohos') platform: const FadeForwardsPageTransitionsBuilder(),
       },

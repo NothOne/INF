@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'links.dart';
 import 'models.dart';
@@ -93,7 +94,7 @@ String weiboHtmlToText(String html) => weiboHtmlToRichText(html).text;
 /// those links: their own words (a place's name, a super topic, 抽奖详情) and kind.
 ({String text, Map<String, WeiboLink> links}) weiboHtmlToRichText(String html) {
   final links = <String, WeiboLink>{};
-  final withoutAnchors = html.replaceAllMapped(_anchorRegex, (match) {
+  final withoutAnchors = html.replaceFirst(_voiceStub, '').replaceAllMapped(_anchorRegex, (match) {
     final attributes = match.group(1) ?? '';
     final body = match.group(2) ?? '';
     final href = _attribute(attributes, 'href');
@@ -423,7 +424,8 @@ Status? toStatus(dynamic element) {
   if (json == null) return null;
   final id = idOf(json['id']) ?? idOf(json['mid']);
   if (id == null) return null;
-  final rich = weiboHtmlToRichText(textOf(json['text']) ?? textOf(json['raw_text']) ?? '');
+  final html = textOf(json['text']) ?? textOf(json['raw_text']) ?? '';
+  final rich = weiboHtmlToRichText(html);
   final convertedText = rich.text;
   final pageInfo = asMap(json['page_info']);
   final pics = _imagesFromPics(json);
@@ -467,6 +469,7 @@ Status? toStatus(dynamic element) {
         : null,
     article: _articleCard(pageInfo),
     card: _linkCard(pageInfo),
+    audio: _voiceOf(asMap(json['blog_audio'])) ?? _audioFrom(pageInfo) ?? _voiceFromStub(html),
     links: rich.links,
     isLongText: boolOf(json['isLongText']),
     region: textOf(json['region_name']),
@@ -642,6 +645,63 @@ Media? _videoFrom(Map<String, dynamic>? pageInfo) {
   );
 }
 
+/// A voice post's recording. Its `duration` is in milliseconds.
+AudioClip? _voiceOf(Map<String, dynamic>? audio) {
+  final url = textOf(audio?['media_url']);
+  if (audio == null || url == null) return null;
+  return AudioClip(
+    url: _secureUrl(url),
+    title: '语音',
+    durationMs: intOf(audio['duration']) ?? 0,
+    transcript: textOf(audio['transcript'])?.trim(),
+    voice: true,
+  );
+}
+
+/// A podcast or any other sound card (weibo.com's `object_type: podcast_audio`, `type: 44`). Its
+/// `duration` is in seconds, like a video's.
+AudioClip? _audioFrom(Map<String, dynamic>? pageInfo) {
+  if (pageInfo == null) return null;
+  final type = textOf(pageInfo['type']) ?? '';
+  final objectType = textOf(pageInfo['object_type']) ?? '';
+  if (!objectType.contains('audio') && !const {'audio', '44', 'podcast'}.contains(type)) return null;
+  final media = asMap(pageInfo['media_info']);
+  String? url;
+  for (final key in ['stream_url_hd', 'stream_url', 'mp3_url', 'url']) {
+    url = textOf(media?[key]);
+    if (url != null) break;
+  }
+  if (url == null) return null;
+  final cardInfo = asMap(pageInfo['card_info']);
+  final pagePic = pageInfo['page_pic'];
+  final cover = pagePic is Map ? textOf(pagePic['url']) : textOf(pagePic);
+  final duration = doubleOf(media?['duration']);
+  return AudioClip(
+    url: _secureUrl(url),
+    title: textOf(cardInfo?['title']) ?? textOf(pageInfo['page_title']) ?? textOf(pageInfo['content1']) ?? '音频',
+    author: textOf(cardInfo?['author_name']) ?? textOf(asMap(media?['author_info'])?['screen_name']),
+    coverUrl: textOf(cardInfo?['cover']) ?? cover,
+    durationMs: duration == null ? 0 : (duration * 1000).round(),
+  );
+}
+
+/// m.weibo.cn leaves a voice post's `blog_audio` out and starts its text with
+/// `[语音10"]请用最新版手机微博app收听原声<br />` instead (`1'05"` past a minute).
+final _voiceStub = RegExp(r'^\s*\[语音([^\]]{0,16})\]\s*请用最新版[^<]{0,12}收听原声\s*(?:<br\s*/?>)?');
+final _voiceLength = RegExp(r'''^(?:(\d+)')?(\d+)''');
+
+/// The voice clip behind [_voiceStub], its address left for weibo.com to sign at play time.
+AudioClip? _voiceFromStub(String html) {
+  final stub = _voiceStub.firstMatch(html);
+  if (stub == null) return null;
+  final length = _voiceLength.firstMatch(stub.group(1)!.replaceAll('&quot;', '"').trim());
+  final seconds = length == null ? 0 : (int.parse(length.group(1) ?? '0') * 60 + int.parse(length.group(2)!));
+  return AudioClip(url: '', title: '语音', durationMs: seconds * 1000, voice: true);
+}
+
+/// http → https: Android plays no cleartext media.
+String _secureUrl(String url) => url.startsWith('http://') ? 'https://${url.substring(7)}' : url;
+
 Article? _articleCard(Map<String, dynamic>? pageInfo) {
   if (pageInfo == null) return null;
   const articleHosts = {'card.weibo.com', 'media.weibo.cn'};
@@ -693,24 +753,30 @@ String? _pageUrlOf(Map<String, dynamic> pageInfo) {
   return null;
 }
 
-/// Cards other parts of the post already show (the video, an article, the place line, a topic
-/// that is in the text) are left out; everything else gets the generic card.
+/// Cards other parts of the post already show (a playable video or sound, an article, the place
+/// line, a topic that is in the text) are left out; everything else gets the generic card, also
+/// one Weibo left without an address or title, which [WeiboApi.cardUrl] and the fallback page
+/// still open.
 LinkCard? _linkCard(Map<String, dynamic>? pageInfo) {
   if (pageInfo == null || _videoFrom(pageInfo) != null || _articleCard(pageInfo) != null) return null;
+  if (_audioFrom(pageInfo) != null) return null;
   final banner = _bannerCard(pageInfo);
   if (banner != null) return banner;
   final type = textOf(pageInfo['type']) ?? '';
   final objectType = textOf(pageInfo['object_type']) ?? '';
-  if (const {'video', 'place', 'topic', 'search_topic', 'article'}.contains(type) || objectType == 'video') return null;
-  final url = _pageUrlOf(pageInfo);
-  final title = textOf(pageInfo['page_title']) ?? textOf(pageInfo['content1']) ?? '';
-  if (url == null || title.isEmpty) return null;
+  if (const {'place', 'topic', 'search_topic', 'article'}.contains(type)) return null;
+  final cardInfo = asMap(pageInfo['card_info']);
+  final media = asMap(pageInfo['media_info']);
+  final video = type == 'video' || objectType == 'video';
+  final url = _pageUrlOf(pageInfo) ?? textOf(media?['h5_url']) ?? textOf(cardInfo?['scheme']) ?? '';
   final content1 = textOf(pageInfo['content1']);
   final content2 = textOf(pageInfo['content2']) ?? textOf(pageInfo['page_desc']);
-  final summary = [content1, content2].firstWhere((value) => value != null && value.isNotEmpty && value != title, orElse: () => null);
   final pagePic = pageInfo['page_pic'];
-  final image = pagePic is Map ? textOf(pagePic['url']) : textOf(pagePic);
-  final kind = type == 'hudongvote' || objectType == 'hudongvote' ? LinkKind.vote : linkKindOf(url);
+  final image = (pagePic is Map ? textOf(pagePic['url']) : textOf(pagePic)) ?? textOf(cardInfo?['cover']) ?? textOf(cardInfo?['pic_url']);
+  var title = textOf(pageInfo['page_title']) ?? textOf(cardInfo?['title']) ?? content1 ?? '';
+  final kind = type == 'hudongvote' || objectType == 'hudongvote'
+      ? LinkKind.vote
+      : (video ? LinkKind.video : (type == 'music' || objectType.contains('audio') ? LinkKind.audio : linkKindOf(url)));
   final typeLabel = switch (type) {
     'hudongvote' => '投票',
     'wenda' => '问答',
@@ -722,8 +788,14 @@ LinkCard? _linkCard(Map<String, dynamic>? pageInfo) {
     'book' => '书籍',
     'goods' || 'shop' => '商品',
     'event' || 'activity' => '活动',
-    _ => kind == LinkKind.web ? siteNameOf(url) ?? '网页' : linkKindLabel(kind),
+    'story' => '故事',
+    'panorama' => '全景',
+    _ when video => '视频',
+    _ => kind == LinkKind.web ? (url.isEmpty ? '卡片' : siteNameOf(url) ?? '网页') : linkKindLabel(kind),
   };
+  if (title.isEmpty && url.isEmpty && image == null) return null;
+  if (title.isEmpty) title = video ? '这个视频无法在这里播放' : typeLabel;
+  final summary = [content1, content2].firstWhere((value) => value != null && value.isNotEmpty && value != title, orElse: () => null);
   return LinkCard(
     url: url,
     title: title,
@@ -778,6 +850,11 @@ List<Map<String, dynamic>> mblogCards(dynamic cards) {
     if (intOf(card['card_type']) == 9) {
       final own = asMap(card['mblog']);
       if (own != null) result.add(own);
+    }
+    // Picture search draws rows of pictures, each with the post it belongs to.
+    for (final pic in asList(card['pics'])) {
+      final own = asMap(asMap(pic)?['mblog']);
+      if (own != null && !result.any((mblog) => idOf(mblog['id']) == idOf(own['id']))) result.add(own);
     }
     for (final nested in asList(card['card_group'])) {
       visit(nested);
@@ -1332,6 +1409,149 @@ SearchSuggestions parseSearchSuggestions(dynamic data) {
     if (user != null && user.screenName.isNotEmpty && userIds.add(user.id)) users.add(user);
   }
   return SearchSuggestions(words: words, users: users);
+}
+
+final _channelType = RegExp(r'type(?:=|%3D)(\d+)', caseSensitive: false);
+
+/// The tabs a search offers, from the head of its first page
+/// (`cardlistInfo.cardlist_head_cards[].channel_list`, each naming its `100103type=<n>&q=…`
+/// container). 用户 is put back when the list leaves it out. Null when the page does not say.
+List<SearchChannel>? parseSearchChannels(dynamic data) {
+  final info = asMap(asMap(data)?['cardlistInfo']);
+  final channels = <SearchChannel>[];
+  final seen = <int>{};
+  for (final head in asList(info?['cardlist_head_cards'])) {
+    for (final element in asList(asMap(head)?['channel_list'])) {
+      final channel = asMap(element);
+      final name = textOf(channel?['name'])?.trim();
+      final container = textOf(channel?['containerid']) ?? '';
+      final type = intOf(_channelType.firstMatch(container)?.group(1)) ?? intOf(channel?['id']);
+      if (name == null || type == null || !seen.add(type)) continue;
+      channels.add(SearchChannel(name, type));
+    }
+  }
+  if (channels.length < 2) return null;
+  if (!seen.contains(SearchChannel.users)) channels.insert(math.min(3, channels.length), const SearchChannel('用户', SearchChannel.users));
+  return channels;
+}
+
+/// A search page's cards that are neither posts nor people: topics (`card_type` 8 with a
+/// `title_sub`), super topics, places and whatever else a channel lists.
+List<SearchEntry> parseSearchEntries(dynamic data) {
+  final result = <SearchEntry>[];
+  String? plain(dynamic value) {
+    final text = textOf(value);
+    if (text == null) return null;
+    final clean = weiboHtmlToText(text).trim();
+    return clean.isEmpty ? null : clean;
+  }
+
+  void visit(dynamic element) {
+    final card = asMap(element);
+    if (card == null) return;
+    final type = intOf(card['card_type']);
+    if (type != 9 && type != 11 && type != 58 && card['user'] == null && card['mblog'] == null) {
+      final title = plain(card['title_sub']) ?? plain(card['title']) ?? plain(card['desc']);
+      final url = textOf(card['scheme']) ?? textOf(card['openurl']);
+      final subtitle = plain(card['desc1']);
+      if (title != null && (url != null || subtitle != null)) {
+        result.add(SearchEntry(
+          title: title,
+          subtitle: subtitle,
+          detail: plain(card['desc2']),
+          imageUrl: textOf(card['pic']) ?? textOf(card['icon']),
+          url: url,
+        ));
+      }
+    }
+    for (final nested in asList(card['card_group'])) {
+      visit(nested);
+    }
+  }
+
+  for (final card in asList(asMap(data)?['cards'])) {
+    visit(card);
+  }
+  return result;
+}
+
+/// weibo.com's `profile/info` `tabList`, in INF's order; the posts and 精选 tabs always come.
+List<ProfileTab> parseProfileTabs(dynamic data) {
+  final keys = {for (final tab in asList(asMap(data)?['tabList'])) textOf(asMap(tab)?['name'])};
+  if (keys.isEmpty) return ProfileTab.fallback;
+  return [
+    for (final tab in ProfileTab.values)
+      if (tab == ProfileTab.posts || tab == ProfileTab.featured || keys.contains(tab.key)) tab,
+  ];
+}
+
+/// weibo.com's `profile/info` (tabs, `user.status_total_counter`) and `profile/detail` (facts).
+ProfileExtras parseProfileExtras(dynamic info, dynamic detail) {
+  final counter = asMap(asMap(asMap(info)?['user'])?['status_total_counter']);
+  final about = asMap(detail);
+  String? plain(dynamic value) {
+    final text = textOf(value)?.trim();
+    return text == null || text.isEmpty ? null : text;
+  }
+
+  final ip = plain(about?['ip_location']);
+  final birthday = plain(about?['birthday']);
+  final createdAt = plain(about?['created_at']);
+  final credit = plain(asMap(about?['sunshine_credit'])?['level']);
+  return ProfileExtras(
+    tabs: parseProfileTabs(info),
+    interactions: intOf(counter?['total_cnt']),
+    likes: intOf(counter?['like_cnt']),
+    comments: intOf(counter?['comment_cnt']),
+    reposts: intOf(counter?['repost_cnt']),
+    facts: [
+      if (ip != null) ip.startsWith('IP') ? ip : 'IP属地：$ip',
+      ?birthday,
+      if (createdAt != null && createdAt.length >= 10) '${createdAt.substring(0, 10)} 加入微博',
+      ?credit,
+      for (final label in asList(about?['label_desc'])) ?plain(asMap(label)?['name']),
+    ],
+  );
+}
+
+/// weibo.com's cursor lists of posts (`profile/getWaterFallContent`, `profile/getAudioList`):
+/// `{list, next_cursor}`, the cursor `-1` or `0` at the end.
+PageResult<Status> parseCursorStatuses(dynamic data) {
+  final root = asMap(data);
+  final items = _statusesOf(asList(root?['list']));
+  final next = idOf(root?['next_cursor']);
+  final more = items.isNotEmpty && next != null && next != '0' && next != '-1';
+  return PageResult(items, more ? next : null);
+}
+
+/// weibo.com's `profile/getImageWall`: picture ids with the post each came from, `since_id` `0`
+/// at the end.
+PageResult<ProfilePhoto> parseImageWall(dynamic data) {
+  final root = asMap(data);
+  final photos = <ProfilePhoto>[];
+  for (final element in asList(root?['list'])) {
+    final item = asMap(element);
+    final pid = textOf(item?['pid']);
+    if (item == null || pid == null) continue;
+    photos.add(ProfilePhoto(
+      Media.image(
+        'https://wx1.sinaimg.cn/mw2000/$pid.jpg',
+        previewUrl: 'https://wx1.sinaimg.cn/orj360/$pid.jpg',
+        liveUrl: _liveUrlOf(item, 'video'),
+      ),
+      statusId: idOf(item['mid']),
+    ));
+  }
+  final next = idOf(root?['since_id']);
+  return PageResult(photos, photos.isEmpty || next == null || next == '0' ? null : next);
+}
+
+/// A post's sound out of weibo.com's copy of it, which signs the address and carries the
+/// transcript.
+AudioClip? audioClipOf(dynamic status) {
+  final json = asMap(status);
+  if (json == null) return null;
+  return _voiceOf(asMap(json['blog_audio'])) ?? _audioFrom(asMap(json['page_info']));
 }
 
 final _statLabelFirst = RegExp(r'(阅读|讨论|原创|互动)(?:量|数|人数)?\s*([\d.]+\s*[万亿]?)');

@@ -4,12 +4,12 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/motion.dart';
 import '../../core/haptics.dart';
 import '../../core/image_url.dart';
+import '../../core/media_save.dart';
 import '../../core/models.dart';
 import '../../core/native.dart';
 import '../../core/share.dart';
@@ -142,40 +142,22 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
     }
   }
 
-  /// The picture as a file other apps can take. sinaimg refuses requests without a Weibo Referer,
-  /// so a bare link is useless outside the app; this hands over the bytes, usually straight from
-  /// the cache the viewer has just drawn from.
-  Future<({String path, String name, String mime})> _exportFile(int index) async {
-    final cached = await DefaultCacheManager().getSingleFile(
-      sanitizeImageUrl(_urlAt(index)),
-      headers: weiboImageHeaders(),
-    );
-    final type = await _typeOf(cached);
-    final name = 'INF-' + DateTime.now().millisecondsSinceEpoch.toString() + type.extension;
-    final path = (await getTemporaryDirectory()).path + '/' + name;
-    await cached.copy(path);
-    return (path: path, name: name, mime: type.mime);
-  }
+  /// The picture as a file other apps can take; a bare sinaimg link is useless outside the app.
+  Future<({String path, String name, String mime})> _exportFile(int index) => exportImage(_urlAt(index));
 
-  /// From the file's first bytes: the URL says `.jpg` for GIFs too.
-  Future<({String extension, String mime})> _typeOf(File file) async {
-    final handle = await file.open();
-    final head = await handle.read(12);
-    await handle.close();
-    bool starts(List<int> magic, [int at = 0]) {
-      if (head.length < at + magic.length) return false;
-      for (var i = 0; i < magic.length; i++) {
-        if (head[at + i] != magic[i]) return false;
-      }
-      return true;
+  Future<void> _saveAll() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    final total = widget.images.length;
+    showMessage(context, '正在保存 $total 张图片…');
+    try {
+      final result = await saveImagesToGallery(widget.images);
+      if (!mounted) return;
+      (result.saved == total ? Haptic.success : Haptic.error).play();
+      showMessage(context, saveAllMessage(result, total));
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
-
-    if (starts([0x89, 0x50, 0x4E, 0x47])) return (extension: '.png', mime: 'image/png');
-    if (starts([0x47, 0x49, 0x46, 0x38])) return (extension: '.gif', mime: 'image/gif');
-    if (starts([0x52, 0x49, 0x46, 0x46]) && starts([0x57, 0x45, 0x42, 0x50], 8)) {
-      return (extension: '.webp', mime: 'image/webp');
-    }
-    return (extension: '.jpg', mime: 'image/jpeg');
   }
 
   Future<void> _shareImage(int index) async {
@@ -220,7 +202,7 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
           saved = await Native.saveMotionPhoto(file.path, clip.path, name);
         case _SaveAs.clip:
           final clip = await _liveClip(index);
-          final name = 'INF-' + DateTime.now().millisecondsSinceEpoch.toString() + '.mp4';
+          final name = exportName('.mp4');
           saved = await Native.saveVideoToGallery(clip.path, name, remux: true);
       }
       if (!mounted) return;
@@ -264,6 +246,15 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
                 save(Icons.movie_outlined, '仅保存视频', _SaveAs.clip),
               ] else
                 save(Icons.download_rounded, '保存图片', _SaveAs.picture),
+              if (widget.images.length > 1)
+                ListTile(
+                  leading: const Icon(Icons.collections_outlined),
+                  title: Text(saveAllLabel(widget.images)),
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    _saveAll();
+                  },
+                ),
               ListTile(
                 leading: const Icon(Icons.ios_share_rounded),
                 title: const Text('分享图片'),
@@ -1026,7 +1017,6 @@ class _LiveOverlayState extends State<_LiveOverlay> {
           controller.dispose();
           return;
         }
-        await controller.setVolume(0);
         controller.addListener(_onTick);
         _controller = controller;
       } catch (_) {

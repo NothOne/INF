@@ -32,8 +32,7 @@ import '../features/web/web_page.dart';
 
 /// Every page moves the one way [Prefs.pageMotion] says. [PageMotion.expand] grows it out of the
 /// [ContainerOrigin] the tap captured just before, or out of the touch itself; [PageMotion.slide]
-/// is MaterialPageRoute, so the app-wide PageTransitionsTheme (fade-forwards with predictive back
-/// on Android, Cupertino on iOS) owns the transition.
+/// is the theme's fade-forwards, played in reverse on the way back.
 ///
 /// [pane] marks a page that may open in the [DetailPane] beside a list, and names what it shows
 /// so the list can mark it; it does whenever [context] is in or beside one. Everything else opens
