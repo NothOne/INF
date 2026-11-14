@@ -78,23 +78,25 @@ jobs:
 
       - name: Resolve dependencies
         run: |
-          # Its own step, not folded into the build: the git dependencies (gitcode.com) are the
-          # part CI fails on when the network to them changes, and this way that error is the
-          # whole log instead of the first line of a 100-line build.
-          flutter pub get 2>&1 | tee /tmp/pubget.log
-          test "${PIPESTATUS[0]}" -eq 0 || {
+          # Its own step, not folded into the build: the dependencies are the part CI fails on
+          # when the network to them changes, and this way that error is the whole log instead of
+          # the first line of a 100-line build.
+          #
+          # Written for `sh` (dash), which is what a `run:` block gets here: no bash arrays, so no
+          # `${PIPESTATUS[0]}` — that substitution is what failed this step with "Bad substitution"
+          # once the dependencies themselves resolved.
+          flutter pub get > /tmp/pubget.log 2>&1 || {
             echo "::group::flutter pub get failed"
             cat /tmp/pubget.log
             echo "::endgroup::"
             exit 1
           }
+          tail -n 3 /tmp/pubget.log
 
       - name: Build HAP
         run: |
-          set +e
-          flutter build hap --release 2>&1 | tee /tmp/build.log
-          rc=${PIPESTATUS[0]}
-          set -e
+          flutter build hap --release > /tmp/build.log 2>&1 && rc=0 || rc=$?
+          tail -n 20 /tmp/build.log
           # ohos/build-profile.json5 declares no signingConfigs, so hvigor prints
           # a "configure signing in DevEco" notice and exits non-zero *after*
           # writing the unsigned HAP. Judge by the file, not the exit code.
