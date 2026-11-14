@@ -56,6 +56,11 @@ jobs:
           node -v
           java -version 2>&1 | head -1
           echo "SDK: $HOS_SDK_HOME"
+          echo "--- versions the build depends on ---"
+          git -C "$FLUTTER_HOME" log --oneline -1 2>/dev/null || echo "no flutter git dir"
+          cat "$FLUTTER_HOME/version" 2>/dev/null || true
+          df -h / | tail -1
+          free -g | head -2
 
       - name: Restore signing material
         if: inputs.sign
@@ -72,14 +77,22 @@ jobs:
       - name: Build HAP
         run: |
           set +e
-          flutter build hap --release
-          rc=$?
+          flutter build hap --release 2>&1 | tee /tmp/build.log
+          rc=${PIPESTATUS[0]}
           set -e
           # ohos/build-profile.json5 declares no signingConfigs, so hvigor prints
           # a "configure signing in DevEco" notice and exits non-zero *after*
           # writing the unsigned HAP. Judge by the file, not the exit code.
           HAP=ohos/entry/build/default/outputs/default/entry-default-unsigned.hap
           if [ ! -f "$HAP" ]; then
+            {
+              echo "::group::flutter build hap failed (exit $rc)"
+              cat /tmp/build.log
+              echo "::endgroup::"
+              echo "::group::hvigor log"
+              tail -n 200 ohos/.hvigor/outputs/build-logs/build.log 2>/dev/null || echo "no hvigor log"
+              echo "::endgroup::"
+            }
             echo "No HAP produced (flutter exited $rc)." >&2
             exit 1
           fi
