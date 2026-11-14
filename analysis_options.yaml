@@ -13,6 +13,12 @@ analyzer:
   exclude:
     - build/**
     - android/**
+    # Vendored plugins (see the note in pubspec.yaml). Their code targets the HarmonyOS Flutter
+    # fork (`OhosView`, `OhosViewController`), which the stock SDK used for `flutter analyze` and
+    # for the Android build cannot resolve; they also carry their own tests and pigeon generators,
+    # which pull dev-only packages. They are still compiled by both builds — this only keeps the
+    # analyser off sources that are not this app's.
+    - third_party/**
 
 linter:
   # The lint rules applied to this project can be customized in the

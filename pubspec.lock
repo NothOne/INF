@@ -335,11 +335,9 @@ packages:
   image_picker_ohos:
     dependency: "direct main"
     description:
-      path: "packages/image_picker/image_picker_ohos"
-      ref: bddb2c981fcf826eaf19ed97f55113708aa55727
-      resolved-ref: bddb2c981fcf826eaf19ed97f55113708aa55727
-      url: "https://gitcode.com/openharmony-tpc/flutter_packages.git"
-    source: git
+      path: "third_party/image_picker_ohos"
+      relative: true
+    source: path
     version: "0.8.7+4"
   image_picker_platform_interface:
     dependency: transitive
@@ -542,11 +540,9 @@ packages:
   path_provider_ohos:
     dependency: "direct main"
     description:
-      path: "packages/path_provider/path_provider_ohos"
-      ref: bddb2c981fcf826eaf19ed97f55113708aa55727
-      resolved-ref: bddb2c981fcf826eaf19ed97f55113708aa55727
-      url: "https://gitcode.com/openharmony-tpc/flutter_packages.git"
-    source: git
+      path: "third_party/path_provider_ohos"
+      relative: true
+    source: path
     version: "2.2.1"
   path_provider_platform_interface:
     dependency: transitive
@@ -655,11 +651,9 @@ packages:
   shared_preferences_ohos:
     dependency: "direct main"
     description:
-      path: "packages/shared_preferences/shared_preferences_ohos"
-      ref: bddb2c981fcf826eaf19ed97f55113708aa55727
-      resolved-ref: bddb2c981fcf826eaf19ed97f55113708aa55727
-      url: "https://gitcode.com/openharmony-tpc/flutter_packages.git"
-    source: git
+      path: "third_party/shared_preferences_ohos"
+      relative: true
+    source: path
     version: "2.2.0"
   shared_preferences_platform_interface:
     dependency: transitive
@@ -701,11 +695,9 @@ packages:
   sqflite:
     dependency: "direct overridden"
     description:
-      path: sqflite
-      ref: "9627805b994b89d8abc273a450bfb176142c5860"
-      resolved-ref: "9627805b994b89d8abc273a450bfb176142c5860"
-      url: "https://gitcode.com/CPF-Flutter/flutter_sqflite.git"
-    source: git
+      path: "third_party/sqflite"
+      relative: true
+    source: path
     version: "2.4.2+1"
   sqflite_android:
     dependency: transitive
@@ -734,11 +726,9 @@ packages:
   sqflite_ohos:
     dependency: transitive
     description:
-      path: sqflite_ohos
-      ref: "9627805b994b89d8abc273a450bfb176142c5860"
-      resolved-ref: "9627805b994b89d8abc273a450bfb176142c5860"
-      url: "https://gitcode.com/CPF-Flutter/flutter_sqflite.git"
-    source: git
+      path: "third_party/sqflite_ohos"
+      relative: true
+    source: path
     version: "2.4.2"
   sqflite_platform_interface:
     dependency: transitive
@@ -879,11 +869,9 @@ packages:
   video_player_ohos:
     dependency: "direct main"
     description:
-      path: "packages/video_player/video_player_ohos"
-      ref: bddb2c981fcf826eaf19ed97f55113708aa55727
-      resolved-ref: bddb2c981fcf826eaf19ed97f55113708aa55727
-      url: "https://gitcode.com/openharmony-tpc/flutter_packages.git"
-    source: git
+      path: "third_party/video_player_ohos"
+      relative: true
+    source: path
     version: "1.0.0+2"
   video_player_platform_interface:
     dependency: transitive
@@ -936,11 +924,9 @@ packages:
   webview_flutter_ohos:
     dependency: "direct main"
     description:
-      path: "packages/webview_flutter/webview_flutter_ohos"
-      ref: bddb2c981fcf826eaf19ed97f55113708aa55727
-      resolved-ref: bddb2c981fcf826eaf19ed97f55113708aa55727
-      url: "https://gitcode.com/openharmony-tpc/flutter_packages.git"
-    source: git
+      path: "third_party/webview_flutter_ohos"
+      relative: true
+    source: path
     version: "3.15.0"
   webview_flutter_platform_interface:
     dependency: "direct overridden"

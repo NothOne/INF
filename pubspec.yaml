@@ -25,40 +25,27 @@ dependencies:
 
   # HarmonyOS NEXT implementations of the plugins above, from the OpenHarmony-Flutter ports.
   # Other platforms ignore them; build for ohos with the flutter_flutter fork (see README).
+  #
+  # Vendored into third_party instead of pubspec git dependencies: they came from gitcode.com,
+  # which answers GitHub Actions' addresses with HTTP 418 ("I'm a teapot"), so `flutter pub get`
+  # failed there in two seconds while working from a normal network. The copies are the packages
+  # at the refs this file used to name; `example/` is left out.
   path_provider_ohos:
-    git:
-      url: https://gitcode.com/openharmony-tpc/flutter_packages.git
-      ref: bddb2c981fcf826eaf19ed97f55113708aa55727
-      path: packages/path_provider/path_provider_ohos
+    path: third_party/path_provider_ohos
   shared_preferences_ohos:
-    git:
-      url: https://gitcode.com/openharmony-tpc/flutter_packages.git
-      ref: bddb2c981fcf826eaf19ed97f55113708aa55727
-      path: packages/shared_preferences/shared_preferences_ohos
+    path: third_party/shared_preferences_ohos
   image_picker_ohos:
-    git:
-      url: https://gitcode.com/openharmony-tpc/flutter_packages.git
-      ref: bddb2c981fcf826eaf19ed97f55113708aa55727
-      path: packages/image_picker/image_picker_ohos
+    path: third_party/image_picker_ohos
   video_player_ohos:
-    git:
-      url: https://gitcode.com/openharmony-tpc/flutter_packages.git
-      ref: bddb2c981fcf826eaf19ed97f55113708aa55727
-      path: packages/video_player/video_player_ohos
+    path: third_party/video_player_ohos
   webview_flutter_ohos:
-    git:
-      url: https://gitcode.com/openharmony-tpc/flutter_packages.git
-      ref: bddb2c981fcf826eaf19ed97f55113708aa55727
-      path: packages/webview_flutter/webview_flutter_ohos
+    path: third_party/webview_flutter_ohos
   liquid_glass_widgets: ^1.17.0
 
 dependency_overrides:
-  # sqflite (under flutter_cache_manager) with its ohos implementation.
+  # sqflite (under flutter_cache_manager) with its ohos implementation; see the note above.
   sqflite:
-    git:
-      url: https://gitcode.com/CPF-Flutter/flutter_sqflite.git
-      ref: 9627805b994b89d8abc273a450bfb176142c5860
-      path: sqflite
+    path: third_party/sqflite
   # webview_flutter_ohos pins the fork's copy of this; the pub.dev one is what webview_flutter uses.
   webview_flutter_platform_interface: ^2.14.0
   # cached_network_image builds on these; see third_party/material_ui.
