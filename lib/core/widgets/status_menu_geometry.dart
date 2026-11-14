@@ -83,7 +83,19 @@ class StatusMenuGeometry {
   /// Interpolated as a rectangle so the growth reads as the card opening into the menu rather than
   /// a panel fading in over it. The corner radius travels with it: the menu is a rounded card, the
   /// widget it comes from may be a card of any shape.
-  Rect rectAt(double t) => Rect.lerp(origin, target, _ease(t))!;
+  ///
+  /// It only ever grows. A plain `lerp` from the held card would run backwards whenever the card is
+  /// the wider of the two — a post spans the screen and the menu is 268 wide, so the menu opened by
+  /// shrinking out of the card instead of growing inside it. The start is held to the target's size
+  /// at most, shrunk about its own centre so it still comes from the card that was held.
+  Rect rectAt(double t) => Rect.lerp(_start, target, _ease(t))!;
+
+  /// The largest rectangle at [origin] that is no bigger than [target], centred on origin's centre.
+  Rect get _start => Rect.fromCenter(
+        center: origin.center,
+        width: math.min(origin.width, target.width),
+        height: math.min(origin.height, target.height),
+      );
 
   double radiusAt(double t, {required double from, required double to}) =>
       lerpDouble(from, to, _ease(t))!;

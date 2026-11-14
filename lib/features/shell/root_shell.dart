@@ -7,6 +7,8 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
 import '../../core/container_route.dart';
 import '../../core/haptics.dart';
 import '../../core/layout.dart';
+import '../../core/links.dart';
+import '../../core/liquid_glass.dart' show GlassDuring;
 import '../../core/look.dart';
 import '../../core/motion.dart';
 import '../../core/native.dart';
@@ -44,17 +46,39 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
     duration: const Duration(milliseconds: 300),
     value: 1,
   );
-  late final Animation<double> _enterFade = CurvedAnimation(
-    parent: _tabFade,
-    curve: const Interval(0.28, 1, curve: Curves.easeOutCubic),
-  );
+
+  /// Whether a tab switch is under way, so the glass can stand down to standard while it runs.
+  final ValueNotifier<bool> _tabSwitching = ValueNotifier(false);
   late final Animation<double> _leaveFade = CurvedAnimation(
     parent: _tabFade,
-    curve: const Interval(0, 0.28, curve: Curves.easeInCubic),
+    // The page arriving carries its own opaque paper, so it hides this one as it comes up; this
+    // fade only softens the frames where both are still on screen. It used to be the sole thing
+    // keeping them apart, which it could not do: both pages let the shell's shared background
+    // through wherever they were empty, so their content mixed in the middle of the screen.
+    curve: const Interval(0, 0.45, curve: Curves.easeInCubic),
   );
   late final Animation<double> _leaveOpacity = ReverseAnimation(_leaveFade);
-  late final Animation<double> _enterScale = Tween<double>(begin: 0.985, end: 1).animate(_enterFade);
-  late final Animation<double> _leaveScale = Tween<double>(begin: 1, end: 1.015).animate(_leaveFade);
+
+  /// The page leaving shrinks back a touch as it goes, as a page does when it is left behind.
+  late final Animation<double> _leaveScale = Tween<double>(begin: 1, end: 0.97).animate(
+    CurvedAnimation(parent: _tabFade, curve: const Interval(0, 0.45, curve: Curves.easeOutCubic)),
+  );
+
+  /// The page arriving comes up over it from below, whole from its first frame: the motion is the
+  /// slide, and a page that is opaque throughout is what keeps two screens of content from being
+  /// seen at once.
+  ///
+  /// The travel is deliberately short. Whatever the entering page does not yet cover shows the one
+  /// being left underneath, and at a sixth of the screen that strip read as the two pages
+  /// overlapping.
+  late final Animation<Offset> _enterOffset = Tween<Offset>(
+    begin: const Offset(0, 0.018),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: _tabFade, curve: const Interval(0.05, 1, curve: Curves.easeOutCubic)));
+
+  /// The scale the entering page is drawn at. Fixed at 1: the slide carries the motion here, and a
+  /// page that also grew would read as a dialog rather than a tab.
+  static const Animation<double> _enterScale = kAlwaysCompleteAnimation;
   bool _rail = false;
 
   /// The bottom bar and each tab's own top bar share this: [shellBarsVisible].
@@ -87,6 +111,7 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _tabFade.addStatusListener(_tabSettled);
     // The tabs' own top bars read this; a shell built again starts with its bars in view.
     shellBarsVisible.value = true;
     WidgetsBinding.instance.addPostFrameCallback((_) => _openIncomingLink());
@@ -102,10 +127,12 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
     if (state == AppLifecycleState.resumed) _openIncomingLink();
   }
 
-  /// A link handed over as `inf://open?url=…`, by a browser bookmarklet or adb.
+  /// A link handed over as `inf://open?url=…` (a browser bookmarklet, adb), a Weibo address the
+  /// system opened here, or text shared here with a link in it.
   Future<void> _openIncomingLink() async {
-    final url = await Native.takeLink();
-    if (url != null && url.isNotEmpty && mounted) await openLink(context, url);
+    final text = await Native.takeLink();
+    final url = text == null ? null : linkInText(text);
+    if (url != null && mounted) await openLink(context, url);
   }
 
   void _select(int index, {bool tapped = true}) {
@@ -135,10 +162,24 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
     // The bar is the way back to every other tab.
     _setBarsVisible(true);
     currentShellTab.value = index;
-    _tabFade.forward(from: 0).whenComplete(() {
-      if (mounted) setState(() => _previous = null);
-    });
+    // Premium glass cannot be cross-faded: it draws through its own layer, which re-reads the
+    // backdrop every frame and does not take the page's opacity with it, so the bar and the strip
+    // under a title flicker for as long as the fade runs. Standard paints inside the page and fades
+    // as one piece. Held only for the length of the switch.
+    _tabSwitching.value = true;
+    _tabFade.forward(from: 0);
     if (index == 1 || index == 2) UnreadMonitor.instance.refresh(force: true);
+  }
+
+  /// Puts the switch away once the shell's own animation has finished.
+  ///
+  /// A status listener rather than `forward().whenComplete`: a second tap restarts the controller,
+  /// which leaves the first call's future pending forever. Its `whenComplete` never ran, so the
+  /// glass stayed at standard and the leaving page stayed onstage for good.
+  void _tabSettled(AnimationStatus status) {
+    if (status != AnimationStatus.completed) return;
+    if (_tabSwitching.value) _tabSwitching.value = false;
+    if (_previous != null) setState(() => _previous = null);
   }
 
   /// Every tab keeps exactly this widget shape whether it is entering, leaving or hidden, and
@@ -147,8 +188,11 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
   Widget _tabSlot(int index) {
     final current = index == _index;
     final leaving = index == _previous && !current;
-    final opacity = current ? _enterFade : (leaving ? _leaveOpacity : kAlwaysCompleteAnimation);
-    final scale = current ? _enterScale : (leaving ? _leaveScale : kAlwaysCompleteAnimation);
+    // The arriving page stays opaque: it slides up over the one being left, which shrinks and
+    // fades behind it. Fading both at once is what showed two screens of content together.
+    final opacity = leaving ? _leaveOpacity : kAlwaysCompleteAnimation;
+    final scale = leaving ? _leaveScale : _enterScale;
+    final offset = current ? _enterOffset : const AlwaysStoppedAnimation<Offset>(Offset.zero);
     return Positioned.fill(
       key: ValueKey<int>(index),
       child: Offstage(
@@ -157,13 +201,16 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
           ignoring: !current,
           child: FadeTransition(
             opacity: opacity,
-            child: ScaleTransition(
-              scale: scale,
-              // TickerMode pauses page-local animations while the page is leaving or hidden,
-              // but the fade/scale above is driven by the shell controller.
-              child: TickerMode(
-                enabled: current,
-                child: RepaintBoundary(child: _tabBody(index)),
+            child: SlideTransition(
+              position: offset,
+              child: ScaleTransition(
+                scale: scale,
+                // TickerMode pauses page-local animations while the page is leaving or hidden,
+                // but the fades and moves above are driven by the shell controller.
+                child: TickerMode(
+                  enabled: current,
+                  child: RepaintBoundary(child: _tabBody(index)),
+                ),
               ),
             ),
           ),
@@ -175,10 +222,17 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
   /// The page keeps its state when the window crosses into or out of the split layout.
   Widget _tabBody(int index) {
     final page = KeyedSubtree(key: _pageKeys[index], child: _pages[index]);
-    if (!_hasPane(index)) return page;
+    // Every tab carries its own paper, not just the shell: a tab that is only transparent lets
+    // the one it replaces show through wherever it is empty — a glass bar, the space under a
+    // short list — so the two pages' content mixed in the middle of the screen during a switch.
+    // One layer per tab means the entering page covers the leaving one as it moves over it.
+    // `PaperBackground` rather than a bare fill so each style's backdrop (glass's pools of light
+    // included) travels with its own page instead of sitting behind all of them.
+    final paper = PaperBackground(child: page);
+    if (!_hasPane(index)) return paper;
     return DetailPane(
       key: _paneKeys[index],
-      list: page,
+      list: paper,
       emptyText: _paneTexts[index],
       open: _paneOpen[index],
     );
@@ -227,6 +281,7 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _tabFade.dispose();
+    _tabSwitching.dispose();
     for (final open in _paneOpen) {
       open.dispose();
     }
@@ -250,25 +305,30 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
   Widget _tabsArea({required double width}) {
     return KeyedSubtree(
       key: _tabsKey,
-      child: ShellLayout(
-        bottomBar: !_rail,
-        child: ContentArea(
-          width: width,
-          // Read below the Scaffold, which has already taken the keyboard out of the insets: the
-          // shell's own MediaQuery still has it, and the tab's Scaffold would shrink for it again.
-          child: Builder(
-            builder: (context) => MediaQuery.removePadding(
-              context: context,
-              removeLeft: _rail,
-              child: NotificationListener<ScrollNotification>(
-                onNotification: _onScroll,
-                child: Stack(
-                  children: [
-                    // The entering tab is painted last, over the one leaving.
-                    for (var i = 0; i < _tabs.length; i++)
-                      if (_visited.contains(i) && i != _index) _tabSlot(i),
-                    _tabSlot(_index),
-                  ],
+      // The glass inside stands down to standard for the length of a tab switch; see `_select`.
+      child: ValueListenableBuilder<bool>(
+        valueListenable: _tabSwitching,
+        builder: (context, switching, child) => GlassDuring(active: switching, child: child!),
+        child: ShellLayout(
+          bottomBar: !_rail,
+          child: ContentArea(
+            width: width,
+            // Read below the Scaffold, which has already taken the keyboard out of the insets: the
+            // shell's own MediaQuery still has it, and the tab's Scaffold would shrink for it again.
+            child: Builder(
+              builder: (context) => MediaQuery.removePadding(
+                context: context,
+                removeLeft: _rail,
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: _onScroll,
+                  child: Stack(
+                    children: [
+                      // The entering tab is painted last, over the one leaving.
+                      for (var i = 0; i < _tabs.length; i++)
+                        if (_visited.contains(i) && i != _index) _tabSlot(i),
+                      _tabSlot(_index),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -351,6 +411,11 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
 
   Widget _barLayout(BuildContext context) {
     final bottomInset = MediaQuery.paddingOf(context).bottom;
+    // Glass cannot fade: a blur inside a translucent layer only sees that layer and goes clear (see
+    // GlassChrome.panelsCanFade). Those styles slide the bar out instead, so the fade below is dead
+    // weight there — and not harmless: an opacity is a render pass of its own, which keeps the bar's
+    // glass out of a GlassBackdropGroup above it and costs a full-screen composite every frame.
+    final fades = InfChrome.of(context).panelsCanFade;
     return Stack(
       children: [
         Positioned.fill(child: _tabsArea(width: MediaQuery.sizeOf(context).width)),
@@ -365,11 +430,13 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
               offset: visible ? Offset.zero : const Offset(0, 1.25),
               duration: InfMotion.bar,
               curve: InfMotion.barCurve,
-              child: AnimatedOpacity(
-                opacity: visible || !InfChrome.of(context).panelsCanFade ? 1 : 0,
-                duration: InfMotion.barFade,
-                child: child,
-              ),
+              child: fades
+                  ? AnimatedOpacity(
+                      opacity: visible ? 1 : 0,
+                      duration: InfMotion.barFade,
+                      child: child,
+                    )
+                  : child!,
             ),
             child: AnimatedBuilder(
               animation: UnreadMonitor.instance,
@@ -405,6 +472,27 @@ class _ComposeButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final button = InfChrome.of(context).floatingButton(
+      context,
+      tooltip: '发微博',
+      icon: const Icon(Icons.edit_rounded),
+      onPressed: onPressed,
+    );
+    // Glass cannot fade — a blur inside a translucent layer only sees that layer — so on those
+    // styles the button shrinks away instead, as the bottom bar slides away for the same reason.
+    // Keeping an AnimatedOpacity there at 1 put its glass in a render pass of its own and kept it
+    // out of the shell's GlassBackdropGroup for no gain.
+    if (!InfChrome.of(context).panelsCanFade) {
+      return IgnorePointer(
+        ignoring: !visible,
+        child: AnimatedScale(
+          scale: visible ? 1 : 0,
+          duration: const Duration(milliseconds: 220),
+          curve: visible ? Curves.easeOutBack : Curves.easeInCubic,
+          child: button,
+        ),
+      );
+    }
     return IgnorePointer(
       ignoring: !visible,
       child: AnimatedScale(
@@ -414,12 +502,7 @@ class _ComposeButton extends StatelessWidget {
         child: AnimatedOpacity(
           opacity: visible ? 1 : 0,
           duration: const Duration(milliseconds: 160),
-          child: InfChrome.of(context).floatingButton(
-            context,
-            tooltip: '发微博',
-            icon: const Icon(Icons.edit_rounded),
-            onPressed: onPressed,
-          ),
+          child: button,
         ),
       ),
     );
@@ -673,8 +756,11 @@ class _LiquidBottomBarState extends State<_LiquidBottomBar> {
     scheduleMicrotask(() {
       final pending = _pending;
       if (pending == null || !mounted) return;
-      setState(() => _pending = null);
+      // Hand the shell the tab before dropping `_pending`: `selectedIndex` is `_pending ??
+      // widget.index`, so clearing it first would point the indicator back at the old tab for a
+      // frame, then forward again once the shell rebuilt — the bar would flick there and back.
       widget.onSelect(pending);
+      setState(() => _pending = null);
     });
   }
 

@@ -18,22 +18,28 @@ enum StatusMenuPlacement {
 /// Opens a menu of [actions] out of [anchor]'s rectangle. The styles draw the panel; the travel, the
 /// rows and the dismissal are the same everywhere.
 ///
+/// [origin] overrides the rectangle the menu grows out of, for a menu that should appear to come out
+/// of a point rather than out of a whole widget: a long press on a post knows where the finger went
+/// down, and the post itself is a screen-sized card — growing out of that reads as a slab collapsing
+/// to the middle, not as a menu opening.
+///
 /// Resolves to the `returns` of the row that was picked, for a menu that asks a question; null when
 /// it was dismissed without one.
 Future<Object?> showGlassActions(
   BuildContext context, {
   required List<StatusAction> actions,
   required BuildContext anchor,
+  Rect? origin,
   double originRadius = 16,
   StatusMenuPlacement placement = StatusMenuPlacement.centred,
 }) {
-  final box = anchor.findRenderObject();
-  if (box is! RenderBox || !box.hasSize) return Future.value();
-  final origin = box.localToGlobal(Offset.zero) & box.size;
+  final box = origin == null ? anchor.findRenderObject() : null;
+  if (origin == null && (box is! RenderBox || !box.hasSize)) return Future.value();
+  final growFrom = origin ?? (box as RenderBox).localToGlobal(Offset.zero) & box.size;
   final chrome = InfChrome.of(context);
   return Navigator.of(anchor).push<Object?>(
     StatusMenuRoute<Object?>(
-      origin: origin,
+      origin: growFrom,
       actions: actions,
       surface: chrome.statusMenuSurface,
       radius: chrome.statusMenuRadius,
@@ -48,6 +54,7 @@ Future<void> showStatusMenu(
   BuildContext context,
   Status status, {
   required BuildContext anchor,
+  Rect? origin,
   VoidCallback? onLongImage,
   double originRadius = 16,
   StatusMenuPlacement placement = StatusMenuPlacement.centred,
@@ -56,10 +63,18 @@ Future<void> showStatusMenu(
     context,
     actions: statusActions(context, status, onLongImage: onLongImage),
     anchor: anchor,
+    origin: origin,
     originRadius: originRadius,
     placement: placement,
   );
 }
+
+/// The little square a menu grows out of when it is opened from a point, such as the place a
+/// long press landed. A zero-size rectangle would make the first frames read as a dot that is not
+/// the finger; this is about the size of the touch's own highlight, and the corner radius matches
+/// it so the growth starts round.
+Rect menuOriginAt(Offset point, {double size = 14}) =>
+    Rect.fromCenter(center: point, width: size, height: size);
 
 /// How a style draws the menu's surface for a given size and shape. The route owns the travel and
 /// the dismissal; the style owns what the panel is made of, so each of the three looks like itself
@@ -201,22 +216,36 @@ class _StatusMenuPage extends StatelessWidget {
         final radius = geometry.radiusAt(t, from: route.originRadius, to: route.radius);
         return Stack(
           children: [
-            // The panel is laid out at the width the travel reaches and its own height; only the
-            // top-left corner follows the travel, so the rows are never squeezed into a height
-            // guessed for them.
+            // The panel is drawn at the rectangle the travel is at, all four sides. Only giving
+            // `left`/`top`/`width` would leave the *height* to the content, which is the menu's
+            // final height from the first frame — the panel would appear at full size and slide
+            // into place instead of growing, and on a tall menu it would read as arriving from
+            // below rather than opening out of the finger.
             //
             // No `Opacity` above this. A glass surface draws through a compositing layer of its
             // own, and an `OpacityLayer` above it samples an empty backdrop: the panel comes out as
             // a black block, most of it below the middle, for as long as the fade lasts. The growth
             // from the widget held already carries the arrival, and the surface itself is opaque
             // from its first frame, so nothing needs fading.
-            Positioned(
-              left: rect.left,
-              top: rect.top,
-              width: rect.width,
+            Positioned.fromRect(
+              rect: rect,
               child: route.surface(
                 context,
-                _rows(context),
+                // The rows are laid out at the menu's own resting size and *revealed* through the
+                // growing rectangle, rather than laid out at the travelling size. A menu squeezed
+                // into a 14 dp box would wrap every label and reflow on every frame; revealing
+                // keeps the words where they end up and grows the window they are seen through,
+                // which is what opening a menu out of a finger looks like.
+                ClipRect(
+                  child: OverflowBox(
+                    alignment: Alignment.center,
+                    minWidth: geometry.target.width,
+                    maxWidth: geometry.target.width,
+                    minHeight: geometry.target.height,
+                    maxHeight: geometry.target.height,
+                    child: _rows(context),
+                  ),
+                ),
                 BorderRadius.circular(radius),
               ),
             ),

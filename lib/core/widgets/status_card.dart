@@ -54,8 +54,8 @@ class StatusCard extends StatefulWidget {
   final ValueChanged<String>? onOpenUrl;
   final void Function(List<Media> media, int index, String? heroTag)? onOpenMedia;
   final VoidCallback? onToggleLike;
-  final VoidCallback? onRepost;
-  final VoidCallback? onComment;
+  final void Function(BuildContext anchor)? onRepost;
+  final void Function(BuildContext anchor)? onComment;
   final VoidCallback? onLongImage;
 
   @override
@@ -122,12 +122,24 @@ class _StatusCardState extends State<StatusCard> {
     if (mounted) showMessage(context, message);
   }
 
-  /// Opens the post's menu from the card held. All three styles share this, and each draws the
-  /// panel itself.
-  Future<void> _openMenu(Status status, BuildContext anchor) async {
+  /// Opens the post's menu from where the finger went down. All three styles share this, and each
+  /// draws the panel itself.
+  ///
+  /// The menu grows out of the press point rather than out of the card: a card is as wide as the
+  /// screen, so growing out of it read as a slab collapsing into the middle instead of a menu
+  /// opening under the finger.
+  Future<void> _openMenu(Status status) async {
     if (Touches.multiTouch) return;
     Haptic.longPress.play();
-    await showStatusMenu(context, status, anchor: anchor, onLongImage: widget.onLongImage);
+    final point = Touches.lastDown;
+    await showStatusMenu(
+      context,
+      status,
+      anchor: context,
+      origin: point == null ? null : menuOriginAt(point),
+      originRadius: 10,
+      onLongImage: widget.onLongImage,
+    );
   }
 
   @override
@@ -142,7 +154,7 @@ class _StatusCardState extends State<StatusCard> {
             child: InkWell(
               onTapDown: widget.detail ? null : (_) => _prefetch(status),
               onTap: widget.detail ? null : () => _openSelf(status.id),
-              onLongPress: () => _openMenu(status, context),
+              onLongPress: () => _openMenu(status),
               enableFeedback: false,
               child: const SizedBox.expand(),
             ),
@@ -160,7 +172,7 @@ class _StatusCardState extends State<StatusCard> {
                 behavior: HitTestBehavior.opaque,
                 onTapDown: widget.detail ? null : (_) => _prefetch(status),
                 onTap: widget.detail ? null : () => _openSelf(status.id),
-                onLongPress: () => _openMenu(status, context),
+                onLongPress: () => _openMenu(status),
                 child: RichStatusText(
                   text: status.text,
                   links: status.links,
@@ -628,8 +640,8 @@ class _ActionBar extends StatelessWidget {
 
   final Status status;
   final VoidCallback onToggleLike;
-  final VoidCallback? onRepost;
-  final VoidCallback? onComment;
+  final void Function(BuildContext anchor)? onRepost;
+  final void Function(BuildContext anchor)? onComment;
 
   @override
   Widget build(BuildContext context) {
@@ -662,7 +674,7 @@ class _ActionBar extends StatelessWidget {
             label: '赞',
             count: status.likesCount,
             active: status.liked,
-            onTap: onToggleLike,
+            onTap: (_) => onToggleLike(),
           ),
         ),
       ],
@@ -685,7 +697,10 @@ class _ActionItem extends StatefulWidget {
   final String label;
   final int count;
   final bool active;
-  final VoidCallback? onTap;
+
+  /// Given the item's own context, so what it opens can grow out of this button rather than out of
+  /// the page that holds it.
+  final void Function(BuildContext anchor)? onTap;
 
   @override
   State<_ActionItem> createState() => _ActionItemState();
@@ -695,12 +710,13 @@ class _ActionItemState extends State<_ActionItem> {
   bool _popped = false;
 
   Future<void> _tap() async {
-    if (widget.onTap == null) return;
+    final onTap = widget.onTap;
+    if (onTap == null) return;
     setState(() => _popped = true);
     Future<void>.delayed(const Duration(milliseconds: 150), () {
       if (mounted) setState(() => _popped = false);
     });
-    widget.onTap!();
+    onTap(context);
   }
 
   @override

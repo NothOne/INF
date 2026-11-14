@@ -229,9 +229,9 @@ class _StatusDetailPageState extends State<StatusDetailPage> {
     if (mounted) showMessage(context, message);
   }
 
-  Future<void> _comment() async {
+  Future<void> _comment(BuildContext anchor) async {
     final status = _status;
-    final sent = await showCommentSheet(context, statusId: widget.statusId, target: status);
+    final sent = await showCommentSheet(context, anchor: anchor, statusId: widget.statusId, target: status);
     if (sent == true) {
       _comments.refresh();
       if (status != null && mounted) {
@@ -345,7 +345,7 @@ class _DetailBody extends StatefulWidget {
   final bool showingReposts;
   final VoidCallback onShowReposts;
   final VoidCallback onShowComments;
-  final VoidCallback onComment;
+  final void Function(BuildContext anchor) onComment;
   final VoidCallback onLike;
 
   @override
@@ -471,7 +471,7 @@ class _DetailBodyState extends State<_DetailBody> {
                     }
                   },
                   onToggleLike: widget.onLike,
-                  onRepost: () => openCompose(context, type: DraftType.repost, statusId: status.id),
+                  onRepost: (_) => openCompose(context, type: DraftType.repost, statusId: status.id),
                   onComment: widget.onComment,
                   onLongImage: () => openLongImage(context, status),
                 ),
@@ -696,6 +696,7 @@ class _DetailBodyState extends State<_DetailBody> {
   Future<void> _reply(BuildContext context, Comment comment) async {
     final sent = await showCommentSheet(
       context,
+      anchor: context,
       statusId: widget.status.id,
       commentId: comment.id,
       replyToName: comment.author.screenName,
@@ -1517,7 +1518,7 @@ class _BottomBar extends StatelessWidget {
 
   final bool liked;
   final bool enabled;
-  final VoidCallback onComment;
+  final void Function(BuildContext anchor) onComment;
   final VoidCallback onRepost;
   final VoidCallback onLike;
 
@@ -1533,20 +1534,24 @@ class _BottomBar extends StatelessWidget {
         child: Row(
           children: [
             Expanded(
-              child: InkWell(
-                borderRadius: BorderRadius.circular(20),
-                onTap: enabled ? onComment : null,
-                child: Container(
-                  height: 40,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  alignment: Alignment.centerLeft,
-                  decoration: BoxDecoration(
-                    color: chrome.fill(scheme, scheme.surfaceContainerHigh, 0.9),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    '写评论…',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+              child: Builder(
+                // The field's own context, so the reply panel grows out of the bar rather than the
+                // whole page.
+                builder: (fieldContext) => InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: enabled ? () => onComment(fieldContext) : null,
+                  child: Container(
+                    height: 40,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    alignment: Alignment.centerLeft,
+                    decoration: BoxDecoration(
+                      color: chrome.fill(scheme, scheme.surfaceContainerHigh, 0.9),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '写评论…',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
                   ),
                 ),
               ),
@@ -1574,24 +1579,26 @@ class _BottomBar extends StatelessWidget {
     final row = Row(
       children: [
         Expanded(
-          child: GlassButton.custom(
-            useOwnLayer: !merged,
-            quality: quality,
-            height: 46,
-            shape: const LiquidRoundedSuperellipse(borderRadius: 23),
-            enabled: enabled,
-            onTap: onComment,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18),
-              child: Row(
-                children: [
-                  Icon(Icons.edit_outlined, size: 18, color: scheme.onSurfaceVariant),
-                  const SizedBox(width: 8),
-                  Text(
-                    '写评论…',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                  ),
-                ],
+          child: Builder(
+            builder: (fieldContext) => GlassButton.custom(
+              useOwnLayer: !merged,
+              quality: quality,
+              height: 46,
+              shape: const LiquidRoundedSuperellipse(borderRadius: 23),
+              enabled: enabled,
+              onTap: () => onComment(fieldContext),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                child: Row(
+                  children: [
+                    Icon(Icons.edit_outlined, size: 18, color: scheme.onSurfaceVariant),
+                    const SizedBox(width: 8),
+                    Text(
+                      '写评论…',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1728,6 +1735,7 @@ class _CommentFloorPageState extends State<CommentFloorPage> {
   Future<void> _reply(Comment comment) async {
     final sent = await showCommentSheet(
       context,
+      anchor: context,
       statusId: widget.statusId,
       commentId: comment.id,
       replyToName: comment.author.screenName,

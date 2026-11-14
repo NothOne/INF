@@ -11,7 +11,8 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
         GlassTheme,
         GlassThemeData,
         GlassThemeSettings,
-        GlassThemeVariant;
+        GlassThemeVariant,
+        LiquidGlassSettings;
 import 'look.dart';
 import 'prefs.dart' show LiquidTier;
 
@@ -53,6 +54,44 @@ class LiquidGlassTheme extends StatelessWidget {
   @override
   Widget build(BuildContext context) =>
       GlassTheme(data: liquidGlassTheme(InfLook.of(context), tint: tint), child: child);
+}
+
+/// The settings for glass that words are read on: a post's menu, the reply box, the composer's
+/// panel. [tint] replaces the body colour, as it does in [liquidGlassTheme].
+///
+/// This is [liquidGlassTheme]'s own settings with the two knobs the theme cannot carry, because
+/// `GlassThemeSettings.applyTo` keeps [LiquidGlassSettings.whitenStrength] from the base it is
+/// applied to — it is per-widget, not per-theme. Passing the result as a widget's `settings:` is
+/// what makes it reach the shader: `GlassThemeHelpers.resolveSettings` returns an explicit
+/// `settings:` as-is, and the theme's blur, lens and rim are already inside it.
+///
+/// What each does, and why only here:
+///
+///  * [LiquidGlassSettings.whitenStrength] lifts the finished glass toward white, gated to the
+///    brighter pixels, so a dark stroke passing under the panel loses its hard edge while the
+///    panel's own text stays crisp. A bar or a button carries a glyph, not a paragraph.
+///  * [LiquidGlassSettings.frostOpacity] at 1 makes the frost *replace* what is under it rather
+///    than letting a share of it show through — the package's own answer for floating platters,
+///    and what iOS does for its menus so a line of the post cannot ghost through a row of words.
+///    It is the knob that answers "why is iOS not disturbed by the text underneath".
+///
+/// Deliberately no `backerColor`. It is the other half of Apple's advice, but it is painted as a
+/// separate pad *behind* the glass and clipped to the panel's shape — and the panel's shape changes
+/// on every frame of the menu's travel, so the pad is re-clipped each of those frames and shows
+/// through as a black block while the menu opens. That was measured on this app and is why the
+/// surface had no pad; these two knobs stay inside the shader and the paint, so they are free of it.
+LiquidGlassSettings legibleGlassSettings(BuildContext context, InfLook look, {Color? tint}) {
+  final variant = liquidGlassTheme(look, tint: tint).settingsFor(context) ?? const GlassThemeSettings();
+  final dark = Theme.of(context).brightness == Brightness.dark;
+  return variant.applyTo(
+    LiquidGlassSettings(
+      // Light mode only. In dark mode an ungated lift would fog an already dark panel, and a gated
+      // one has almost no bright pixels to lift; the frost below carries the words there instead.
+      whitenStrength: dark ? 0.0 : 0.06,
+      whitenGated: true,
+      frostOpacity: 1.0,
+    ),
+  );
 }
 
 /// The quality a glass surface asks for on [look]'s tier.

@@ -12,11 +12,14 @@ import 'package:flutter_test/flutter_test.dart';
 ///    two screens of content mixed together, which is what a plain cross-fade does.
 ///
 /// Kept here as arithmetic rather than read off `RootShell`, whose fades are private: pinning the
-/// numbers is what stops a later tweak from quietly reopening either problem.
+/// numbers is what stops a later tweak from quietly reopening either problem. They have to be
+/// copied from `_leaveFade`, `_leaveScale` and `_enterOffset` — they drifted once already, and a
+/// test against stale numbers passes while the shell does something else.
 void main() {
-  // `_leaveFade`, `_leaveScale` and `_enterOffset` in RootShell; the entering page never fades.
-  const leave = (begin: 0.0, end: 0.18);
+  const leave = (begin: 0.0, end: 0.45);
   const slide = (begin: 0.05, end: 1.0);
+  const slideTravel = 0.018;
+  const leaveShrink = 0.03;
 
   double interval(double t, double begin, double end) {
     if (t <= begin) return 0;
@@ -34,12 +37,11 @@ void main() {
   double leaving(double t) => 1 - easeInCubic(interval(t, leave.begin, leave.end));
 
   /// The leaving page's scale, from `_leaveScale`.
-  double leavingScale(double t) =>
-      1 - 0.03 * easeOutCubic(interval(t, leave.begin, leave.end));
+  double leavingScale(double t) => 1 - leaveShrink * easeOutCubic(interval(t, leave.begin, leave.end));
 
   /// How far the arriving page still has to travel, as a share of the viewport height, from
   /// `_enterOffset`. Whatever it does not yet cover is the page underneath showing through.
-  double enterTravel(double t) => 0.018 * (1 - easeOutCubic(interval(t, slide.begin, slide.end)));
+  double enterTravel(double t) => slideTravel * (1 - easeOutCubic(interval(t, slide.begin, slide.end)));
 
   test('the arriving page is opaque from the first frame', () {
     // A partly transparent entering page is what let the paper show through and flashed white.
@@ -63,16 +65,22 @@ void main() {
     // This is what reads as the two pages overlapping: the old one showing along the top edge
     // while the new one slides up. Under a fiftieth of the screen is not noticed.
     for (var i = 0; i <= 200; i++) {
-      expect(enterTravel(i / 200), lessThanOrEqualTo(0.018));
+      expect(enterTravel(i / 200), lessThanOrEqualTo(slideTravel));
     }
     expect(enterTravel(0), lessThanOrEqualTo(0.02));
   });
 
-  test('the page left behind is out early, and gone by the end', () {
-    // Held out of sight for most of the switch, so it cannot be seen mixed with the new one.
-    expect(leaving(0.2), 0);
+  test('the page left behind only ever recedes, and is gone by the end', () {
+    // It has to start solid: a page that opened the switch part-faded would flash the paper.
+    expect(leaving(0), 1);
+    // It never comes back, and it is out of the way well before the switch ends.
+    for (var i = 0; i < 200; i++) {
+      expect(leaving((i + 1) / 200), lessThanOrEqualTo(leaving(i / 200) + 1e-12));
+    }
+    expect(leaving(leave.end), 0);
     expect(leaving(1), 0);
+    // It shrinks as it goes, never grows.
     expect(leavingScale(0), 1);
-    expect(leavingScale(1), lessThan(1));
+    expect(leavingScale(1), closeTo(1 - leaveShrink, 1e-12));
   });
 }

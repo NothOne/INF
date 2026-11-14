@@ -218,8 +218,9 @@ class _NotifyListState extends State<_NotifyList> with AutomaticKeepAliveClientM
                 onOpenUrl: (url) => openLink(context, url),
                 onReply: item.commentId == null || item.statusId == null
                     ? null
-                    : () => showCommentSheet(
+                    : (anchor) => showCommentSheet(
                           context,
+                          anchor: anchor,
                           statusId: item.statusId!,
                           commentId: item.commentId,
                           replyToName: item.user.screenName,
@@ -250,7 +251,7 @@ class _NotifyItem extends StatelessWidget {
   final ValueChanged<String> onOpenUser;
   final ValueChanged<String> onOpenTopic;
   final ValueChanged<String> onOpenUrl;
-  final VoidCallback? onReply;
+  final void Function(BuildContext anchor)? onReply;
 
   @override
   Widget build(BuildContext context) {
@@ -292,14 +293,17 @@ class _NotifyItem extends StatelessWidget {
                       ),
                       const Spacer(),
                       if (onReply != null)
-                        TextButton(
-                          onPressed: onReply,
-                          style: TextButton.styleFrom(
-                            minimumSize: const Size(38, 26),
-                            padding: const EdgeInsets.symmetric(horizontal: 6),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        Builder(
+                          // The button's own context: the reply panel grows out of it.
+                          builder: (buttonContext) => TextButton(
+                            onPressed: () => onReply!(buttonContext),
+                            style: TextButton.styleFrom(
+                              minimumSize: const Size(38, 26),
+                              padding: const EdgeInsets.symmetric(horizontal: 6),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: const Text('回复', style: TextStyle(fontSize: 12)),
                           ),
-                          child: const Text('回复', style: TextStyle(fontSize: 12)),
                         ),
                     ],
                   ),

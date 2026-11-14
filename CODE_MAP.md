@@ -140,6 +140,7 @@ main()
 |---|---|---|
 | `status_card.dart` | `StatusCard` | 信息流微博卡片（头部、正文、转发块、文章卡、操作栏；头部 IP 不被来源挤掉；正文里「…的微博视频」链接直接播放本条视频）。卡片是页面展开的共享元素；长按/点 `⋯` 弹菜单见下面三个 `status_*` 文件。（卡片点击走 `_openCard`：横幅或无地址的卡片先 `cardUrl` 补地址，再不行打开兜底页）正文下显示 `AudioCard`；`saveAllButton`（详情页开）在多图下方放「保存全部 N 张」 |
 | `status_actions.dart` | `StatusAction` `statusActions` `saveAllImages` `confirmBlockUser` | 一条微博能做什么：纯数据（`icon` / `label` / `detail` / `run` / `returns` / `destructive` / `startsGroup`）+ `statusActions()`。**顺序、分组、文案、危险项判定只在这里决定一次**，三种风格共用同一份。`saveAllImages` 存全部图（卡片和菜单共用），`confirmBlockUser` 是 INF 本机的屏蔽确认框（用户主页菜单也用） |
+| `image_actions.dart` | `imageActions` | 大图页长按能做什么，和 `statusActions` 一样是纯数据（`save` / `saveAll` / `onShare` / `original`）。**不可用的行仍然保留**（如「查看原图」在已是原图时），只是 `run` 为 null 并显示原因——删掉它会让上面的行位置变化，而手指还停在上面 |
 | `status_menu_geometry.dart` | `StatusMenuGeometry` `presence` | 菜单的落点与行程，纯几何。两个工厂：`centred`（长按卡片，落屏幕中间，`Rect.lerp` 从卡片张开）/ `anchored`（`⋯`，挂按钮下方 6dp、远边对齐，放不下翻上方，两端留 8dp）。曲线 `easeInOutCubicEmphasized`，和页面展开同一条 |
 | `status_menu_route.dart` | `StatusMenuRoute` `StatusMenuPlacement` `showStatusMenu` `showGlassActions` `StatusMenuSurface` | 菜单的 route：负责行走、驻留、返回、行点击；面板材质由 `InfChrome.statusMenuSurface` 给。**松手不执行**——长按只打开，点某一行才执行（`pop()` 后 `addPostFrameCallback` 里跑）。`showGlassActions` 接任意 `List<StatusAction>`（用户主页、评论操作卡用），`showStatusMenu` 是微博特化版。**过渡不要用 `Opacity` 包面板**：玻璃自成层，在半透明层里采样空背景会变黑 |
 | `share_sheet.dart` | `showStatusShare` | 详情页分享：最近私信联系人头像（点一下把微博链接发进私信）+ 系统分享、复制链接、长图 |
@@ -153,14 +154,15 @@ main()
 | `viewer_hero.dart` | `ViewerHero` `viewerHeroTags` | 所有能点开大图的图片（九宫格、正文/评论里的图和「查看图片」）都用它当 Hero：原图位置不再被 Hero 一直藏到关闭，只隐藏查看器当前所在那张（`ViewerHero.showing`，`openImage` 设、翻页时改、关闭动画结束时清），左右滑过再拖回不会错位；`viewerHeroTags` 从点开的那个 tag 推出每页的 tag（按在全部媒体里的序号，视频不算页但占号） |
 | `audio_card.dart` | `AudioCard` | 语音微博和播客/音频卡片的播放条（`video_player` 播音频）：同一时间只播一条；进度条一直显示，播放前拖动就从那里开始；m.weibo.cn 的语音没有地址或地址没签名会被 CDN 拒绝，用 `audioClip` 从 weibo.com 换签名地址和语音转文字（没有地址的语音卡片一出现就去取），起播失败再换一次；语音转文字默认收两行 |
 | `smart_image.dart` | `SmartImage` `weiboImageProvider` `isImageInMemory` | 带防盗链 Referer 的网络图片；带签名（`Expires`/`ssig`）的地址去掉查询串作 `cacheKey`，同一头像换了签名仍命中内存和磁盘缓存，显示过就不再淡入；`Avatar` 64 以下统一按 192 解码，各页面共用一份 |
-| `comment_sheet.dart` | `showCommentSheet` `CommentSheet` | 评论 / 回复底部面板，首页、详情、通知和 `PagedStatusList` 共用；两种风格下都是实心面板（`InfChrome.typingSheet`） |
+| `comment_sheet.dart` | `showCommentSheet` `CommentSheet` | 评论 / 回复面板，首页、详情、通知和 `PagedStatusList` 共用；用 `showSurfaceCard` 从被点的按钮长出来（不再从底部升起），两种风格下都是实心面板（`InfChrome.typingSheet`）。没有拖拽条——它不是可下滑的 sheet |
+| `surface_card_route.dart` | `showSurfaceCard` `SurfaceCardRoute` | 会打字的卡片（评论框、回复框）：从被点的控件长到屏幕上，返回缩回同一处。面板贴着**可用高度的底部**，所以键盘上来是抬起面板而不是盖住它；高度在布局里量出来再定位，表情键盘改变高度也落得准。测试见 `test/surface_card_test.dart` |
 | `mention_picker.dart` | `showMentionPicker` `EmojiKeyboard` `EmojiKeyboardSlot` `EmojiPanel` | @ 用户选择器和表情面板，评论面板、编辑页、私信共用 |
 | `avatar.dart` / `user_row.dart` | `Avatar` `UserListRow` | 头像、用户行 |
 | `refresh.dart` | `InfRefreshIndicator` `nestedScrollRefreshPredicate` | 下拉刷新（触发点触感、失败提示）；`NestedScrollView` 里顶部下拉由内层列表（depth 1）上报，要传 `nestedScrollRefreshPredicate` |
 | `shell_top_bar.dart` | `ShellTopBar` `ShellBarBand` | 四个 Tab 页的顶栏：随 `shellBarsVisible` 上滑收起，占位高度不变（页面 `extendBodyBehindAppBar: true`，列表不跳），状态栏那一条始终被背景盖住；`ShellBarBand` 给吸在顶栏下的控件（首页热搜榜单条）跟着走 |
 | `transitions.dart` | `StateSwitcher` `RefreshingBar` `AppearIn` `RowListSkeleton` | 状态切换、后台刷新条、入场动画、骨架 |
 | `common.dart` | `showMessage` `infSnackBar` `ErrorRetry` `EmptyHint` `CountBadge` `SectionHeader` `SkeletonBox` `StatusListSkeleton` `LoadingFooter` `KeepAlivePage` `formatBytes` | 杂项基础控件。提示条一律 `showMessage` / `infSnackBar`，由 `InfChrome.snackBar` 决定外观（液态是深色玻璃条）；要在 pop 之前建好再交给 messenger |
-| `paper.dart` | `PaperBackground` | 页面背景，`RootShell` 外层统一提供，内容由 `InfChrome.backdrop` 决定：经典是纸感渐变，毛玻璃是顶部两团极淡的主色/第三色光晕，液态是纯页面色；页面直接用 `Scaffold` |
+| `paper.dart` | `PaperBackground` | 页面背景，内容由 `InfChrome.backdrop` 决定：经典是纸感渐变，毛玻璃是顶部两团极淡的主色/第三色光晕，液态是纯页面色；`RootShell` 的每个 tab 各包一层（见 `shell/`），页面自己仍用透明 `Scaffold` |
 | `covered_snapshot.dart` | `CoveredSnapshot` | 整页页面（`RootShell` 和 `pushInf` 打开的每一页）在另一整页打开或关闭期间画成一张快照（Flutter 的 `SnapshotWidget`），正在动的那一页保持实时；每页监听自己路由的动画，所以底部面板、对话框、半透明浮层不触发。液态玻璃在转场时实时折射会让 GPU 每帧约 20ms，快照后回到 1–9ms |
 | `web_view.dart` | `InfWebView` `upgradeSinaimgScript` | 统一 WebView（Android 10+ 用 hybrid composition 规避 Impeller 白屏；Android 10 以下引擎走 Skia，用默认纹理模式，hybrid composition 在那里会空白）；`upgradeSinaimgScript` 页面加载后把 `http://*.sinaimg.cn` 图片改成 https（Android 不加载明文图片，生日页的礼物图就是这种） |
 
@@ -185,7 +187,7 @@ main()
 
 | 目录 | 入口 | 说明 | 打开方式 |
 |---|---|---|---|
-| `shell/` | `RootShell` | 底栏 4 Tab、**新页面滑入覆盖 + 旧页面缩小退后**（新页全程不透明，靠位移表达动感；`test/shell_tab_fade_test.dart` 钉住三条不变量）、底栏随滚动收起、发微博按钮；**每个 tab 自带一层 `PaperBackground`**（只有外壳一层时两页同时存在会让透明区互相露出内容）；切 tab 期间 `GlassDuring(active:)` 把玻璃压到 standard（premium 的独立合成层在半透明淡入里会闪）；宽窗口或手机横屏下换成左侧 `_SideRail`（Tab 区域用 GlobalKey 保留，切换布局不重建；Tab 区域的 `MediaQuery` 要在 `Scaffold` 下面读，否则键盘高度会被各 Tab 的 `Scaffold` 再扣一次，平板分屏左半边整个缩没） | `InfApp.home` |
+| `shell/` | `RootShell` | 底栏 4 Tab、**新页面滑入覆盖 + 旧页面缩小退后**（新页全程不透明，靠位移表达动感；`test/shell_tab_fade_test.dart` 钉住四条不变量，数值取自源码）、底栏随滚动收起、发微博按钮；**每个 tab 自带一层 `PaperBackground`**（只有外壳一层时两页同时存在会让透明区互相露出内容）；切 tab 期间 `GlassDuring(active:)` 把玻璃压到 standard（premium 的独立合成层在半透明淡入里会闪），结束时靠 `_tabFade` 的状态监听而不是 `whenComplete`；宽窗口或手机横屏下换成左侧 `_SideRail`（Tab 区域用 GlobalKey 保留，切换布局不重建；Tab 区域的 `MediaQuery` 要在 `Scaffold` 下面读，否则键盘高度会被各 Tab 的 `Scaffold` 再扣一次，平板分屏左半边整个缩没） | `InfApp.home` |
 | `feed/` | `FeedPage` + `FeedController` | 首页顶栏三个等宽标签、推荐居中，三页可左右滑动，每页再点一次标题打开选择器：关注（全部关注流，切分组）、推荐（默认「热门」= 登录账号的 m.weibo.cn 102803 个性化流；「推荐」及其余频道 = weibo.com 游客推荐频道；`recommend_channels_sheet.dart` 选频道）、热搜（`HotBoardChips` 切榜单，标题处打开榜单管理）；底栏「首页」单击作用于当前页（回顶/刷新） | Tab 0 |
 | `notify/` | `NotifyPage` | 通知四个子 Tab | Tab 1 |
 | `captcha/` | `showCaptchaDialog` | 微博安全验证：写接口返回 `error_type: captcha` 时，用 m.weibo.cn 自己的 `validate-loader` + 网易易盾弹出拼图，完成后把返回字段并进原请求重发一次；关闭则操作不执行 | `solveCaptcha`（`WeiboApi.captchaSolver`，经 `rootNavigatorKey` 弹在当前页面上） |
@@ -249,7 +251,7 @@ Widget  ──创建──▶ PagingController<T>(fetch: (cursor) => WeiboApi.in
 | 新底栏 Tab 的子页面 | 混入 `ShellTabAware`，在 `onTabShown` 里加载 |
 | 微博列表 | 直接用 `PagedStatusList(pager: …)`；用户列表用 `PeoplePagerList` |
 | 页面顶栏 | `Scaffold(extendBodyBehindAppBar: InfLook.of(context).glass, appBar: AppBar(flexibleSpace: lookBarBackground(context), …))`，列表顶部留 `MediaQuery.paddingOf(context).top`，与现有页面保持一致 |
-| 底部面板 / 长按菜单 | 底部面板用 `showInfSheet` / `showActionSheet`（`motion.dart`）；**一条微博或一条评论的操作菜单**用 `showStatusMenu` / `showGlassActions`（`core/widgets/status_menu_route.dart`），它从被点的位置长到落点、松手不执行、三种风格共用同一份行 |
+| 底部面板 / 长按菜单 | 底部面板用 `showInfSheet` / `showActionSheet`（`motion.dart`）；**一条微博或一条评论的操作菜单**用 `showStatusMenu` / `showGlassActions`（`core/widgets/status_menu_route.dart`），它从被点的位置长到落点、松手不执行、三种风格共用同一份行；**大图页长按**走同一个 `showGlassActions` + `imageActions()`，起点是手指落点（`menuOriginAt`）；**要打字的卡片**（评论框、回复框）用 `showSurfaceCard`（`core/widgets/surface_card_route.dart`），同样从被点的控件长出来并缩回去 |
 | 动画时长、曲线 | 用 `InfMotion` 的常量，不要在页面里写魔法数字 |
 | 卡片/按钮展开成新页面 | 点击时先 `ContainerOrigin.capture(context, …)`，紧接着调用 `openXxx` |
 | 震动 | 只用 `Haptic.xxx.play()` / `HapticThreshold`，不要直接调 `HapticFeedback` |

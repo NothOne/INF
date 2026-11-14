@@ -35,9 +35,47 @@ void main() {
       }
     });
 
-    test('starts exactly on the widget that was held', () {
+    test('starts on the widget that was held, held down to the menu size', () {
       const origin = Rect.fromLTWH(20, 500, 360, 140);
-      expect(geometry(origin).rectAt(0), origin);
+      final g = geometry(origin);
+      final start = g.rectAt(0);
+      // The card is wider than the menu, so the growth starts at the menu's width rather than the
+      // card's: lerping from the card would shrink the menu out of it instead of growing it in.
+      expect(start.width, closeTo(g.target.width, 1e-9));
+      // No taller than the menu either, and still centred on what was held.
+      expect(start.height, lessThanOrEqualTo(g.target.height + 1e-9));
+      expect(start.center, origin.center);
+    });
+
+    test('grows out of the point a long press landed on, not out of the card', () {
+      // `menuOriginAt` is what a card long press passes: a touch-sized square at the finger.
+      final point = menuOriginAt(const Offset(120, 620));
+      final g = geometry(point);
+      final start = g.rectAt(0);
+      // A small square at the finger, not the card's width.
+      expect(start.width, closeTo(point.width, 1e-9));
+      expect(start.height, closeTo(point.height, 1e-9));
+      expect(start.center, const Offset(120, 620));
+      // And it ends up in the middle, which is the one place a menu always fits.
+      expect(g.target.center.dx, closeTo(screen.width / 2, 1e-9));
+      // Every frame in between only grows.
+      var previous = start;
+      for (var i = 1; i <= 100; i++) {
+        final rect = g.rectAt(i / 100);
+        expect(rect.width, greaterThanOrEqualTo(previous.width - 1e-9), reason: 'at t=${i / 100}');
+        previous = rect;
+      }
+    });
+
+    test('never grows wider or taller than its resting size', () {
+      // The reason the start is clamped: a post is near full width, the menu is 268 wide.
+      const origin = Rect.fromLTWH(0, 400, 400, 160);
+      final g = geometry(origin);
+      for (var i = 0; i <= 100; i++) {
+        final rect = g.rectAt(i / 100);
+        expect(rect.width, lessThanOrEqualTo(g.target.width + 1e-9), reason: 'at t=${i / 100}');
+        expect(rect.height, lessThanOrEqualTo(g.target.height + 1e-9), reason: 'at t=${i / 100}');
+      }
     });
 
     test('arrives exactly at its resting rectangle', () {

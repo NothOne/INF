@@ -180,8 +180,8 @@ class PagedStatusList extends StatelessWidget {
                               openImage(context, media: media, index: mediaIndex, heroTag: heroTag);
                             }
                           },
-                          onRepost: () => openCompose(context, type: DraftType.repost, statusId: status.id),
-                          onComment: () => showCommentSheet(context, statusId: status.id, target: status),
+                          onRepost: (_) => openCompose(context, type: DraftType.repost, statusId: status.id),
+                          onComment: (anchor) => showCommentSheet(context, anchor: anchor, statusId: status.id, target: status),
                         ),
                         ),
                         const Divider(),

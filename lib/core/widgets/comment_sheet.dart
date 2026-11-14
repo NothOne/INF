@@ -4,22 +4,25 @@ import '../../core/api.dart';
 import '../../core/haptics.dart';
 import '../../core/look.dart';
 import '../../core/models.dart';
-import '../../core/motion.dart';
 import 'common.dart';
 import 'mention_picker.dart';
+import 'surface_card_route.dart';
 
-/// A comment is a panel of the page it answers, not a destination. The post stays visible behind
-/// the sheet, exactly like the original client's in-page comment panel.
+/// A comment is a panel of the page it answers, not a destination. It grows out of the control that
+/// opened it and goes back into it, the way a post's menu does — see [showSurfaceCard] — so the page
+/// behind stays visible around it and the reader can see where it came from.
 Future<bool?> showCommentSheet(
   BuildContext context, {
+  required BuildContext anchor,
   required String statusId,
   String? commentId,
   String? replyToName,
   String? replyToText,
   Status? target,
 }) {
-  return showInfSheet<bool>(
-    context: context,
+  return showSurfaceCard<bool>(
+    context,
+    anchor: anchor,
     builder: (sheetContext) => CommentSheet(
       statusId: statusId,
       commentId: commentId,
@@ -156,17 +159,12 @@ class _CommentSheetState extends State<CommentSheet> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const SizedBox(height: 8),
-              Container(
-                width: 34,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: scheme.onSurfaceVariant.withValues(alpha: 0.35),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
+              // No drag handle: this is a panel that grew out of the button that opened it, not a
+              // sheet that slides up from the edge, so there is nothing to drag — the handle only
+              // suggested a gesture that does not exist. It is dismissed by tapping outside, or by
+              // the 收起 button below.
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 9, 10, 2),
+                padding: const EdgeInsets.fromLTRB(16, 14, 10, 2),
                 child: Row(
                   children: [
                     Expanded(
@@ -309,9 +307,11 @@ class _CommentSheetState extends State<CommentSheet> {
         EmojiKeyboardSlot(open: _emoji.open, height: slot, onPick: _insert),
       ],
     );
+    // Rounded on every corner: the panel no longer stands on the bottom edge of the screen, it
+    // floats, so a square foot would read as a sheet that had not finished arriving.
     return InfChrome.of(context).typingSheet(
       context,
-      radius: const BorderRadius.vertical(top: Radius.circular(24)),
+      radius: const BorderRadius.all(Radius.circular(24)),
       child: panel,
     );
   }

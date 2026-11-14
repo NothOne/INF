@@ -6,16 +6,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:video_player/video_player.dart';
 
-import '../../core/motion.dart';
 import '../../core/haptics.dart';
 import '../../core/image_url.dart';
 import '../../core/media_save.dart';
 import '../../core/models.dart';
 import '../../core/native.dart';
 import '../../core/share.dart';
+import '../../core/touches.dart';
 import '../../core/widgets/common.dart';
+import '../../core/widgets/image_actions.dart';
 import '../../core/widgets/image_grid.dart';
 import '../../core/widgets/smart_image.dart';
+import '../../core/widgets/status_actions.dart';
+import '../../core/widgets/status_menu_route.dart';
 import '../../core/widgets/viewer_hero.dart';
 import 'video_surface.dart';
 
@@ -218,67 +221,59 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
     }
   }
 
-  Future<void> _showActions(int index) async {
+  Future<void> _showActions(int index, {Rect? origin}) async {
     Haptic.longPress.play();
-    final scheme = Theme.of(context).colorScheme;
     final original = _originalOf(index);
     final loading = _loadingOriginal == index;
     final live = widget.images[index].isLive;
-    await showActionSheet<void>(
-      context: context,
-      backgroundColor: scheme.surface,
-      builder: (sheetContext) {
-        Widget save(IconData icon, String title, _SaveAs as, {String? subtitle}) => ListTile(
-              leading: Icon(icon),
-              title: Text(title),
-              subtitle: subtitle == null ? null : Text(subtitle),
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                _saveImage(index, as: as);
-              },
-            );
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (live) ...[
-                save(Icons.motion_photos_on_rounded, '保存实况照片', _SaveAs.motionPhoto, subtitle: '图片与动态视频合为一张'),
-                save(Icons.image_outlined, '仅保存图片', _SaveAs.picture),
-                save(Icons.movie_outlined, '仅保存视频', _SaveAs.clip),
-              ] else
-                save(Icons.download_rounded, '保存图片', _SaveAs.picture),
-              if (widget.images.length > 1)
-                ListTile(
-                  leading: const Icon(Icons.collections_outlined),
-                  title: Text(saveAllLabel(widget.images)),
-                  onTap: () {
-                    Navigator.of(sheetContext).pop();
-                    _saveAll();
-                  },
-                ),
-              ListTile(
-                leading: const Icon(Icons.ios_share_rounded),
-                title: const Text('分享图片'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _shareImage(index);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.hd_outlined),
-                title: const Text('查看原图'),
-                subtitle: original != null || loading ? null : const Text('当前已是原图'),
-                enabled: original != null && !loading,
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _loadOriginal(index);
-                },
-              ),
-              const SizedBox(height: 6),
-            ],
-          ),
-        );
-      },
+    final count = widget.images.length;
+
+    // The rows a live photo offers: saving it as a Motion Photo, or one half of it.
+    final save = live
+        ? [
+            StatusAction(
+              icon: Icons.motion_photos_on_rounded,
+              label: '保存实况照片',
+              detail: '图片与动态视频合为一张',
+              run: () async => _saveImage(index, as: _SaveAs.motionPhoto),
+            ),
+            StatusAction(
+              icon: Icons.image_outlined,
+              label: '仅保存图片',
+              run: () async => _saveImage(index, as: _SaveAs.picture),
+            ),
+            StatusAction(
+              icon: Icons.movie_outlined,
+              label: '仅保存视频',
+              run: () async => _saveImage(index, as: _SaveAs.clip),
+            ),
+          ]
+        : [
+            StatusAction(
+              icon: Icons.download_rounded,
+              label: '保存图片',
+              run: () async => _saveImage(index, as: _SaveAs.picture),
+            ),
+          ];
+
+    await showGlassActions(
+      context,
+      anchor: context,
+      // Where the finger landed: the menu opens out of the picture rather than out of the page.
+      origin: origin,
+      originRadius: 12,
+      actions: imageActions(
+        save: save,
+        saveAll: count > 1 ? (label: saveAllLabel(widget.images), run: _saveAll) : null,
+        onShare: () => _shareImage(index),
+        // Always a row: what varies is whether it can be used. Dropping it when there is no larger
+        // file would move the rows above it, and the finger is still on one of them.
+        original: (
+          run: () => _loadOriginal(index),
+          enabled: original != null && !loading,
+          detail: original != null || loading ? null : '当前已是原图',
+        ),
+      ),
     );
   }
 
@@ -318,7 +313,8 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
                 // Only the visible page may fly home; a neighbour the pager keeps alive would
                 // otherwise launch from off screen.
                 heroTag: index == _index ? widget.heroTags[index] : null,
-                onLongPress: () => _showActions(index),
+                // The menu grows out of the finger, the way a post's does.
+                onLongPress: (point) => _showActions(index, origin: menuOriginAt(point)),
                 onToggleTools: () {
                   setState(() => _tools = !_tools);
                   Haptic.selection.play();
@@ -475,7 +471,9 @@ class _ZoomableImage extends StatefulWidget {
   final ValueListenable<int> liveReplay;
   final ValueChanged<bool> onLivePlaying;
   final String? heroTag;
-  final VoidCallback onLongPress;
+  /// Called with the point the press landed on, in global coordinates, so the menu grows out of the
+  /// picture where the finger is rather than out of the page.
+  final ValueChanged<Offset> onLongPress;
   final VoidCallback onToggleTools;
   final VoidCallback onDismiss;
   final ValueChanged<double> onBackdrop;
@@ -600,7 +598,18 @@ class _ZoomableImageState extends State<_ZoomableImage> with TickerProviderState
 
   void _onLongPress() {
     if (_multiTouch || _pointers.length > 1) return;
-    widget.onLongPress();
+    // The press point, in global coordinates: `Touches.lastDown` is the finger that started it, and
+    // it has not been cleared yet — a long press runs before the pointer goes up.
+    widget.onLongPress(Touches.lastDown ?? _pressCentre());
+  }
+
+  /// Where the picture itself is, for the rare press that has no recorded pointer (a synthesised
+  /// one, or a press that began outside this page). The menu then grows out of the middle of the
+  /// picture rather than out of the corner of the screen.
+  Offset _pressCentre() {
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return Offset.zero;
+    return box.localToGlobal(box.size.center(Offset.zero));
   }
 
   void _animateTo(Matrix4 target) {

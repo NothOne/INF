@@ -5,8 +5,7 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
 import 'liquid_glass.dart';
 import 'look.dart' hide GlassSheet;
 
-/// Liquid glass, drawn by `liquid_glass_widgets`: floating controls and sheets are its glass, under
-/// the theme the sliders set (see [liquidGlassTheme]). Top bars, edge panels and the page behind
+/// Liquid glass, drawn by `liquid_glass_widgets`: floating controls and sheets are its glass, under/// the theme the sliders set (see [liquidGlassTheme]). Top bars, edge panels and the page behind
 /// are the plain page colour: no frost, no veil, nothing tinted for glass to pick up.
 class LiquidChrome extends GlassChrome {
   const LiquidChrome();
@@ -195,17 +194,18 @@ class LiquidChrome extends GlassChrome {
       );
 
   /// Glass, thick enough to read a list of words over whatever it covers: the `menu` style the
-  /// package measures for iOS 27's own menus, on the tier this look is set to.
+  /// package measures for iOS 27's own menus, on the tier this look is set to, plus the two
+  /// legibility knobs the theme cannot carry (see [legibleGlassSettings]).
   ///
-  /// No `backerColor`: it is painted as an opaque pad under the glass, and the panel's shape changes
-  /// every frame as it opens, so the pad is re-clipped each of those frames and shows through as a
-  /// black block while the menu travels. The frost and the tint already carry the words — see
-  /// `liquidGlassTheme` — and those cost nothing extra.
+  /// No `backerColor`: it is painted as a separate pad under the glass and re-clipped to the
+  /// panel's shape, which changes every frame of the menu's travel — that showed through as a black
+  /// block while the menu opened, on this app, which is why the dim is done inside the frost instead.
   @override
   Widget statusMenuSurface(BuildContext context, Widget child, BorderRadius radius) {
     return GlassContainer(
       useOwnLayer: true,
       quality: glassQualityOf(InfLook.of(context)),
+      settings: legibleGlassSettings(context, InfLook.of(context)),
       shape: LiquidRoundedSuperellipse(borderRadius: radius.topLeft.x),
       padding: EdgeInsets.zero,
       child: child,
