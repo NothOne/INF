@@ -52,7 +52,9 @@ jobs:
 
       - name: Report the toolchain
         run: |
-          flutter --version 2>/dev/null || true
+          # Not `|| true`: if flutter is broken in the image, the build below fails in a second
+          # with nothing to show for it, and this report is supposed to be the clue.
+          flutter --version
           node -v
           java -version 2>&1 | head -1
           echo "SDK: $HOS_SDK_HOME"
@@ -73,6 +75,19 @@ jobs:
           echo "$KEYSTORE_B64" | base64 -d > .tools/ohos-signing/inf.p12
           echo "$CERT_B64" | base64 -d > .tools/ohos-signing/inf.cer
           echo "$PROFILE_B64" | base64 -d > .tools/ohos-signing/inf.p7b
+
+      - name: Resolve dependencies
+        run: |
+          # Its own step, not folded into the build: the git dependencies (gitcode.com) are the
+          # part CI fails on when the network to them changes, and this way that error is the
+          # whole log instead of the first line of a 100-line build.
+          flutter pub get 2>&1 | tee /tmp/pubget.log
+          test "${PIPESTATUS[0]}" -eq 0 || {
+            echo "::group::flutter pub get failed"
+            cat /tmp/pubget.log
+            echo "::endgroup::"
+            exit 1
+          }
 
       - name: Build HAP
         run: |
