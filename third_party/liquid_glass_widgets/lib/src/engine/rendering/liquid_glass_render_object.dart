@@ -1031,7 +1031,15 @@ abstract class LiquidGlassRenderObject extends RenderProxyBox {
     // aligns to the pixel grid) to ensure the anti-aliased SDF edge is fully
     // captured. Without this, the picture boundaries tightly crop the fractional
     // edge pixels, abruptly cutting off the rim lighting at the pill boundary.
-    final localBounds = bounds.snapToPixels(devicePixelRatio).inflate(2.0);
+    //
+    // A capped matte is rasterised below the screen's ratio, so the margin has to
+    // grow with that: two logical pixels become fewer than two texels, the SDF's
+    // anti-aliased edge falls outside the texture, and the shader reads what lies
+    // beyond it — a band of black along the edge nearest the texture boundary.
+    // That is what a large sheet-sized surface showed across its lower half while
+    // it animated.
+    final shrink = devicePixelRatio / matteDevicePixelRatio;
+    final localBounds = bounds.snapToPixels(devicePixelRatio).inflate(2.0 * shrink);
     final size = localBounds.size * matteDevicePixelRatio;
 
     final recorder = ui.PictureRecorder();

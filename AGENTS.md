@@ -4,6 +4,14 @@ INF：用 Flutter 写的微博第三方客户端，走 m.weibo.cn / weibo.com �
 
 动手前先读 [`CODE_MAP.md`](CODE_MAP.md)：分层、每个文件管什么、新功能放哪里都在里面。本文件只列必须遵守的规则和常用命令。
 
+## 文档和代码冲突时，以代码为准
+
+`AGENTS.md`、`CODE_MAP.md`、`DEVLOG.md`、`README.md` 都是对代码的描述，会滞后。看到一个说法和实现对不上时：
+
+- **信代码**，按它当前的行为做事，不要把代码改回去迁就文档。
+- 顺手把那一句改对，或者在提交信息里说明文档已过时。不要把过时的描述原样留着让下一个人再踩一次。
+- 文档里的"待办""已知限制"可能是**已经做完的**，也可能是**故意不做的**，动手前先确认状态（看代码、看 `git log`、看测试）。
+
 ## 命令
 
 本机构建用工作区的 Flutter 和缓存，Android SDK 用 `~/Android/Sdk`（已装 NDK 28.2.13676358 和 CMake 3.22.1）。`HOME` 会被改到 `.tools/home`，所以要在改 `HOME` 之前先把 SDK 路径存下来，之后不要再用 `$HOME` 或 `~`：
@@ -41,13 +49,13 @@ Flutter SDK 在工作区外（`../.tools/flutter`），运行时要写它的 `bi
 |---|---|
 | 新接口 | 加在 `WeiboApi` 对应分节，只用 `_get` / `_post` / `_postMultipart` / `_numberedPage`；JSON 解析只写在 `parse.dart`，模型只加在 `models.dart` |
 | 打开页面 | 在 `navigation.dart` 加 `openXxx(context, …)`，其他地方只调它，不直接 `Navigator.push` |
-| 风格相关的视觉 | 用 `InfChrome.of(context)` / `InfLook.of(context)`，不读 `Prefs.visualStyle`，不自己判断 `glass` |
+| 风格相关的视觉 | 用 `InfChrome.of(context)` / `InfLook.of(context)`，不读 `Prefs.visualStyle`，不自己判断 `glass`。液态玻璃的档位用 `InfLook.liquidUltra` / `glassQualityOf` / `glassIsPremium`，不读 `Prefs.liquidTier` |
 | 模糊 | 用 `FadeSafeBackdrop`，不直接用 `BackdropFilter`（淡入淡出时会变灰） |
 | 网络图片 / WebView | `SmartImage` / `Avatar` / `InfWebView`，不用 `Image.network` 或裸 `WebView` |
 | 震动 | 只用 `Haptic.xxx.play()` / `HapticThreshold` |
 | 动画时长、曲线 | 用 `InfMotion` 常量 |
 | 按宽度调整布局 | 只用 `WindowClass.of(context)` 和 `contentGutter` / `ContentColumn` / `ContentBar` |
-| 底部面板、长按菜单 | `showInfSheet` / `showActionSheet` |
+| 底部面板、长按菜单 | `showInfSheet` / `showActionSheet`；微博/评论的操作菜单用 `showStatusMenu` / `showGlassActions`（`core/widgets/status_menu_route.dart`） |
 | Tab 页加载数据 | 混入 `ShellTabAware`，在 `onTabShown` 里加载，不在 `initState` 里发请求 |
 | 原生能力 | 同时改 `MainActivity.kt` 的 `when`、`NativePlugin.ets` 的 `switch` 和 `Native` 静态方法 |
 | 新偏好 | `Prefs` 里加字段和 `setXxx()`；影响外观的同步进 `app.dart` 的 `_Appearance` |

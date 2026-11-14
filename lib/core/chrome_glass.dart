@@ -70,6 +70,20 @@ class GlassChrome extends InfChrome {
 
   @override
   Color fill(ColorScheme scheme, Color color, double alpha) => color.withValues(alpha: alpha);
+
+  /// Frosted, matching the bars and panels above the page rather than a solid card.
+  @override
+  Widget statusMenuSurface(BuildContext context, Widget child, BorderRadius radius) {
+    final scheme = Theme.of(context).colorScheme;
+    return GlassSurface(
+      borderRadius: radius,
+      lifted: true,
+      tint: scheme.surface.withValues(
+        alpha: (InfLook.of(context).tintAlpha(scheme.brightness) + 0.12).clamp(0.0, 0.94),
+      ),
+      child: child,
+    );
+  }
 }
 
 /// The backdrop glass is laid over: two faint pools of the accent colours behind the top bar,

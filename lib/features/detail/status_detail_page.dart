@@ -3,9 +3,10 @@ import '../../core/haptics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
-    show GlassButton, GlassSegment, GlassSegmentedControl, LiquidOval, LiquidRoundedSuperellipse;
+    show GlassButton, GlassQuality, GlassSegment, GlassSegmentedControl, LiquidOval, LiquidRoundedSuperellipse;
 
 import '../../core/layout.dart';
+import '../../core/liquid_glass.dart' show GlassMerge, glassIsPremium, glassQualityOf;
 import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/container_route.dart';
@@ -24,6 +25,8 @@ import '../../core/widgets/rich_text.dart';
 import '../../core/widgets/smart_image.dart';
 import '../../core/widgets/share_sheet.dart';
 import '../../core/widgets/status_card.dart';
+import '../../core/widgets/status_actions.dart';
+import '../../core/widgets/status_menu_route.dart';
 import '../../core/widgets/transitions.dart';
 import '../../core/widgets/viewer_hero.dart';
 
@@ -265,13 +268,22 @@ class _StatusDetailPageState extends State<StatusDetailPage> {
                   ),
                 ),
               if (status != null)
-                IconButton(
-                  icon: const Icon(Icons.more_horiz_rounded),
-                  tooltip: '更多',
-                  onPressed: () => showStatusActions(
-                    context,
-                    applied ?? status,
-                    onLongImage: () => openLongImage(context, status),
+                Builder(
+                  // The menu grows out of this button's own rectangle, so the button's context is
+                  // the anchor rather than the page's.
+                  builder: (buttonContext) => IconButton(
+                    icon: const Icon(Icons.more_horiz_rounded),
+                    tooltip: '更多',
+                    onPressed: () => showStatusMenu(
+                      context,
+                      applied ?? status,
+                      anchor: buttonContext,
+                      onLongImage: () => openLongImage(context, status),
+                      originRadius: 20,
+                      // A bar's `⋯` opens its menu against its own corner, not in the middle of
+                      // the page: the button is where the finger is.
+                      placement: StatusMenuPlacement.anchored,
+                    ),
                   ),
                 ),
             ]),
@@ -661,7 +673,7 @@ class _DetailBodyState extends State<_DetailBody> {
                 onOpenUrl: (url) => openLink(context, url),
                 onOpenFloor: () => openCommentFloor(context, statusId: status.id, root: comment),
                 onReply: () => _reply(context, comment),
-                onTap: () => showCommentActions(context, comment, onReply: () => _reply(context, comment)),
+                onTap: (anchor) => showCommentActions(context, comment, anchor: anchor, onReply: () => _reply(context, comment)),
                 onOpenImage: (images, imageIndex, tag) {
                   openImage(context, media: images, index: imageIndex, heroTag: tag);
                 },
@@ -832,6 +844,7 @@ class _DiscussionSwitch extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
         child: GlassSegmentedControl(
           useOwnLayer: true,
+          quality: glassQualityOf(InfLook.of(context)),
           height: 38,
           segments: [
             GlassSegment(label: _caption('转发', reposts)),
@@ -939,6 +952,7 @@ class _CommentSortBar extends StatelessWidget {
     final label = Theme.of(context).textTheme.labelSmall ?? const TextStyle();
     return GlassSegmentedControl(
       useOwnLayer: true,
+      quality: glassQualityOf(InfLook.of(context)),
       height: 30,
       segments: const [GlassSegment(label: '按热度'), GlassSegment(label: '按时间')],
       selectedIndex: _index,
@@ -1046,34 +1060,30 @@ enum CommentAction { reply, copy }
 Future<void> showCommentActions(
   BuildContext context,
   Comment comment, {
+  required BuildContext anchor,
   required Future<void> Function() onReply,
 }) async {
-  final action = await showActionSheet<CommentAction>(
-    context: context,
-    frosted: false,
-    builder: (sheetContext) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.reply_rounded),
-            title: const Text('评论'),
-            subtitle: Text('回复 @${comment.author.screenName}'),
-            onTap: () => Navigator.of(sheetContext).pop(CommentAction.reply),
-          ),
-          ListTile(
-            leading: const Icon(Icons.copy_rounded),
-            title: const Text('复制'),
-            subtitle: const Text('复制评论正文'),
-            onTap: () => Navigator.of(sheetContext).pop(CommentAction.copy),
-          ),
-          const SizedBox(height: 4),
-        ],
+  final picked = await showGlassActions(
+    context,
+    anchor: anchor,
+    originRadius: 14,
+    actions: [
+      StatusAction(
+        icon: Icons.reply_rounded,
+        label: '评论',
+        detail: '回复 @${comment.author.screenName}',
+        returns: CommentAction.reply,
       ),
-    ),
+      StatusAction(
+        icon: Icons.copy_rounded,
+        label: '复制',
+        detail: '复制评论正文',
+        returns: CommentAction.copy,
+      ),
+    ],
   );
   if (!context.mounted) return;
-  switch (action) {
+  switch (picked) {
     case CommentAction.reply:
       await onReply();
     case CommentAction.copy:
@@ -1081,6 +1091,8 @@ Future<void> showCommentActions(
       Haptic.success.play();
       if (context.mounted) showMessage(context, '评论已复制');
     case null:
+      return;
+    case _:
       return;
   }
 }
@@ -1122,7 +1134,7 @@ class CommentTile extends StatelessWidget {
 
   /// Off where the replies are listed in full right below, as on the floor page.
   final bool showReplies;
-  final VoidCallback? onTap;
+  final void Function(BuildContext anchor)? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1135,7 +1147,8 @@ class CommentTile extends StatelessWidget {
         : '回复 ${comment.replyTo!.screenName}：${comment.text}';
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: onTap,
+      // The row's own context is the anchor its card grows out of and returns into.
+      onTap: onTap == null ? null : () => onTap!(context),
       child: Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
       child: Row(
@@ -1430,11 +1443,20 @@ class _ReplyPreview extends StatelessWidget {
 
 /// The same short pop the card's like button uses, so the two controls feel like one.
 class _PopLikeButton extends StatefulWidget {
-  const _PopLikeButton({required this.liked, required this.enabled, required this.onLike});
+  const _PopLikeButton({
+    required this.liked,
+    required this.enabled,
+    required this.onLike,
+    this.merged = false,
+  });
 
   final bool liked;
   final bool enabled;
   final VoidCallback onLike;
+
+  /// Whether this button's glass is a member of the surrounding [GlassMerge], which owns the layer
+  /// it draws into.
+  final bool merged;
 
   @override
   State<_PopLikeButton> createState() => _PopLikeButtonState();
@@ -1469,7 +1491,16 @@ class _PopLikeButtonState extends State<_PopLikeButton> {
       ),
     );
     if (InfLook.of(context).liquid) {
-      return Tooltip(message: '赞', child: _glassRound(enabled: widget.enabled, onTap: _tap, child: icon));
+      return Tooltip(
+        message: '赞',
+        child: _glassRound(
+          enabled: widget.enabled,
+          onTap: _tap,
+          child: icon,
+          quality: widget.merged ? GlassQuality.premium : glassQualityOf(InfLook.of(context)),
+          ownLayer: !widget.merged,
+        ),
+      );
     }
     return IconButton(onPressed: widget.enabled ? _tap : null, tooltip: '赞', icon: icon);
   }
@@ -1534,59 +1565,74 @@ class _BottomBar extends StatelessWidget {
   }
 
   /// No panel along the edge: a glass capsule and two glass discs float over the comments, which
-  /// scroll on beneath them.
+  /// scroll on beneath them. On ultra they are one surface — press any of them and its neighbour
+  /// grows a neck toward it — and on standard they are three separate panes.
   Widget _liquid(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final merged = glassIsPremium(context);
+    final quality = merged ? GlassQuality.premium : GlassQuality.standard;
+    final row = Row(
+      children: [
+        Expanded(
+          child: GlassButton.custom(
+            useOwnLayer: !merged,
+            quality: quality,
+            height: 46,
+            shape: const LiquidRoundedSuperellipse(borderRadius: 23),
+            enabled: enabled,
+            onTap: onComment,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              child: Row(
+                children: [
+                  Icon(Icons.edit_outlined, size: 18, color: scheme.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                  Text(
+                    '写评论…',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Tooltip(
+          message: '转发',
+          child: _glassRound(
+            enabled: enabled,
+            onTap: onRepost,
+            child: Icon(Icons.repeat_rounded, color: scheme.onSurfaceVariant),
+            quality: quality,
+            ownLayer: !merged,
+          ),
+        ),
+        const SizedBox(width: 10),
+        _PopLikeButton(liked: liked, enabled: enabled, onLike: onLike, merged: merged),
+      ],
+    );
     final bar = SafeArea(
       top: false,
       minimum: const EdgeInsets.only(bottom: 10),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-        child: Row(
-          children: [
-            Expanded(
-              child: GlassButton.custom(
-                useOwnLayer: true,
-                height: 46,
-                shape: const LiquidRoundedSuperellipse(borderRadius: 23),
-                enabled: enabled,
-                onTap: onComment,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 18),
-                  child: Row(
-                    children: [
-                      Icon(Icons.edit_outlined, size: 18, color: scheme.onSurfaceVariant),
-                      const SizedBox(width: 8),
-                      Text(
-                        '写评论…',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Tooltip(
-              message: '转发',
-              child: _glassRound(
-                enabled: enabled,
-                onTap: onRepost,
-                child: Icon(Icons.repeat_rounded, color: scheme.onSurfaceVariant),
-              ),
-            ),
-            const SizedBox(width: 10),
-            _PopLikeButton(liked: liked, enabled: enabled, onLike: onLike),
-          ],
-        ),
+        child: merged ? GlassMerge(child: row) : row,
       ),
     );
     return ContentColumn(child: bar);
   }
 }
 
-Widget _glassRound({required bool enabled, required VoidCallback onTap, required Widget child}) => GlassButton.custom(
-      useOwnLayer: true,
+Widget _glassRound({
+  required bool enabled,
+  required VoidCallback onTap,
+  required Widget child,
+  required GlassQuality quality,
+  required bool ownLayer,
+}) =>
+    GlassButton.custom(
+      useOwnLayer: ownLayer,
+      quality: quality,
       width: 46,
       height: 46,
       shape: const LiquidOval(),
@@ -1700,7 +1746,7 @@ class _CommentFloorPageState extends State<CommentFloorPage> {
       imagesAsLinks: !root,
       showReplies: false,
       onReply: () => _reply(comment),
-      onTap: () => showCommentActions(context, comment, onReply: () => _reply(comment)),
+      onTap: (anchor) => showCommentActions(context, comment, anchor: anchor, onReply: () => _reply(comment)),
       onOpenImage: (images, imageIndex, tag) {
         openImage(context, media: images, index: imageIndex, heroTag: tag);
       },

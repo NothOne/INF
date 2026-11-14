@@ -19,6 +19,7 @@ class InfLook extends ThemeExtension<InfLook> {
     this.refraction = defaultRefraction,
     this.liquidClarity = defaultLiquidClarity,
     this.liquidShine = defaultLiquidShine,
+    this.liquidTier = LiquidTier.standard,
   });
 
   final VisualStyle style;
@@ -38,6 +39,9 @@ class InfLook extends ThemeExtension<InfLook> {
   /// How bright the rim of liquid glass is, 0–1.
   final double liquidShine;
 
+  /// How much of the liquid glass to draw; only [VisualStyle.liquid] reads it.
+  final LiquidTier liquidTier;
+
   static const defaultBlur = 0.6;
   static const defaultClarity = 0.4;
   static const defaultRefraction = 0.5;
@@ -48,6 +52,10 @@ class InfLook extends ThemeExtension<InfLook> {
   bool get glass => style != VisualStyle.classic;
 
   bool get liquid => style == VisualStyle.liquid;
+
+  /// Whether the glass carries what only [LiquidTier.ultra] pays for: the 3D bevel, the merging of
+  /// neighbouring glass and the frosted top bar.
+  bool get liquidUltra => liquid && liquidTier == LiquidTier.ultra;
 
   /// 0 is sharp glass, 1 the heaviest frost. The default still lands on the previous sigma,
   /// so opening the clear end does not shift a setting the user has not touched.
@@ -85,6 +93,7 @@ class InfLook extends ThemeExtension<InfLook> {
     double? refraction,
     double? liquidClarity,
     double? liquidShine,
+    LiquidTier? liquidTier,
   }) =>
       InfLook(
         style ?? this.style,
@@ -93,6 +102,7 @@ class InfLook extends ThemeExtension<InfLook> {
         refraction: refraction ?? this.refraction,
         liquidClarity: liquidClarity ?? this.liquidClarity,
         liquidShine: liquidShine ?? this.liquidShine,
+        liquidTier: liquidTier ?? this.liquidTier,
       );
 
   @override
@@ -105,6 +115,7 @@ class InfLook extends ThemeExtension<InfLook> {
       refraction: lerpDouble(refraction, other.refraction, t)!,
       liquidClarity: lerpDouble(liquidClarity, other.liquidClarity, t)!,
       liquidShine: lerpDouble(liquidShine, other.liquidShine, t)!,
+      liquidTier: t < 0.5 ? liquidTier : other.liquidTier,
     );
   }
 }

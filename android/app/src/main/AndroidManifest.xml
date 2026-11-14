@@ -37,6 +37,26 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="inf" />
             </intent-filter>
+            <!-- Not autoVerify: the domains are Weibo's, so Android 12+ opens them here only once
+                 the user turns them on under 「默认打开」; until then the system asks. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="m.weibo.cn" />
+                <data android:host="weibo.cn" />
+                <data android:host="weibo.com" />
+                <data android:host="www.weibo.com" />
+                <data android:host="m.weibo.com" />
+                <data android:host="t.cn" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
         <meta-data
             android:name="flutterEmbedding"

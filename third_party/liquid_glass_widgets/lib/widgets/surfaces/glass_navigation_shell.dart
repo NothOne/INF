@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 
 import '../../constants/glass_defaults.dart';
 import '../../src/engine/liquid_glass_settings.dart';
+import '../../src/widgets/surfaces/shell_chrome_barrier.dart';
 import '../../src/widgets/surfaces/vertical_bar_regions.dart';
 import '../effects/glass_materialize.dart';
 import '../overlays/glass_modal_sheet.dart';
@@ -270,6 +271,10 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
   /// Registrants follow this rather than reading the routes themselves, so
   /// that the bar and the shell always swap in the same frame.
   Listenable get chromeChanges => _tick;
+
+  /// The page-level modal barriers currently up, behind which the chrome is
+  /// held. See [ShellChromeBarrier].
+  final ShellChromeBarriers _chromeBarriers = ShellChromeBarriers();
 
   /// Whether a deferred notification is already queued for this frame.
   bool _notifyQueued = false;
@@ -871,22 +876,19 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
         ? 1.0
         : top.key.animation?.value ?? 1.0;
 
-    // A route's `animation` is a ProxyAnimation that reports itself complete
-    // at 1.0 until the navigator attaches the real controller in `didPush`,
-    // which lands *after* the route's first build — and that build is when its
-    // bar registers. Taken at face value it says a route that has not begun to
-    // move is fully entered, so the incoming chrome paints solid for one frame
-    // before dropping back to 0 and materializing: a visible flash.
+    // A pushed route's first build is Flutter's offstage one (the hero
+    // controller measures it there), and that build is when its bar
+    // registers. While offstage, a route's `animation` reports itself
+    // complete at 1.0, before its entrance has begun. Taken at face value it
+    // says a route that has not begun to move is fully entered, so the
+    // incoming chrome paints solid for one frame before dropping back to 0
+    // and materializing: a visible flash.
     //
-    // The route underneath is the witness. It is covered in lockstep with the
-    // top route's entrance, so at rest the two agree (1.0 and fully covered),
-    // and during a real transition they agree at every scrubbed value. Only
-    // the frame before the controller is attached has the top route claiming
-    // to be fully in while nothing below it has been covered at all.
-    if (below != null &&
-        progress == 1.0 &&
-        _coverageOf(below.key) == 0.0 &&
-        status == AnimationStatus.completed) {
+    // The route's own `offstage` flag is what says so. The route underneath
+    // can't: it is only covered by a route that transitions it (not by a
+    // fullscreen dialog, nor by a route pushed over a sheet), so a route
+    // that is never covered would hold the chrome at 0 for good.
+    if (top.key.offstage && status == AnimationStatus.completed) {
       progress = 0.0;
     }
 
@@ -1004,6 +1006,7 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
     _commitExit.dispose();
     _clock.dispose();
     _tick.dispose();
+    _chromeBarriers.dispose();
     super.dispose();
   }
 
@@ -1136,7 +1139,18 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
         children: [
           GlassVerticalBar(
             data: verticalBar,
-            child: _mediaQueryFor(context, verticalBar, widget.child),
+            child: _mediaQueryFor(
+              context,
+              verticalBar,
+              // Around the app only, not the chrome below: an overlay opened
+              // from the chrome (a GlassBarItem.menu) portals into the
+              // chrome's own Overlay, where its own barrier already covers
+              // the capsule, so it has no hold to take on the gate.
+              ShellChromeBarrierScope(
+                barriers: _chromeBarriers,
+                child: widget.child,
+              ),
+            ),
           ),
           // The chrome gets an Overlay of its own because it deliberately sits
           // above the app's Navigator, and therefore outside the Navigator's
@@ -1147,18 +1161,36 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
           // barrier covers the page below. It is a *sibling* of the Navigator,
           // not an ancestor, so nothing inside the app resolves its root
           // overlay to this one.
+          //
+          // Being painted after the Navigator also puts the chrome above a
+          // page-level menu's dismiss barrier: out of reach of its
+          // BlockSemantics, which only drops what was painted before it, and
+          // first in line for pointers. So while such a barrier is up the
+          // gate puts the chrome behind it: hidden from screen readers, and
+          // ignoring pointers, which fall through to the barrier and close
+          // the menu. A menu portaled into this Overlay is not under the
+          // gate and keeps working. The host positions itself, so the gate gets a
+          // full-screen Stack of its own to sit above, in the Overlay's place.
           if (widget.enabled)
             Overlay.wrap(
-              child: ListenableBuilder(
-                listenable: _tick,
-                builder: (context, _) {
-                  final state = resolveState();
-                  if (state == null) return const SizedBox.shrink();
-                  return GlassVerticalBar(
-                    data: verticalBar,
-                    child: GlassNavPinnedHost(state: state),
-                  );
-                },
+              child: ShellChromeBarrierGate(
+                barriers: _chromeBarriers,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    ListenableBuilder(
+                      listenable: _tick,
+                      builder: (context, _) {
+                        final state = resolveState();
+                        if (state == null) return const SizedBox.shrink();
+                        return GlassVerticalBar(
+                          data: verticalBar,
+                          child: GlassNavPinnedHost(state: state),
+                        );
+                      },
+                    ),
+                  ],
+                ),
               ),
             ),
         ],

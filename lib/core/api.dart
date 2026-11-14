@@ -1,11 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:ui' show PlatformDispatcher;
 
 import 'package:dio/dio.dart';
 
 import 'emoji.dart';
 import 'models.dart';
+import 'native.dart';
 import 'page_cache.dart';
 import 'parse.dart';
 import 'session.dart';
@@ -189,6 +191,17 @@ class WeiboApi {
     );
     return parseUserTimeline(data);
   }
+
+  /// 搜他的微博. m.weibo.cn's own search box searches the whole site; weibo.com's profile search
+  /// narrows to the account, but answers only the signed-in weibo.com cookie, never a visitor.
+  Future<PageResult<Status>> searchUserStatuses(String uid, String query, String? cursor) => _numberedPage(
+        cursor,
+        (page) async => parseStatusList(await _getWeiboCom(
+          'profile/searchblog',
+          {'uid': uid, 'page': page, 'feature': '0', 'q': query},
+          referer: 'https://weibo.com/u/$uid',
+        )),
+      );
 
   Future<UserProfile?> userProfile(String uid) async {
     final data = await _get('api/container/getIndex', query: {'type': 'uid', 'value': uid});
@@ -631,6 +644,16 @@ class WeiboApi {
     await _post(path, {'uid': uid}, referer: '${_web}/u/$uid');
   }
 
+  /// weibo.com's 加入黑名单, its 屏蔽 dialog with every box ticked: no posts from them, no
+  /// interaction, no following. m.weibo.cn has no blacklist of its own.
+  Future<void> blacklist(String uid) async {
+    await _postWeiboCom(
+      'statuses/filterUser',
+      {'uid': uid, 'status': 1, 'interact': 1, 'follow': 1},
+      referer: 'https://weibo.com/u/$uid',
+    );
+  }
+
   Future<String?> resolveUid(String screenName) async {
     final users = await searchUsers(screenName);
     return users.where((user) => user.screenName == screenName).firstOrNull?.id;
@@ -870,23 +893,67 @@ class WeiboApi {
         queryParameters: query,
         options: Options(headers: {'Referer': referer ?? 'https://weibo.com/', 'Cookie': ?cookie}),
       );
-      final status = response.statusCode ?? 0;
-      if (status >= 400) throw ApiException('HTTP $status');
-      final body = response.data;
-      final map = asMap(body is String ? jsonDecode(body) : body);
-      // weibo.com answers {ok: 1}, m.s.weibo.com {code: "100000"}; passport's {retcode} is read
-      // by its parser, since a QR code still waiting for its scan is an answer too.
-      final passport = map != null && map.containsKey('retcode');
-      if (map == null || (!passport && intOf(map['ok']) != 1 && textOf(map['code']) != '100000')) {
-        throw ApiException(textOf(map?['msg']) ?? '接口返回格式错误');
-      }
-      return whole ? map : map['data'];
+      return _publicEnvelope(response, whole);
     } on DioException catch (error) {
       throw _dioError(error);
+    }
+  }
+
+  dynamic _publicEnvelope(Response response, bool whole) {
+    final status = response.statusCode ?? 0;
+    if (status >= 400) throw ApiException('HTTP $status');
+    final body = response.data;
+    final Map<String, dynamic>? map;
+    try {
+      map = asMap(body is String ? jsonDecode(body) : body);
     } on FormatException {
       throw ApiException('接口返回格式错误');
     }
+    // weibo.com answers {ok: 1}, m.s.weibo.com {code: "100000"}; passport's {retcode} is read
+    // by its parser, since a QR code still waiting for its scan is an answer too.
+    final passport = map != null && map.containsKey('retcode');
+    if (map == null || (!passport && intOf(map['ok']) != 1 && textOf(map['code']) != '100000')) {
+      throw ApiException(textOf(map?['msg']) ?? '接口返回格式错误');
+    }
+    return whole ? map : map['data'];
   }
+
+  /// weibo.com as the signed-in account: the WebView's weibo.com cookies, which the passport
+  /// login set alongside m.weibo.cn's.
+  Future<dynamic> _getWeiboCom(String path, Map<String, String> query, {required String referer}) async {
+    final (cookie, _) = await _weiboComCookie();
+    return _getPublic('https://weibo.com/ajax/$path', query: query, referer: referer, cookie: cookie);
+  }
+
+  /// weibo.com's writes are JSON and check `X-XSRF-TOKEN` against the `XSRF-TOKEN` cookie.
+  Future<dynamic> _postWeiboCom(String path, Map<String, Object> body, {required String referer}) async {
+    final (cookie, xsrf) = await _weiboComCookie();
+    try {
+      final response = await _dio.post(
+        'https://weibo.com/ajax/$path',
+        data: jsonEncode(body),
+        options: Options(
+          contentType: Headers.jsonContentType,
+          headers: {'Referer': referer, 'Origin': 'https://weibo.com', 'Cookie': cookie, 'X-XSRF-TOKEN': xsrf},
+        ),
+      );
+      return _publicEnvelope(response, true);
+    } on DioException catch (error) {
+      throw _dioError(error);
+    }
+  }
+
+  /// The cookie header and its XSRF token. weibo.com sets the token on its first page load, which
+  /// the WebView may never have made; it only has to match, so one is made up then.
+  Future<(String, String)> _weiboComCookie() async {
+    final cookie = await Native.getCookies('https://weibo.com/') ?? '';
+    final xsrf = RegExp(r'(?:^|;\s*)XSRF-TOKEN=([^;]+)').firstMatch(cookie)?.group(1);
+    if (xsrf != null) return (cookie, xsrf);
+    final made = [for (var i = 0; i < 24; i++) _random.nextInt(36).toRadixString(36)].join();
+    return ('$cookie; XSRF-TOKEN=$made', made);
+  }
+
+  static final _random = Random();
 
   /// m.weibo.cn adds the screen size in CSS pixels to every post.
   String get _screen {

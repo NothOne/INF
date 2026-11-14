@@ -422,11 +422,12 @@ void main() {
     }
 
     // Distance from the rim, in the same physical-pixel units as uThickness:
-    // the bevel is a quarter circle of radius uThickness, so the encoded
-    // height gives it back exactly. Saturates at uThickness on the flat face.
-    float normalizedHeight = geometryData.b;
-    float cosTerm = sqrt(max(0.0, 1.0 - normalizedHeight * normalizedHeight));
-    float rimDist = uThickness * (1.0 - cosTerm);
+    // geometryData.b stores linear rim progression clamp(-sdN / uThickness, 0, 1),
+    // giving uniform sub-pixel precision across the entire bevel. Circular-arc
+    // normalizedHeight = sqrt(t * (2 - t)) is reconstructed in 32-bit float.
+    float rimProgress = geometryData.b;
+    float rimDist = rimProgress * uThickness;
+    float normalizedHeight = sqrt(max(0.0, rimProgress * (2.0 - rimProgress)));
     float dprScale = max(0.1, uEdgeConfig.z);
     // dprScale is (devicePixelRatio / 3.0), so 1 logical point = 3.0 * dprScale
     // physical pixels. Convert rimDist to logical points (rimPt):
@@ -451,10 +452,9 @@ void main() {
             displacement = mix(displacement, meniscusDisp, clamp(uPinchStrength, 0.0, 1.0));
         } else {
             // On tall bar indicator lenses (GlassTabBar):
-            // 1. Outer meniscus ring (rimPt = 0.22..1.35 pt) reaches ~3.9 pt
-            //    inward all around the capsule so the 1 pt outer rim catches
-            //    the concentric 4.0 pt platter overhang at the ends and top/bottom
-            //    without magnifying the bar when dragged past the end (> 5 pt).
+            // 1. Outer meniscus ring (rimPt = 0.22..1.35 pt) on the left/right
+            //    end caps (endCapX) catches the 4.0 pt platter overhang without
+            //    double-crossing the top/bottom horizontal edge before barPinchVert.
             // 2. Cap outward pinch (rimPt = 1.35..7.60 pt) displaces the platter
             //    outward (+normalXY) around the left/right semicircle so overhanging
             //    ends show the native 6 pt concentric dark moat (and never magnify
@@ -473,7 +473,7 @@ void main() {
             float meniscusBand = smoothstep(0.22, 0.55, rimPt)
                                * (1.0 - smoothstep(0.95, 1.35, rimPt));
             vec2 inwardUnit = -normalXY / max(length(normalXY), 1e-4);
-            vec2 meniscusReach = vec2(3.9 + 1.2 * endCapX, 3.9) * pxPerPt;
+            vec2 meniscusReach = vec2(3.9 + 1.2 * endCapX, 3.9 * endCapX) * pxPerPt;
             vec2 meniscusDisp = inwardUnit * meniscusReach * meniscusBand;
 
             float capPinchBand = smoothstep(1.35, 4.40, rimPt)
@@ -504,19 +504,25 @@ void main() {
     // the line the lens and the body tint are switched off below, and the
     // darkening is applied last.
     vec2 lensDisplacement = displacement;
+    bool isClearIndicator = (uLensModel > 0.5 && uFrost.x <= 0.0);
     float hairline = 0.0;
-    if (uRimConfig.x > 0.001) {
+    if (uRimConfig.x > 0.001 || (isClearIndicator && uRimConfig.y > 0.001)) {
         hairline = 1.0 - smoothstep(0.75 * dprScale, 2.0 * dprScale, rimDist);
         // rimDist saturates at uThickness on the flat face, which on thin
         // glass is inside the line's width: keep the line off the face.
         hairline *= 1.0 - step(0.999, normalizedHeight);
-        // Within the line, sample just outside the shape instead of under
-        // it: the backdrop there has not been through the frost, which is
-        // what the native line sits on (over text it reads page - 80, not
-        // cloud - 80).
-        vec2 outward = normalXY / max(length(normalXY), 1e-4)
-                     * (2.5 * dprScale);
-        displacement = mix(displacement, outward, hairline);
+        // Within the line on frosted platters (or un-pinched surfaces), sample
+        // just outside the shape instead of under it: the backdrop there has
+        // not been through the frost, which is what the native line sits on.
+        // On lifted bar indicator lenses (isBarIndicator > 0.5 && uPinchStrength > 0.001),
+        // the pill already overhangs the bar platter by 4–7 pt, so keep the
+        // hairline at the pill's own rim without pushing 2.5 px into an
+        // adjacent SearchPill.
+        if (isBarIndicator < 0.5 || uPinchStrength <= 0.001) {
+            vec2 outward = normalXY / max(length(normalXY), 1e-4)
+                         * (2.5 * dprScale);
+            displacement = mix(displacement, outward, hairline);
+        }
     }
     // On pre-3.46 OpenGL ES, screenUV.y is flipped to (1.0 - y) above to
     // compensate for the bottom-left texture-origin convention.  The
@@ -573,22 +579,28 @@ void main() {
 
         vec2 pinchShift;
         if (uLensModel > 0.5 && isBarIndicator > 0.5) {
-            // iOS 27 GlassTabBar indicator platter pinch:
+            // iOS 27 GlassTabBar & GlassSegmentedControl indicator platter pinch:
             // 1. Horizontally stays flat across the straight middle section of
             //    the capsule (absCentered.x <= 0.48) and tapers smoothly around
             //    the semicircular shoulders (0.48..0.84) where capOutwardDisp
             //    continues the concentric 6 pt dark moat around the ends.
             // 2. Vertically confined to the top/bottom platter rim band
-            //    (absCentered.y > 0.42) and starts at rimPt = 1.35 pt (strictly
-            //    after the 0.22..1.35 pt outer meniscus ring) so the central
-            //    icon/label are never vertically compressed and the outer
-            //    meniscus ring is never double-crossed.
+            //    and starts at rimPt = 1.35 pt so the central icon/label are
+            //    never vertically compressed and the top/bottom bar edge is
+            //    crossed monotonically once. On 44 pt segmented-control lenses
+            //    (uGeometrySize.y < 56 pt, overhanging a 32 pt track by 6 pt),
+            //    reach slightly further inward so the top/bottom card moat
+            //    matches native UISegmentedControl.
+            float isSegmentLens = 1.0 - step(56.0 * pxPerPt, uGeometrySize.y);
             float tipDistPx = (0.5 - abs(centered.x)) * uGeometrySize.x;
             float capAbsX = clamp(1.0 - tipDistPx / max(uGeometrySize.y * 0.6514, 1.0), 0.0, 1.0);
             float barPinchHoriz = 1.0 - smoothstep(0.48, 0.84, capAbsX);
-            float barPinchVert = smoothstep(0.42, 0.74, absCentered.y)
+            float barPinchVert = smoothstep(
+                                     mix(0.42, 0.26, isSegmentLens),
+                                     mix(0.74, 0.66, isSegmentLens),
+                                     absCentered.y)
                                * smoothstep(1.35, 5.2, rimPt);
-            float barPinchPx = 0.245 * uGeometrySize.y;
+            float barPinchPx = mix(0.245, 0.38, isSegmentLens) * uGeometrySize.y;
             pinchShift = vec2(
                 0.0,
                 centered.y * barPinchHoriz * barPinchVert * uPinchStrength * (barPinchPx * invTexSize.y)
@@ -673,7 +685,8 @@ void main() {
         vec4 platterSample = textureBilinear(platterUV, physTexSize, invTexSize);
         float bevelGate = barIconGate * smoothstep(0.45, 1.15, rimPt) * (1.0 - hairline);
         if (bevelGate > 0.001) {
-            vec2 refUV = (uGeometryOffset + vec2(0.5, 0.18) * uGeometrySize + uCaptureOffset) * invTexSize;
+            float refX = geometryUV.x >= 0.5 ? 0.26 : 0.74;
+            vec2 refUV = (uGeometryOffset + vec2(refX, 0.18) * uGeometrySize + uCaptureOffset) * invTexSize;
             #ifdef LGR_GLES_FLIP_SAMPLE_Y
                 refUV.y = 1.0 - refUV.y;
             #endif
@@ -1043,10 +1056,13 @@ void main() {
         float along = dot(rimN, uLightDirection);
         float lit  = max(along, 0.0);
         float opp  = max(-along, 0.0);
-        bool isClearIndicator = (uLensModel > 0.5 && uFrost.x <= 0.0);
         float litWeight = isClearIndicator ? 0.84 : 1.0;
         float oppWeight = isClearIndicator ? 1.02 : 0.85;
         float lobe = litWeight * lit * lit * lit + oppWeight * opp * opp * opp;
+        if (isClearIndicator && abs(uLightDirection.x) > 0.2) {
+            float vertArch = rimN.y * rimN.y;
+            lobe = max(lobe, vertArch * mix(0.68, 0.52, step(0.5, backdropLuma)));
+        }
         float inset = max(0.0, rimDist - 2.25 * dprScale) / dprScale;
         float core = exp(-inset / 1.5);
         float tail = exp(-inset / 8.0);
@@ -1060,7 +1076,7 @@ void main() {
         finalColor.rgb = clamp(finalColor.rgb + vec3(rimLight), 0.0, 1.0);
     }
 
-    // iOS 27 hairline darkening: 0.31 across the light axis, uRimConfig.z
+    // iOS 27 / iOS 26 hairline darkening: 0.31 across the light axis, uRimConfig.z
     // of that at its ends (0.2 on the light material, 0 on the dark, where
     // the line dissolves into the lobes), falling off as cos^3.5 of the
     // angle from the axis' perpendicular. Subtracted (a linear burn) rather
@@ -1069,7 +1085,17 @@ void main() {
     if (hairline > 0.0) {
         float across = 1.0 - dot(rimN, uLightDirection) * dot(rimN, uLightDirection);
         across = pow(max(across, 0.0), 1.75);
-        float shade = uRimConfig.x * 0.314 * mix(uRimConfig.z, 1.0, across);
+        float brightBackdrop = smoothstep(0.35, 0.70, backdropLuma);
+        float effectiveRimShade = isClearIndicator
+            ? mix(
+                uRimConfig.x,
+                max(uRimConfig.x, uRimConfig.y * 1.15) * 1.12,
+                brightBackdrop)
+            : uRimConfig.x;
+        float effectiveShadeEnds = isClearIndicator
+            ? mix(uRimConfig.z * 0.35, max(uRimConfig.z, 0.68), brightBackdrop)
+            : uRimConfig.z;
+        float shade = effectiveRimShade * 0.314 * mix(effectiveShadeEnds, 1.0, across);
         finalColor.rgb = max(finalColor.rgb - vec3(shade * hairline), 0.0);
     }
 

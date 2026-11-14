@@ -677,6 +677,15 @@ class ProfileExtras {
   final int? comments;
   final int? reposts;
   final List<String> facts;
+
+  /// weibo.com's cover, which has the account's own picture where m.weibo.cn often has the stock one.
+  final String? coverUrl;
+  final VerifiedBadge? verified;
+
+  final VipIcon? vip;
+
+  /// `m` or `f`; null when not said.
+  final String? gender;
   const ProfileExtras({
     this.tabs = ProfileTab.fallback,
     this.interactions,
@@ -684,8 +693,23 @@ class ProfileExtras {
     this.comments,
     this.reposts,
     this.facts = const [],
+    this.coverUrl,
+    this.verified,
+    this.vip,
+    this.gender,
   });
 }
+
+/// The 会员 icon: VIP, SVIP or VVIP with its level; [aspect] is width over height.
+class VipIcon {
+  final String url;
+  final double aspect;
+  const VipIcon(this.url, this.aspect);
+}
+
+/// weibo.com's V by colour: gold, orange and yellow for people (gold and orange the higher grades),
+/// blue for organisations, red for government media, grey for a lapsed one.
+enum VerifiedBadge { gold, orange, yellow, blue, red, grey }
 
 /// One run of a topic on a Weibo board: 热搜榜, 文娱榜, 社会榜 …
 class TopicBoardStint {

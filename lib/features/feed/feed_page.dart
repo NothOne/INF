@@ -173,7 +173,7 @@ class FeedPageState extends State<FeedPage> {
 
   void _refreshFeed() {
     final pager = _controller.pager;
-    if (pager != null) pager.refresh(quiet: true);
+    if (pager != null) pager.refresh(quiet: true, background: true);
   }
 
   void _onController() {
@@ -766,8 +766,10 @@ class _TimelineState extends State<_Timeline> {
         _unread = ids.length;
         _unreadOpen = true;
       }
+      // The post the feed is laid out from is still there, so the reader has not moved: only the
+      // counting above is owed to the refresh. It can only be gone when the refresh found more new
+      // posts than the pager could join onto what was loaded.
       if (_centerId == null || !ids.contains(_centerId)) {
-        // The refresh did not reach the place being read; it is somewhere further down.
         final position = _position;
         _recenter(ids.first, dy: 0);
         if (position != null && !ids.contains(position.id)) _canResume = true;
@@ -845,8 +847,11 @@ class _TimelineState extends State<_Timeline> {
     if (found == _savedId) _canResume = false;
     _scheduleSave();
     final unread = _unread > index ? index : _unread;
-    // Reading on from the top drops the offer to go back to last time's place.
-    final dropResume = _canResume && index >= 3;
+    // Reading down through the posts that arrived means the reader has taken to the new list; the
+    // way back to where they were stops being what they want. A refresh that lost the place counts
+    // no new posts (`_unreadOpen` with nothing counted), and there the offer is the only way back,
+    // so it stays until it is used.
+    final dropResume = _canResume && _unread > 0 && index >= 3;
     if (unread != _unread || dropResume) {
       setState(() {
         _unread = unread;
@@ -866,11 +871,13 @@ class _TimelineState extends State<_Timeline> {
     final position = _position;
     final items = _listening?.items ?? const <Status>[];
     if (position == null || _canResume || items.isEmpty) return;
-    // The newest post actually seen: posts above it stay new for next time.
-    final head = items[_unread.clamp(0, items.length - 1)];
+    // The newest post actually seen: posts above it stay new for next time. When more arrived than
+    // one page, the newest ones were never shown, so nothing is claimed as read rather than counting
+    // the page's worth of them.
+    final head = _unreadOpen ? null : items[_unread.clamp(0, items.length - 1)];
     Prefs.instance.setFeedPosition(
       _sourceKey,
-      FeedPosition(id: position.id, dy: position.dy, head: head.id, headAt: head.createdAt),
+      FeedPosition(id: position.id, dy: position.dy, head: head?.id, headAt: head?.createdAt),
     );
   }
 
@@ -983,20 +990,39 @@ class _TimelineState extends State<_Timeline> {
       return index == null || index < center ? null : index - center;
     }
 
-    final pill = _unread > 0
-        ? _FeedPill(
-            icon: Icons.arrow_upward_rounded,
-            label: _unreadOpen ? '$_unread+ 条新微博' : '$_unread 条新微博',
-            onTap: _toNewest,
-          )
-        : _canResume
-            ? _FeedPill(
-                icon: Icons.arrow_downward_rounded,
-                label: _resuming ? '正在找上次读到的位置' : '回到上次读到的位置',
-                busy: _resuming,
-                onTap: _resume,
-              )
-            : null;
+    // Two capsules at most, side by side: what arrived on top, and — when the posts being read
+    // could not be kept through the refresh — the way back down to them. The second one used to
+    // share the first one's place and was never reachable while new posts were counted.
+    final pills = <Widget>[
+      if (_unread > 0)
+        _FeedPill(
+          icon: Icons.arrow_upward_rounded,
+          label: _unreadOpen ? '$_unread+ 条新微博' : '$_unread 条新微博',
+          onTap: _toNewest,
+        ),
+      if (_canResume)
+        _FeedPill(
+          icon: Icons.arrow_downward_rounded,
+          label: _resuming ? '正在找…' : '上次读到',
+          onTap: _resume,
+          busy: _resuming,
+        ),
+    ];
+    final pill = pills.isEmpty
+        ? null
+        : FittedBox(
+            key: ValueKey<String>(pills.length == 1 ? 'one' : 'two'),
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var index = 0; index < pills.length; index++) ...[
+                  if (index > 0) const SizedBox(width: 8),
+                  pills[index],
+                ],
+              ],
+            ),
+          );
 
     return Stack(
       key: const ValueKey('list'),
@@ -1196,11 +1222,12 @@ class _FeedPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final chrome = InfChrome.of(context);
+    final ink = chrome.floatingCapsuleInk(context);
     // Keyed by the icon so the switcher above swaps rather than rebuilds it in place.
     return KeyedSubtree(
       key: ValueKey<IconData>(icon),
-      child: InfChrome.of(context).floatingCapsule(
+      child: chrome.floatingCapsule(
         context,
         onTap: busy ? null : onTap,
         child: Padding(
@@ -1212,11 +1239,14 @@ class _FeedPill extends StatelessWidget {
                   ? SizedBox(
                       width: 14,
                       height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: scheme.onPrimary),
+                      child: CircularProgressIndicator(strokeWidth: 2, color: ink),
                     )
-                  : Icon(icon, size: 16, color: scheme.onPrimary),
+                  : Icon(icon, size: 16, color: ink),
               const SizedBox(width: 6),
-              Text(label, style: TextStyle(color: scheme.onPrimary, fontSize: 13, fontWeight: FontWeight.w500)),
+              Text(
+                label,
+                style: TextStyle(color: ink, fontSize: 13, fontWeight: FontWeight.w500),
+              ),
             ],
           ),
         ),

@@ -19,6 +19,7 @@ import '../features/media/image_viewer_page.dart';
 import '../features/media/video_page.dart';
 import '../features/place/place_sheet.dart';
 import '../features/message/chat_page.dart';
+import '../features/message/group_info_page.dart';
 import '../features/relations/relations_page.dart';
 import '../features/search/search_page.dart';
 import '../features/settings/settings_page.dart';
@@ -27,6 +28,7 @@ import '../features/topic/super_topics_page.dart';
 import '../features/topic/topic_page.dart';
 import '../features/topic/topic_timeline_page.dart';
 import '../features/user/user_page.dart';
+import '../features/user/user_search_page.dart';
 import '../features/web/link_fallback_page.dart';
 import '../features/web/web_page.dart';
 
@@ -105,6 +107,10 @@ Future<void> openCommentFloor(BuildContext context, {required String statusId, r
 
 Future<void> openUser(BuildContext context, String uid) =>
     pushInf(context, UserPage(uid: uid), pane: 'user:$uid');
+
+/// 搜他的微博: a keyword searched in one account's posts only.
+Future<void> openUserSearch(BuildContext context, {required String uid, required String name}) =>
+    pushInf(context, UserSearchPage(uid: uid, name: name));
 
 /// A hashtag opens on its topic page; with [query] it is the topic narrowed by that keyword.
 Future<void> openTopic(BuildContext context, String name, {String? query}) {
@@ -188,6 +194,10 @@ Future<void> openChat(
   bool group = false,
 }) =>
     pushInf(context, ChatPage(uid: uid, name: name, avatar: avatar, group: group), pane: 'chat:$uid');
+
+/// A group chat's 群聊信息; completes with true once the reader left the group there.
+Future<bool?> openGroupInfo(BuildContext context, {required String gid, required String name, required List<User> members}) =>
+    pushInf<bool>(context, GroupInfoPage(gid: gid, name: name, members: members));
 
 Future<void> openWeb(BuildContext context, String url) => pushInf(context, WebPage(url: url));
 

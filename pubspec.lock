@@ -427,7 +427,7 @@ packages:
       path: "third_party/liquid_glass_widgets"
       relative: true
     source: path
-    version: "1.17.0"
+    version: "1.17.3"
   logging:
     dependency: transitive
     description:

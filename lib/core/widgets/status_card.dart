@@ -2,19 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/api.dart';
-import '../../core/motion.dart';
 import '../../core/chrome.dart';
 import '../../core/container_route.dart';
 import '../../core/haptics.dart';
 import '../../core/layout.dart';
-import '../../core/media_save.dart';
 import '../../core/models.dart';
 import '../../core/parse.dart';
-import '../../core/native.dart';
 import '../../core/navigation.dart';
-import '../../core/prefs.dart';
-import '../../core/session.dart';
-import '../../core/share.dart';
 import '../../core/status_store.dart';
 import '../../core/touches.dart';
 import 'audio_card.dart';
@@ -23,129 +17,8 @@ import 'common.dart';
 import 'image_grid.dart';
 import 'rich_text.dart';
 import 'smart_image.dart';
-
-/// What can be done with a post: the card's long press and the detail page's menu. Sharing has
-/// its own sheet, [showStatusShare].
-Future<void> showStatusActions(BuildContext context, Status status, {VoidCallback? onLongImage}) {
-  final own = status.author.id == Session.instance.uid;
-  final images = status.images;
-  return showActionSheet<void>(
-    context: context,
-    frosted: false,
-    builder: (sheetContext) {
-      void run(VoidCallback action) {
-        Navigator.pop(sheetContext);
-        action();
-      }
-
-      void copy(String text) => run(() {
-            Clipboard.setData(ClipboardData(text: text));
-            Haptic.success.play();
-            showMessage(context, '已复制');
-          });
-
-      return SafeArea(
-        child: AnimatedBuilder(
-          animation: StatusStore.instance,
-          builder: (context, _) {
-            final current = StatusStore.instance.apply(status);
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (onLongImage != null)
-                  _ActionTile(icon: Icons.article_outlined, label: '生成长图', onTap: () => run(onLongImage)),
-                _ActionTile(
-                  icon: current.favorited ? Icons.star_rounded : Icons.star_outline_rounded,
-                  label: current.favorited ? '取消收藏' : '收藏',
-                  onTap: () => run(() async {
-                    final message = await StatusStore.instance.toggleFavorite(current);
-                    if (context.mounted) showMessage(context, message);
-                  }),
-                ),
-                if (images.isNotEmpty)
-                  _ActionTile(
-                    icon: Icons.collections_outlined,
-                    label: saveAllLabel(images),
-                    onTap: () => run(() => _saveAll(context, images)),
-                  ),
-                _ActionTile(icon: Icons.copy_rounded, label: '复制文本', onTap: () => copy(status.text)),
-                _ActionTile(icon: Icons.link_rounded, label: '复制链接', onTap: () => copy(statusLink(status.id))),
-                _ActionTile(
-                  icon: Icons.open_in_browser_rounded,
-                  label: '在浏览器中打开',
-                  onTap: () => run(() async {
-                    if (!await Native.openUrl(statusLink(status.id)) && context.mounted) {
-                      showMessage(context, '没有可以打开链接的浏览器');
-                    }
-                  }),
-                ),
-                if (!own && status.author.id.isNotEmpty) ...[
-                  _ActionTile(
-                    icon: Icons.block_rounded,
-                    label: '屏蔽 @${status.author.screenName}',
-                    onTap: () => run(() => _confirmBlock(context, status.author)),
-                  ),
-                  _ActionTile(
-                    icon: Icons.report_outlined,
-                    label: '投诉',
-                    onTap: () => run(() => openWeb(context, statusReportLink(status.id))),
-                  ),
-                ],
-                const SizedBox(height: 4),
-              ],
-            );
-          },
-        ),
-      );
-    },
-  );
-}
-
-Future<void> _saveAll(BuildContext context, List<Media> images) async {
-  showMessage(context, '正在保存 ${images.length} 张图片…');
-  final result = await saveImagesToGallery(images);
-  (result.saved == images.length ? Haptic.success : Haptic.error).play();
-  if (!context.mounted) return;
-  showMessage(context, saveAllMessage(result, images.length));
-}
-
-Future<void> _confirmBlock(BuildContext context, User user) async {
-  final ok = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: Text('屏蔽 @${user.screenName}？'),
-      content: const Text('列表里将不再显示 TA 的微博，进入 TA 的主页仍可查看。屏蔽只保存在本机，可在「设置 · 已屏蔽的用户」里解除。'),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('取消')),
-        FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('屏蔽')),
-      ],
-    ),
-  );
-  if (ok != true) return;
-  await Prefs.instance.setBlocked(user, true);
-  Haptic.success.play();
-  if (context.mounted) showMessage(context, '已屏蔽 @${user.screenName}');
-}
-
-class _ActionTile extends StatelessWidget {
-  const _ActionTile({required this.icon, required this.label, required this.onTap});
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      dense: true,
-      visualDensity: const VisualDensity(vertical: -2),
-      minLeadingWidth: 24,
-      leading: Icon(icon, size: 21),
-      title: Text(label, style: Theme.of(context).textTheme.bodyLarge),
-      onTap: onTap,
-    );
-  }
-}
+import 'status_actions.dart';
+import 'status_menu_route.dart';
 
 /// One post, in a list or at the top of its own page. The card is the shared element between those
 /// two places: the same widget grows into the detail page instead of a page sliding over a list.
@@ -249,10 +122,12 @@ class _StatusCardState extends State<StatusCard> {
     if (mounted) showMessage(context, message);
   }
 
-  Future<void> _openMenu(Status status) async {
+  /// Opens the post's menu from the card held. All three styles share this, and each draws the
+  /// panel itself.
+  Future<void> _openMenu(Status status, BuildContext anchor) async {
     if (Touches.multiTouch) return;
     Haptic.longPress.play();
-    await showStatusActions(context, status, onLongImage: widget.onLongImage);
+    await showStatusMenu(context, status, anchor: anchor, onLongImage: widget.onLongImage);
   }
 
   @override
@@ -267,7 +142,7 @@ class _StatusCardState extends State<StatusCard> {
             child: InkWell(
               onTapDown: widget.detail ? null : (_) => _prefetch(status),
               onTap: widget.detail ? null : () => _openSelf(status.id),
-              onLongPress: () => _openMenu(status),
+              onLongPress: () => _openMenu(status, context),
               enableFeedback: false,
               child: const SizedBox.expand(),
             ),
@@ -285,7 +160,7 @@ class _StatusCardState extends State<StatusCard> {
                 behavior: HitTestBehavior.opaque,
                 onTapDown: widget.detail ? null : (_) => _prefetch(status),
                 onTap: widget.detail ? null : () => _openSelf(status.id),
-                onLongPress: () => _openMenu(status),
+                onLongPress: () => _openMenu(status, context),
                 child: RichStatusText(
                   text: status.text,
                   links: status.links,
@@ -351,7 +226,7 @@ class _StatusCardState extends State<StatusCard> {
                 Align(
                   alignment: Alignment.centerRight,
                   child: TextButton.icon(
-                    onPressed: () => _saveAll(context, status.images),
+                    onPressed: () => saveAllImages(context, status.images),
                     style: TextButton.styleFrom(visualDensity: VisualDensity.compact, foregroundColor: scheme.onSurfaceVariant),
                     icon: const Icon(Icons.download_rounded, size: 17),
                     label: Text('保存全部 ${status.images.length} 张'),

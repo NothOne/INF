@@ -54,6 +54,9 @@ abstract class InfChrome {
     return TabBar(
       controller: controller,
       indicatorSize: TabBarIndicatorSize.label,
+      // The indicator slides between tabs rather than jumping, which matches how the bar's own
+      // glass moves and keeps the two reads alike across styles.
+      indicatorAnimation: TabIndicatorAnimation.elastic,
       dividerColor: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4),
       labelPadding: labelPadding,
       tabs: [for (final label in labels) Tab(height: barTabsHeight - 1, child: label)],
@@ -109,8 +112,8 @@ abstract class InfChrome {
   /// the two have to agree.
   Color floatingButtonTint(BuildContext context) => Theme.of(context).colorScheme.primaryContainer;
 
-  /// A small capsule floating over the page, such as the feed's “N 条新微博”. It lies on the
-  /// primary colour, so [child] is drawn in `onPrimary`.
+  /// A small capsule floating over the page, such as the feed's “N 条新微博”. A filled capsule, so
+  /// [child] is drawn in `onPrimary`; [floatingCapsuleInk] is the colour it should use.
   Widget floatingCapsule(BuildContext context, {required Widget child, VoidCallback? onTap}) {
     final scheme = Theme.of(context).colorScheme;
     return Material(
@@ -126,10 +129,31 @@ abstract class InfChrome {
     );
   }
 
+  /// What [floatingCapsule]'s content is drawn in: on the fill, so it reads either way.
+  Color floatingCapsuleInk(BuildContext context) => Theme.of(context).colorScheme.onPrimary;
+
   /// The transient message at the bottom of the page (see `showMessage`). Classic and glass keep
   /// the theme's inverse bar; liquid draws it as dark glass.
   SnackBar snackBar(BuildContext context, Widget content) => SnackBar(content: content);
 
   /// How sheets rise; null keeps the sheet's own motion.
   AnimationStyle? get sheetMotion => null;
+
+  /// What a post's menu is made of. The travel, the dismissal and the rows are the same in every
+  /// style (see `StatusMenuRoute`); only this surface differs, so a menu over a paper page is paper
+  /// and one over liquid glass is glass.
+  Widget statusMenuSurface(BuildContext context, Widget child, BorderRadius radius) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainerHigh,
+      elevation: 8,
+      shadowColor: Colors.black38,
+      shape: RoundedRectangleBorder(borderRadius: radius),
+      clipBehavior: Clip.antiAlias,
+      child: child,
+    );
+  }
+
+  /// The corner radius of [statusMenuSurface].
+  double get statusMenuRadius => 22;
 }

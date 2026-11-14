@@ -211,25 +211,16 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  Future<void> _leaveGroup() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('退出群聊'),
-        content: const Text('退出后不再接收这个群的消息，确定退出？'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('退出')),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    try {
-      await WeiboApi.instance.leaveGroup(widget.uid);
-      if (mounted) Navigator.of(context).pop();
-    } catch (error) {
-      if (mounted) showMessage(context, error is ApiException ? error.message : '退出失败');
+  Future<void> _openGroupInfo() async {
+    final members = <String, User>{};
+    for (final message in _messages.reversed) {
+      members.putIfAbsent(
+        message.senderId,
+        () => User(id: message.senderId, screenName: message.senderName ?? message.senderId, avatarUrl: message.senderAvatar),
+      );
     }
+    final left = await openGroupInfo(context, gid: widget.uid, name: _title, members: members.values.toList());
+    if (left == true && mounted) Navigator.of(context).pop();
   }
 
   String get _title {
@@ -255,14 +246,10 @@ class _ChatPageState extends State<ChatPage> {
               icon: const Icon(Icons.person_outline_rounded),
             )
           else
-            PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert_rounded),
-              onSelected: (value) {
-                if (value == 'leave') _leaveGroup();
-              },
-              itemBuilder: (context) => const [
-                PopupMenuItem(value: 'leave', child: Text('退出群聊')),
-              ],
+            IconButton(
+              onPressed: _openGroupInfo,
+              tooltip: '群聊信息',
+              icon: const Icon(Icons.more_horiz_rounded),
             ),
           const SizedBox(width: 4),
         ],

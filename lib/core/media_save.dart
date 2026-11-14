@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -66,7 +67,9 @@ Future<SaveAllResult> saveImagesToGallery(List<Media> images, {void Function(int
         try {
           final clip = await DefaultCacheManager().getSingleFile(sanitizeImageUrl(image.liveUrl!), headers: weiboImageHeaders());
           result = await Native.saveMotionPhoto(file.path, clip.path, file.name.replaceFirst(RegExp(r'\.\w+$'), '.jpg'));
-        } catch (_) {}
+        } catch (error) {
+          debugPrint('INF save: live photo ${image.liveUrl}: $error');
+        }
         if (result != null) live++;
       }
       if (result == null) {

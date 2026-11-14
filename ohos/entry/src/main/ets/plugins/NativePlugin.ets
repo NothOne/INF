@@ -38,18 +38,34 @@ export default class NativePlugin implements FlutterPlugin, AbilityAware, Method
   private channel: MethodChannel | null = null;
   private ability: UIAbility | null = null;
 
+  /** The engine the page asks for a high frame rate while a finger is on it; see [voteFrameRate]. */
+  private static engine: FlutterPluginBinding | null = null;
+
   getUniqueClassName(): string {
     return TAG;
+  }
+
+  /**
+   * Asks the engine for the panel's high refresh rate. The engine votes 60 fps on every vsync and
+   * never learns that a finger is down — `OhosTouchProcessor::VsyncVotingTouchValue` has no callers
+   * in the embedding, so the app would sit at 60 on a 120 Hz screen. `LTPODispatchHighFrameRate` is
+   * the only exported way into that vote: it reports a lift, which holds 120 for a moment and then
+   * falls back to 60 without a word, so this is safe to call whenever the page is being touched.
+   */
+  static voteFrameRate(): void {
+    NativePlugin.engine?.getFlutterEngine().getFlutterNapi()?.LTPODispatchHighFrameRate();
   }
 
   onAttachedToEngine(binding: FlutterPluginBinding): void {
     this.channel = new MethodChannel(binding.getBinaryMessenger(), 'app.inf.flutter/native');
     this.channel.setMethodCallHandler(this);
+    NativePlugin.engine = binding;
   }
 
   onDetachedFromEngine(binding: FlutterPluginBinding): void {
     this.channel?.setMethodCallHandler(null);
     this.channel = null;
+    NativePlugin.engine = null;
   }
 
   onAttachedToAbility(binding: AbilityPluginBinding): void {
@@ -110,6 +126,10 @@ export default class NativePlugin implements FlutterPlugin, AbilityAware, Method
         result.success(false);
         break;
       case 'peakRefreshRate':
+        // See [voteFrameRate]: the vote is what makes the panel run at its 120 Hz.
+        NativePlugin.voteFrameRate();
+        result.success(null);
+        break;
       case 'sdkInt':
         result.success(null);
         break;

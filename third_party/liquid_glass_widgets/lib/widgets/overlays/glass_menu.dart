@@ -5,6 +5,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import '../../src/utils/glass_localizations.dart';
+import '../../src/widgets/surfaces/shell_chrome_barrier.dart';
 import '../../utils/glass_morph_controller.dart';
 import '../../src/renderer/liquid_glass_renderer.dart';
 import '../../src/widgets/surfaces/vertical_bar_presentation.dart';
@@ -18,6 +19,7 @@ import 'glass_menu_item.dart';
 import '../../theme/glass_theme_helpers.dart';
 import '../../theme/glass_theme.dart';
 import '../shared/glass_accessibility_scope.dart';
+import '../../src/widgets/overlays/overlay_semantics_host.dart';
 
 part 'shared/glass_menu_internal.dart';
 

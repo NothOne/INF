@@ -392,6 +392,16 @@ String _two(int value) => value.toString().padLeft(2, '0');
 // ---------------------------------------------------------------------------------------------
 // Users and statuses
 
+final _defaultAvatar = RegExp(r'default_avatar_(male|female)_\d+');
+
+/// m.weibo.cn's comments give an account still on the default avatar a dead address,
+/// `ss1.sinaimg.cn/orj480/default_avatar_male_180&690`; the picture lives under `default/images`.
+String defaultAvatarFixed(String url) {
+  final match = _defaultAvatar.firstMatch(url);
+  if (match == null || url.contains('/default/images/')) return url;
+  return 'https://tvax1.sinaimg.cn/default/images/default_avatar_${match.group(1)}_180.gif';
+}
+
 User? toUser(dynamic element) {
   final json = asMap(element);
   if (json == null) return null;
@@ -401,7 +411,7 @@ User? toUser(dynamic element) {
   for (final key in ['avatar_hd', 'avatar_large', 'profile_image_url']) {
     final value = textOf(json[key]);
     if (value != null && value.isNotEmpty) {
-      avatar = value;
+      avatar = defaultAvatarFixed(value);
       break;
     }
   }
@@ -1199,7 +1209,7 @@ UserProfile? parseUserProfile(dynamic data) {
   if (user == null) return null;
   return UserProfile(
     user: user,
-    coverUrl: textOf(info['cover_image_phone']),
+    coverUrl: profileCover(textOf(info['cover_image_phone'])),
     verifiedReason: textOf(info['verified_reason']),
     following: boolOf(info['following']),
     followsYou: boolOf(info['follow_me']),
@@ -1487,7 +1497,9 @@ List<ProfileTab> parseProfileTabs(dynamic data) {
 
 /// weibo.com's `profile/info` (tabs, `user.status_total_counter`) and `profile/detail` (facts).
 ProfileExtras parseProfileExtras(dynamic info, dynamic detail) {
-  final counter = asMap(asMap(asMap(info)?['user'])?['status_total_counter']);
+  final user = asMap(asMap(info)?['user']);
+  final counter = asMap(user?['status_total_counter']);
+  final gender = textOf(user?['gender']);
   final about = asMap(detail);
   String? plain(dynamic value) {
     final text = textOf(value)?.trim();
@@ -1511,8 +1523,53 @@ ProfileExtras parseProfileExtras(dynamic info, dynamic detail) {
       ?credit,
       for (final label in asList(about?['label_desc'])) ?plain(asMap(label)?['name']),
     ],
+    coverUrl: profileCover(textOf(user?['cover_image_phone'])),
+    verified: user == null ? null : verifiedBadgeOf(user),
+    vip: user == null ? null : vipIconOf(user),
+    gender: gender == 'm' || gender == 'f' ? gender : null,
   );
 }
+
+/// A cover at full size. `cover_image_phone` may list several, `;`-separated, as 640px crops;
+/// the two stock covers are swapped for the one weibo.com itself shows instead.
+String? profileCover(String? raw) {
+  final first = raw?.split(';').first.trim();
+  if (first == null || first.isEmpty) return null;
+  return first
+      .replaceAll(RegExp(r'549d0121tw1egm1kjly3jj20hs0hsq4f|9d44112bjw1f1xl1c10tuj20hs0hs0tw'), '70ace9b7ly1ggzusnypoej20yi0yiaop')
+      .replaceAll(RegExp(r'crop\.0\.0\.640\.640\.640'), 'mw2000');
+}
+
+/// weibo.com's own choice of V colour from `verified_type` and `verified_type_ext`.
+VerifiedBadge? verifiedBadgeOf(Map<String, dynamic> user) {
+  if (!boolOf(user['verified'])) return null;
+  final type = intOf(user['verified_type']);
+  final ext = intOf(user['verified_type_ext']);
+  if (type == 0) {
+    return switch (ext) { 1 => VerifiedBadge.gold, 2 => VerifiedBadge.orange, _ => VerifiedBadge.yellow };
+  }
+  if (type != null && type >= 1 && type <= 7) {
+    if (ext == -1) return VerifiedBadge.grey;
+    return type == 3 && ext == 53 ? VerifiedBadge.red : VerifiedBadge.blue;
+  }
+  return null;
+}
+
+/// The 会员 icon weibo.com draws. Its artwork stops at VIP 7, SVIP 10 and VVIP 5.
+VipIcon? vipIconOf(Map<String, dynamic> user) {
+  final rank = intOf(user['mbrank']) ?? 0;
+  final type = intOf(user['mbtype']) ?? 0;
+  if (rank <= 0 || type == 0 || type == 2) return null;
+  final (kind, top, aspect) = boolOf(user['vvip'])
+      ? ('vvip', 5, 77 / 28)
+      : boolOf(user['svip'])
+          ? ('svip', 10, 54 / 42)
+          : ('vip', 7, 1.0);
+  return VipIcon('https://h5.sinaimg.cn/upload/108/1866/2022/11/02/${kind}_${rank.clamp(1, top)}.png', aspect);
+}
+
+/// weibo.com's plain lists of posts, `{list}`: the profile search.
+List<Status> parseStatusList(dynamic data) => _statusesOf(asList(asMap(data)?['list']));
 
 /// weibo.com's cursor lists of posts (`profile/getWaterFallContent`, `profile/getAudioList`):
 /// `{list, next_cursor}`, the cursor `-1` or `0` at the end.

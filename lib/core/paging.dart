@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 import 'models.dart';
@@ -20,9 +19,18 @@ class PagingController<T> extends ChangeNotifier {
   final String Function(T item) id;
   final int pageSize;
 
-  /// For newest-first lists: when the fresh first page reaches down into what is already loaded,
-  /// it is joined on top of it instead of replacing it, so the place being read survives.
+  /// For newest-first lists: a refresh the reader did not pull keeps what was already loaded below
+  /// the fresh first page instead of throwing it away, so the post being read survives — the feed
+  /// lays the list out from that post, and losing it is what used to send the reader back to the
+  /// top. When the first page does not reach down to the kept posts, the pages in between are
+  /// fetched as part of the same refresh, so the list never shows a break in the timeline. A pull,
+  /// which the reader starts from the top, keeps the old behaviour.
   final bool keepTailOnRefresh;
+
+  /// How many pages a kept-back refresh may walk to reach the posts it kept. More new posts than
+  /// this means the reader has been away long enough that the place they were at is not worth
+  /// holding: the list is replaced and the offer to go back is shown instead.
+  static const _bridgePages = 4;
 
   final List<T> items = [];
   final Set<String> _seen = {};
@@ -81,20 +89,48 @@ class PagingController<T> extends ChangeNotifier {
       // a refresh instead of a jump back to the skeleton.
       final page = await fetch(null);
       final before = items.isEmpty ? const <String>{} : _seen.toSet();
-      final fresh = {for (final item in page.items) id(item)};
-      final joins = keepTailOnRefresh && items.any((item) => fresh.contains(id(item)));
-      final tail = joins ? items.where((item) => !fresh.contains(id(item))).toList() : <T>[];
+      final headIds = {for (final item in page.items) id(item)};
+      // A refresh the reader pulled starts from the top on purpose, so when the fresh page does not
+      // reach the posts already loaded the list is simply replaced. One that happens on its own —
+      // coming back to the app, after posting — keeps those posts below the fresh page instead: the
+      // feed lays its list out from the post being read, and dropping it is what used to send the
+      // reader back to the top.
+      final keeps = keepTailOnRefresh && items.isNotEmpty;
+      final joined = keeps && items.any((item) => headIds.contains(id(item)));
+      final List<T> kept = keeps ? List<T>.of(items) : <T>[];
+      final keptIds = {for (final item in kept) id(item)};
+      // Walk down from the fresh page to the first kept post, so the list has no break in the
+      // timeline. Too many new posts to reach it means the reader has been away long enough that
+      // the place is not worth holding: the list is replaced and the offer to go back is shown.
+      final bridged = <T>[];
+      var reached = joined;
+      var next = page.nextCursor;
+      final walk = keptIds.isNotEmpty && (background || quiet);
+      for (var walked = 0; walk && !reached && next != null && walked < _bridgePages; walked++) {
+        final more = await fetch(next);
+        final after = more.nextCursor;
+        if (more.items.isEmpty || after == next) break;
+        for (final item in more.items) {
+          final key = id(item);
+          if (headIds.contains(key) || keptIds.contains(key)) continue;
+          bridged.add(item);
+        }
+        reached = more.items.any((item) => keptIds.contains(id(item)));
+        next = after;
+      }
       _seen.clear();
       items.clear();
       _append(page.items);
-      if (joins) {
-        // The older pages and their cursor carry on below the fresh one.
-        _append(tail);
+      if (reached) {
+        // The older pages carry on below the fresh one. The cursor is not touched: it points below
+        // the last post loaded, and what lies below that has not changed.
+        _append(bridged);
+        _append(kept);
       } else {
         cursor = page.nextCursor;
         hasMore = page.nextCursor != null && page.items.isNotEmpty;
       }
-      _markFresh(before);
+      _markFresh(before, fresh: headIds);
       error = null;
       stale = false;
       refreshedAt = DateTime.now();
@@ -115,20 +151,25 @@ class PagingController<T> extends ChangeNotifier {
     }
   }
 
-  void _markFresh(Set<String> before) {
+  /// Marks the posts that were not on screen before the refresh so their rows grow in. [fresh] is
+  /// what the first page brought; the pages walked to keep the old posts are not news to anyone and
+  /// are left out, or the whole stretch between the two ends would animate at once.
+  void _markFresh(Set<String> before, {Set<String>? fresh}) {
     _freshTimer?.cancel();
     if (before.isEmpty) {
-      fresh = const {};
+      this.fresh = const {};
       return;
     }
     final added = <String>{};
     for (final item in items) {
       final key = id(item);
-      if (!before.contains(key)) added.add(key);
+      if (before.contains(key)) continue;
+      if (fresh != null && !fresh.contains(key)) continue;
+      added.add(key);
     }
-    fresh = added;
+    this.fresh = added;
     if (added.isEmpty) return;
-    _freshTimer = Timer(const Duration(milliseconds: 1200), () => fresh = const {});
+    _freshTimer = Timer(const Duration(milliseconds: 1200), () => this.fresh = const {});
   }
 
   Future<void> loadMore() async {

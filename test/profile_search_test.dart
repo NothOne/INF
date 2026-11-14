@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:inf_flutter/core/image_url.dart';
 import 'package:inf_flutter/core/links.dart';
 import 'package:inf_flutter/core/media_save.dart';
 import 'package:inf_flutter/core/models.dart';
@@ -193,6 +194,57 @@ void main() {
       expect(page.nextCursor, '9');
       expect(parseImageWall({'list': [{'pid': 'a'}], 'since_id': '0'}).nextCursor, isNull);
     });
+
+    test('the cover is full size, the stock one swapped for weibo.com’s', () {
+      expect(profileCover('https://wx1.sinaimg.cn/crop.0.0.640.640.640/0033ImPzly1gs64jwa7uyj60v90v9n1r02.jpg;https://x/2.jpg'),
+          'https://wx1.sinaimg.cn/mw2000/0033ImPzly1gs64jwa7uyj60v90v9n1r02.jpg');
+      expect(profileCover('https://ww1.sinaimg.cn/crop.0.0.640.640.640/549d0121tw1egm1kjly3jj20hs0hsq4f.jpg'),
+          'https://ww1.sinaimg.cn/mw2000/70ace9b7ly1ggzusnypoej20yi0yiaop.jpg');
+      expect(profileCover(''), isNull);
+      expect(profileCover(null), isNull);
+    });
+
+    test('badges: the V’s colour, the 会员 icon and gender', () {
+      final extras = parseProfileExtras({
+        'user': {'verified': true, 'verified_type': 3, 'verified_type_ext': 53, 'mbrank': 4, 'mbtype': 12, 'svip': 1, 'vvip': 1, 'gender': 'm'},
+      }, null);
+      expect(extras.verified, VerifiedBadge.red);
+      expect(extras.vip?.url, 'https://h5.sinaimg.cn/upload/108/1866/2022/11/02/vvip_4.png');
+      expect(extras.gender, 'm');
+      expect(verifiedBadgeOf({'verified': true, 'verified_type': 0, 'verified_type_ext': 1}), VerifiedBadge.gold);
+      expect(verifiedBadgeOf({'verified': true, 'verified_type': 0}), VerifiedBadge.yellow);
+      expect(verifiedBadgeOf({'verified': true, 'verified_type': 2, 'verified_type_ext': -1}), VerifiedBadge.grey);
+      expect(verifiedBadgeOf({'verified': true, 'verified_type': 2}), VerifiedBadge.blue);
+      expect(verifiedBadgeOf({'verified': false, 'verified_type': 220}), isNull);
+      expect(vipIconOf({'mbrank': 9, 'mbtype': 12, 'svip': 0})?.url, endsWith('/vip_7.png'));
+      expect(vipIconOf({'mbrank': 9, 'mbtype': 12, 'svip': 1})?.url, endsWith('/svip_9.png'));
+      expect(vipIconOf({'mbrank': 3, 'mbtype': 2}), isNull);
+      expect(vipIconOf({'mbrank': 0, 'mbtype': 0}), isNull);
+    });
+
+    test('profile search lists posts', () {
+      expect(parseStatusList({'list': [_post('7')], 'total': 1}).single.id, '7');
+      expect(parseStatusList({'list': [], 'total': 0}), isEmpty);
+    });
+  });
+
+  test('a default avatar gets the address its picture really has', () {
+    expect(defaultAvatarFixed('https://ss1.sinaimg.cn/orj480/default_avatar_male_180&690'),
+        'https://tvax1.sinaimg.cn/default/images/default_avatar_male_180.gif');
+    expect(defaultAvatarFixed('https://tvax1.sinaimg.cn/default/images/default_avatar_female_50.gif'),
+        'https://tvax1.sinaimg.cn/default/images/default_avatar_female_50.gif');
+    expect(defaultAvatarFixed('https://tvax4.sinaimg.cn/crop.0.0.1018.1018.180/abc.jpg'),
+        'https://tvax4.sinaimg.cn/crop.0.0.1018.1018.180/abc.jpg');
+    expect(toUser({'id': 5087078089, 'screen_name': '平滑的脑皮质', 'profile_image_url': 'https://ss1.sinaimg.cn/orj480/default_avatar_female_180&690'})?.avatarUrl,
+        'https://tvax1.sinaimg.cn/default/images/default_avatar_female_180.gif');
+  });
+
+  test('an avatar opens at its largest size', () {
+    expect(avatarLarge('https://tvax4.sinaimg.cn/crop.0.0.1018.1018.180/abc.jpg?KID=imgbed,tva&Expires=1&ssig=x'),
+        'https://tvax4.sinaimg.cn/crop.0.0.1018.1018.1024/abc.jpg?KID=imgbed,tva&Expires=1&ssig=x');
+    expect(avatarLarge('https://wx1.sinaimg.cn/orj480/abc.jpg'), 'https://wx1.sinaimg.cn/large/abc.jpg');
+    expect(avatarLarge('https://tvax1.sinaimg.cn/default/images/default_avatar_male_180.gif'),
+        'https://tvax1.sinaimg.cn/default/images/default_avatar_male_180.gif');
   });
 
   test('saving them all says which went in as live photos', () {

@@ -210,6 +210,38 @@ void main() {
     expect(pager.cursor, 'end');
   });
 
+  test('a refresh nobody pulled walks down to the posts already loaded', () async {
+    // One page of new posts on top: the first page no longer reaches the posts on screen, and
+    // without walking down to them the feed would have nothing to lay its list out from.
+    final pages = <String?, PageResult<String>>{
+      null: const PageResult(['f', 'g'], 'p2'),
+      'p2': const PageResult(['c', 'd'], 'p3'),
+      'p3': const PageResult(['a', 'b'], 'p4'),
+    };
+    final pager = PagingController<String>(id: (item) => item, keepTailOnRefresh: true, fetch: (cursor) async => pages[cursor]!);
+    // Two pages loaded and read down into: c, d, a, b with the reader somewhere in the middle.
+    pager.seed(const PageResult(['c', 'd'], 'p3'));
+    await pager.loadMore();
+    expect(pager.items, ['c', 'd', 'a', 'b']);
+    await pager.refresh(background: true);
+    expect(pager.items, ['f', 'g', 'c', 'd', 'a', 'b']);
+    expect(pager.cursor, 'p4');
+    expect(pager.fresh, {'f', 'g'});
+  });
+
+  test('a pull keeps the old behaviour: too many new posts replaces the list', () async {
+    final pages = <String?, PageResult<String>>{
+      null: const PageResult(['x', 'y'], 'p2'),
+      'p2': const PageResult(['z'], 'p3'),
+      'p3': const PageResult([], null),
+    };
+    final pager = PagingController<String>(id: (item) => item, keepTailOnRefresh: true, fetch: (cursor) async => pages[cursor]!);
+    pager.seed(const PageResult(['a', 'b'], 'p3'));
+    await pager.refresh();
+    expect(pager.items, ['x', 'y']);
+    expect(pager.hasMore, isTrue);
+  });
+
   test('isVideoLink recognises Weibo video pages only', () {
     expect(isVideoLink('https://video.weibo.com/show?fid=1034:5221234567890123'), isTrue);
     expect(isVideoLink('https://weibo.com/tv/show/1034:5221234567890123'), isTrue);

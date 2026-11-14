@@ -8,6 +8,9 @@ String statusLink(String id) => 'https://m.weibo.cn/detail/$id';
 /// Weibo's report form for a post, the one m.weibo.cn's own 举报 opens.
 String statusReportLink(String id) => 'https://service.account.weibo.com/reportspamobile?rid=$id&type=1&from=20000';
 
+/// The same form for an account, as weibo.com's 投诉TA.
+String userReportLink(String uid) => 'https://service.account.weibo.com/reportspamobile?rid=$uid&type=3&from=20000';
+
 String statusShareText(Status status) {
   final author = status.author.screenName.isEmpty ? status.author.id : status.author.screenName;
   final body = status.text.trim();

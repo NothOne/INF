@@ -160,6 +160,29 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                   ),
                 ),
+                if (prefs.visualStyle == VisualStyle.liquid) ...[
+                  _ChoiceRow<LiquidTier>(
+                    title: '液态玻璃',
+                    options: [for (final value in LiquidTier.values) (value, value.label)],
+                    selected: prefs.liquidTier,
+                    onSelect: prefs.setLiquidTier,
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 7),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      layoutBuilder: (current, previous) => Stack(
+                        alignment: Alignment.topLeft,
+                        children: [...previous, ?current],
+                      ),
+                      child: Text(
+                        prefs.liquidTier.description,
+                        key: ValueKey(prefs.liquidTier),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                      ),
+                    ),
+                  ),
+                ],
                 AnimatedSize(
                   duration: const Duration(milliseconds: 220),
                   curve: Curves.easeOutCubic,
@@ -523,7 +546,12 @@ class _LiquidTunerState extends State<_LiquidTuner> {
         children: [
           Theme(
             data: theme.copyWith(extensions: [look]),
-            child: const LiquidGlassTheme(child: _LiquidPreview()),
+            // The preview draws on ultra's tier so the sliders show what the optics can do even
+            // while the app itself is on standard; switching tiers rebuilds it in place.
+            child: InfGlassQuality(
+              look: look.copyWith(liquidTier: LiquidTier.ultra),
+              child: const LiquidGlassTheme(child: _LiquidPreview()),
+            ),
           ),
           const SizedBox(height: 6),
           _TunerSlider(

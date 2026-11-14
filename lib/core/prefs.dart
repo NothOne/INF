@@ -34,6 +34,18 @@ enum VisualStyle {
   const VisualStyle(this.label, this.description);
 }
 
+/// How much of iOS 26's glass [VisualStyle.liquid] draws. Both tiers bend what is behind them and
+/// answer a press with the same shape change; apart from [standard], [ultra] adds the full 3D
+/// bevel, the merging of neighbouring glass, and the frosted top bar.
+enum LiquidTier {
+  standard('标准', '轻量的折射与边缘高光，任何设备都跑得满帧'),
+  ultra('极致', '完整的 3D 折射、相邻玻璃的融合与顶栏磨砂，最接近 iOS 26');
+
+  final String label;
+  final String description;
+  const LiquidTier(this.label, this.description);
+}
+
 enum HapticLevel {
   off('关闭'),
   subtle('克制'),
@@ -117,6 +129,28 @@ class Prefs extends ChangeNotifier {
   Future<void> setVisualStyle(VisualStyle style) async {
     await _prefs.setString('visual_style', style.name);
     notifyListeners();
+  }
+
+  /// How much of the liquid glass to draw; see [LiquidTier].
+  LiquidTier get liquidTier {
+    final value = _prefs.getString('liquid_tier');
+    return LiquidTier.values.where((t) => t.name == value).firstOrNull ?? LiquidTier.standard;
+  }
+
+  Future<void> setLiquidTier(LiquidTier tier) async {
+    await _prefs.setString('liquid_tier', tier.name);
+    // Asking again is part of choosing ultra: a reader who takes it after being told about the
+    // cost is choosing it for this device, so the hint is due again next time the choice is made.
+    if (tier == LiquidTier.ultra) await _prefs.remove('liquid_ultra_hint');
+    notifyListeners();
+  }
+
+  /// Whether the「液态玻璃有点吃力」question has already been answered on this device. Kept across
+  /// runs so a slow device asks once per choice of ultra rather than once per cold start.
+  bool get liquidUltraHinted => _prefs.getBool('liquid_ultra_hint') ?? false;
+
+  Future<void> setLiquidUltraHinted() async {
+    await _prefs.setBool('liquid_ultra_hint', true);
   }
 
   /// Glass blur strength, 0–1 (see `InfLook.blur`); null until the user changes it.

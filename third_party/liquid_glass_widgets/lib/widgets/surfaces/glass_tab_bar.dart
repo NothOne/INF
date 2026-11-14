@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import '../../constants/glass_defaults.dart';
 import '../../src/renderer/glass_backdrop_group.dart';
 import '../../src/renderer/liquid_glass_renderer.dart';
+import '../../theme/glass_theme_helpers.dart';
 
 import '../../src/types/glass_interaction_behavior.dart';
 import '../../types/glass_quality.dart';
@@ -1055,8 +1056,8 @@ class GlassTabBar extends StatefulWidget with GlassDynamicPreferredSize {
 
   /// Selected-icon magnification inside the indicator (bottom/searchable).
   ///
-  /// When null, defaults to 1.25 for [GlassStyle.ios27] and 1.15 for
-  /// [GlassStyle.classic].
+  /// When null, defaults to 1.15 across [GlassStyle.ios27], [GlassStyle.ios26],
+  /// and [GlassStyle.classic].
   final double? magnification;
 
   /// Blur applied to content inside the indicator (bottom/searchable).
@@ -1094,9 +1095,10 @@ class GlassTabBar extends StatefulWidget with GlassDynamicPreferredSize {
 
   /// Peak scale applied at maximum press depth.
   ///
-  /// null (default): the search and trailing circles press like a native
-  /// button (~17 pt growth) and the bar surface keeps its subtle 1.04. A
-  /// number applies that fixed factor everywhere instead.
+  /// null (default on searchable/minimizable): the search and trailing circles
+  /// press like a native button (~17 pt growth) and the bar surface keeps its
+  /// subtle `1.04` press-lift across all styles. A number applies that fixed
+  /// factor everywhere instead.
   final double? pressScale;
 
   /// Directional glow color on press. Null = theme default.
@@ -1328,15 +1330,13 @@ class _GlassTabBarState extends State<GlassTabBar> {
 
   /// Selected-item magnification inside the lifted indicator.
   ///
-  /// An explicit [GlassTabBar.magnification] always wins. Otherwise the value
-  /// follows the active [GlassStyle]: native iOS 27 `_UILiquidLensView`
-  /// magnifies the selected icon and label by 1.25 (measured on iOS 27.0
-  /// `24A434`), while the classic iOS 26 calibration is 1.15.
+  /// An explicit [GlassTabBar.magnification] always wins. Otherwise defaults to
+  /// 1.15 across styles — pairing with the 27.5 pt base icon on
+  /// [GlassStyle.ios27] / [GlassStyle.ios26] and 24.0 pt on
+  /// [GlassStyle.classic] so lifted items get tactile zoom without ballooning
+  /// past the pill interior.
   double _resolveMagnification(BuildContext context) {
-    final explicit = widget.magnification;
-    if (explicit != null) return explicit;
-    final style = GlassTheme.maybeOf(context)?.data.style ?? GlassStyle.ios27;
-    return style == GlassStyle.classic ? 1.15 : 1.25;
+    return widget.magnification ?? 1.15;
   }
 
   /// Icon size for tab items.
@@ -1364,40 +1364,47 @@ class _GlassTabBarState extends State<GlassTabBar> {
     return style == GlassStyle.classic ? 4.0 : 2.0;
   }
 
+  static const double _kPremiumVerticalExpansion = 8.0;
+  static const double _kStandardVerticalExpansion = 10.5;
+  static const double _kClassicHorizontalExpansion = 12.0;
+  static const double _kNativeHorizontalExpansion = 11.0;
+
   /// Lifted indicator expansion beyond the resting selection pill.
   ///
   /// When [indicatorExpansion] is left at its default
-  /// `EdgeInsets.symmetric(horizontal: 12, vertical: 8)`, iOS 27 mode uses
-  /// `EdgeInsets.symmetric(horizontal: 8, vertical: 8)` — matching native
-  /// iOS 27 `_UILiquidLensView` (`frame = (-4, -4, W + 16, H + 16)` on a
-  /// 4 pt-inset resting pill, so the lifted 35 pt-radius semicircle is
-  /// concentric with the 31 pt-radius bar platter and 27 pt-radius resting
-  /// pill, overhanging by 4 pt uniformly on top, bottom, left, and right).
+  /// `EdgeInsets.symmetric(horizontal: 12, vertical: 8)`, iOS 27 / iOS 26 mode
+  /// uses `EdgeInsets.symmetric(horizontal: 11, vertical: 8)` on
+  /// [GlassQuality.premium] — matching native `_UILiquidLensView` overhanging
+  /// the 4 pt-padded bar platter by 4 pt on top and bottom. On
+  /// [GlassQuality.standard] and [GlassQuality.minimal] (which do not apply
+  /// background texture vertical pinch), vertical expansion is `10.5` pt
+  /// (`6.5` pt net overhang) so the lifted capsule clearly crowns above and
+  /// below the bar border.
   EdgeInsetsGeometry _resolveIndicatorExpansion(BuildContext context) {
     if (widget._placement == _GlassTabBarPlacement.inline ||
         widget.indicatorExpansion !=
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 8)) {
+            const EdgeInsets.symmetric(
+              horizontal: _kClassicHorizontalExpansion,
+              vertical: _kPremiumVerticalExpansion,
+            )) {
       return widget.indicatorExpansion;
     }
     final style = GlassTheme.maybeOf(context)?.data.style ?? GlassStyle.ios27;
-    return style == GlassStyle.classic
-        ? widget.indicatorExpansion
-        : const EdgeInsets.symmetric(horizontal: 11, vertical: 8);
-  }
-
-  /// Bar platter press scale factor for [GlassTabBar.bottom].
-  ///
-  /// When [pressScale] is left at its default `1.04`, iOS 27 mode uses `1.0`
-  /// — native iOS 27 `UITabBar` keeps `_UITabBarItemPlatterView` at `1.0×`
-  /// scale and only lifts/expands `_UILiquidLensView`, whereas classic iOS 26
-  /// mode scales the platter by `1.04×`.
-  double _resolveBottomPressScale(BuildContext context) {
-    final explicit = widget.pressScale;
-    if (explicit != null && explicit != 1.04) {
-      return explicit;
-    }
-    final style = GlassTheme.maybeOf(context)?.data.style ?? GlassStyle.ios27;
-    return style == GlassStyle.classic ? (explicit ?? 1.04) : 1.0;
+    final effectiveQuality = GlassThemeHelpers.resolveQuality(
+      context,
+      widgetQuality: widget.quality,
+      fallback: GlassQuality.premium,
+    );
+    final isStdPath = effectiveQuality == GlassQuality.standard ||
+        effectiveQuality == GlassQuality.minimal;
+    final verticalExpansion =
+        isStdPath ? _kStandardVerticalExpansion : _kPremiumVerticalExpansion;
+    return EdgeInsets.symmetric(
+      horizontal: style == GlassStyle.classic
+          ? _kClassicHorizontalExpansion
+          : _kNativeHorizontalExpansion,
+      vertical: verticalExpansion,
+    );
   }
 
   @override
@@ -1506,7 +1513,7 @@ class _GlassTabBarState extends State<GlassTabBar> {
       interactionGlowColor: widget.interactionGlowColor,
       interactionGlowRadius: widget.interactionGlowRadius,
       interactionBehavior: widget.interactionBehavior,
-      pressScale: _resolveBottomPressScale(context),
+      pressScale: widget.pressScale ?? 1.04,
       platformViewBackdrop: widget.platformViewBackdrop,
       adaptiveBrightness: widget.adaptiveBrightness,
       onBrightnessChanged: widget.onBrightnessChanged,

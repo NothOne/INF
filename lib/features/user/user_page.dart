@@ -8,12 +8,14 @@ import 'package:flutter/services.dart';
 import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/haptics.dart';
+import '../../core/image_url.dart';
 import '../../core/layout.dart';
 import '../../core/models.dart';
 import '../../core/motion.dart';
 import '../../core/navigation.dart';
 import '../../core/paging.dart';
 import '../../core/parse.dart';
+import '../../core/prefs.dart';
 import '../../core/session.dart';
 import '../../core/share.dart';
 import '../../core/widgets/avatar.dart';
@@ -21,6 +23,8 @@ import '../../core/widgets/common.dart';
 import '../../core/widgets/paged_status_list.dart';
 import '../../core/widgets/refresh.dart';
 import '../../core/widgets/smart_image.dart';
+import '../../core/widgets/status_actions.dart';
+import '../../core/widgets/status_menu_route.dart';
 import '../../core/widgets/transitions.dart';
 import '../../core/widgets/viewer_hero.dart';
 
@@ -245,6 +249,85 @@ class _UserPageState extends State<UserPage> with TickerProviderStateMixin {
     }
   }
 
+  /// The page's `⋯`: the same menu, in the same place, as the one a post opens, so the app has one
+  /// way of offering these rather than one per page.
+  void _showMenu(UserProfile profile, bool isSelf, BuildContext anchor) {
+    final user = profile.user;
+    final blocked = Prefs.instance.isBlocked(user.id);
+    showGlassActions(
+      context,
+      anchor: anchor,
+      originRadius: 20,
+      // Against the button's own corner: the header is where the finger already is.
+      placement: StatusMenuPlacement.anchored,
+      actions: [
+        StatusAction(
+          icon: Icons.ios_share_rounded,
+          label: '分享用户',
+          run: () async => shareText(userShareText(user)),
+        ),
+        StatusAction(
+          icon: Icons.manage_search_rounded,
+          label: '搜索微博',
+          run: () async => openUserSearch(context, uid: user.id, name: user.screenName),
+        ),
+        if (!isSelf)
+          StatusAction(
+            icon: Icons.person_off_outlined,
+            label: '一键拉黑',
+            destructive: true,
+            startsGroup: true,
+            run: () => _blacklist(profile),
+          ),
+        if (!isSelf)
+          StatusAction(
+            icon: Icons.report_outlined,
+            label: '举报用户',
+            destructive: true,
+            run: () async => openWeb(context, userReportLink(user.id)),
+          ),
+        if (!isSelf)
+          StatusAction(
+            icon: blocked ? Icons.visibility_outlined : Icons.block_rounded,
+            label: blocked ? '取消屏蔽' : '屏蔽此人',
+            run: () => blocked ? _unblock(user) : confirmBlockUser(context, user),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _unblock(User user) async {
+    await Prefs.instance.setBlocked(user, false);
+    Haptic.success.play();
+    if (mounted) showMessage(context, '已取消屏蔽 @${user.screenName}');
+  }
+
+  Future<void> _blacklist(UserProfile profile) async {
+    final user = profile.user;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('将 @${user.screenName} 加入黑名单？'),
+        content: const Text('不看 TA 的微博，TA 不能评论、私信、@ 你，也不能关注你；已有的关注会被解除。可在微博的「设置 · 屏蔽设置」里解除。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('拉黑')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await WeiboApi.instance.blacklist(user.id);
+      Haptic.success.play();
+      if (!mounted) return;
+      setState(() => _profile = _profile?.withFollowing(false));
+      showMessage(context, '已将 @${user.screenName} 加入黑名单');
+    } catch (error) {
+      Haptic.error.play();
+      if (mounted) showMessage(context, error is ApiException ? error.message : '拉黑失败');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -318,7 +401,7 @@ class _UserPageState extends State<UserPage> with TickerProviderStateMixin {
       ),
     );
     final openHeight = math.max((_headerHeight ?? top + kToolbarHeight + 320) - top, kToolbarHeight) + _stripHeight;
-    final hasCover = profile.coverUrl != null;
+    final hasCover = (_extras?.coverUrl ?? profile.coverUrl) != null;
     final tabs = DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surface,
@@ -371,10 +454,13 @@ class _UserPageState extends State<UserPage> with TickerProviderStateMixin {
             ),
           ),
           actions: chrome.barActions(context, [
-            IconButton(
-              onPressed: () => shareText(userShareText(profile.user)),
-              tooltip: '分享主页',
-              icon: const Icon(Icons.ios_share_rounded),
+            Builder(
+              // The button's own context, so the menu anchors to it rather than to the page.
+              builder: (buttonContext) => IconButton(
+                onPressed: () => _showMenu(profile, isSelf, buttonContext),
+                tooltip: '更多',
+                icon: const Icon(Icons.more_horiz_rounded),
+              ),
             ),
           ]),
           flexibleSpace: _HeaderSpace(
@@ -863,6 +949,8 @@ class _ProfileHeader extends StatelessWidget {
     final extras = this.extras;
     final interactions = extras?.interactions;
     final facts = extras?.facts ?? const <String>[];
+    final cover = extras?.coverUrl ?? profile.coverUrl;
+    final avatarTag = 'avatar-${user.id}';
     return ColoredBox(
       color: scheme.surface,
       child: Column(
@@ -874,17 +962,17 @@ class _ProfileHeader extends StatelessWidget {
               clipBehavior: Clip.none,
               fit: StackFit.expand,
               children: [
-                if (profile.coverUrl == null)
+                if (cover == null)
                   ColoredBox(color: scheme.surfaceContainerHigh)
                 else
-                  SmartImage(url: profile.coverUrl, fit: BoxFit.cover),
+                  SmartImage(url: cover, fit: BoxFit.cover),
                 DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
                       colors: [
-                        profile.coverUrl == null ? Colors.transparent : Colors.black38,
+                        cover == null ? Colors.transparent : Colors.black38,
                         Colors.transparent,
                         Colors.transparent,
                         scheme.surface.withValues(alpha: 0.85),
@@ -903,10 +991,22 @@ class _ProfileHeader extends StatelessWidget {
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          Container(
-                            padding: const EdgeInsets.all(3),
-                            decoration: BoxDecoration(color: scheme.surface, shape: BoxShape.circle),
-                            child: Avatar(url: user.avatarUrl, size: 70, verified: user.verified),
+                          GestureDetector(
+                            onTap: user.avatarUrl == null
+                                ? null
+                                : () => openImage(
+                                      context,
+                                      media: [Media.image(avatarLarge(user.avatarUrl!), previewUrl: user.avatarUrl)],
+                                      heroTag: avatarTag,
+                                    ),
+                            child: Container(
+                              padding: const EdgeInsets.all(3),
+                              decoration: BoxDecoration(color: scheme.surface, shape: BoxShape.circle),
+                              child: ViewerHero(
+                                tag: avatarTag,
+                                child: Avatar(url: user.avatarUrl, size: 70, verified: user.verified),
+                              ),
+                            ),
                           ),
                           const Spacer(),
                           Padding(
@@ -928,7 +1028,24 @@ class _ProfileHeader extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(user.screenName, style: textTheme.titleLarge),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(user.screenName, style: textTheme.titleLarge),
+                      if (extras?.gender case final gender?) _GenderMark(female: gender == 'f'),
+                      if (extras?.verified case final badge?) _VerifiedMark(badge: badge),
+                      if (extras?.vip case final vip?)
+                        SmartImage(
+                          url: vip.url,
+                          width: 16 * vip.aspect,
+                          height: 16,
+                          fit: BoxFit.contain,
+                          placeholderColor: Colors.transparent,
+                        ),
+                    ],
+                  ),
                   if (profile.verifiedReason != null && profile.verifiedReason!.isNotEmpty) ...[
                     const SizedBox(height: 3),
                     Text(profile.verifiedReason!, style: textTheme.bodySmall?.copyWith(color: scheme.primary)),
@@ -1041,6 +1158,40 @@ class _ProfileHeader extends StatelessWidget {
       ],
     );
   }
+}
+
+class _GenderMark extends StatelessWidget {
+  const _GenderMark({required this.female});
+
+  final bool female;
+
+  @override
+  Widget build(BuildContext context) => Icon(
+        female ? Icons.female_rounded : Icons.male_rounded,
+        size: 18,
+        color: female ? const Color(0xFFFF6B9A) : const Color(0xFF3D9BFF),
+      );
+}
+
+/// The V in weibo.com's colour for the kind of verification.
+class _VerifiedMark extends StatelessWidget {
+  const _VerifiedMark({required this.badge});
+
+  final VerifiedBadge badge;
+
+  @override
+  Widget build(BuildContext context) => Icon(
+        Icons.verified_rounded,
+        size: 18,
+        color: switch (badge) {
+          VerifiedBadge.gold => const Color(0xFFE8A200),
+          VerifiedBadge.orange => const Color(0xFFFF8200),
+          VerifiedBadge.yellow => const Color(0xFFFFC21A),
+          VerifiedBadge.blue => const Color(0xFF2D8CF0),
+          VerifiedBadge.red => const Color(0xFFE6162D),
+          VerifiedBadge.grey => const Color(0xFF9E9E9E),
+        },
+      );
 }
 
 class _Count extends StatelessWidget {

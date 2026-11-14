@@ -360,28 +360,38 @@ class _GlassPopoverState extends State<GlassPopover>
         final isHandoff =
             _morphController.isClosing && _morphController.hasHandedOff;
 
+        final effectiveQuality = GlassThemeHelpers.resolveQuality(
+          context,
+          widgetQuality: widget.quality,
+          fallback: GlassThemeHelpers.nativeStyleQuality(context),
+        );
+        final isPremiumQuality = effectiveQuality == GlassQuality.premium;
+
         // Tactile detach and re-merge trigger opacity.
         //
-        // On open: The trigger smoothly dissolves (1.0 -> 0.0) over the first
-        // 20% of travel as the droplet pulls away. Once detached, the trigger
-        // is cleanly hidden (no ghosting artifacts while reading items).
+        // On open (premium): The real trigger hides immediately on frame 1 so
+        // its shrinking ghost (Blob A inside the overlay, anchorScale 1.0 -> 0.0
+        // over 0..40%) is visible and reads as being absorbed into the droplet.
+        // On open (standard/minimal): The trigger smoothly dissolves (1.0 -> 0.0)
+        // over the first 20% of travel as the droplet pulls away.
         //
-        // On close: As the droplet approaches home (clampedValue < 0.20),
-        // the trigger smoothly cross-dissolves back in (0.0 -> 1.0) while the
-        // overlay fades out, eliminating any 1-frame pop at handoff.
-        // Once handoff fires, the trigger is fully opaque to absorb the bounce.
+        // On close: While the popover contracts down to the trigger footprint,
+        // the real trigger stays hidden until the final 28% of travel (after
+        // content has vanished at morphSizeT <= 0.50), then smoothly
+        // re-materializes inside the contracting pill before handoff.
         final double triggerOpacity;
         final clampedValue = rawValue.clamp(0.0, 1.0);
         if (!_overlayController.isShowing || isHandoff) {
           triggerOpacity = 1.0;
         } else if (!_morphController.isClosing) {
-          final detachT = (clampedValue / 0.20).clamp(0.0, 1.0);
-          triggerOpacity = 1.0 - detachT;
+          if (isPremiumQuality) {
+            triggerOpacity = 0.0;
+          } else {
+            final detachT = (clampedValue / 0.20).clamp(0.0, 1.0);
+            triggerOpacity = 1.0 - detachT;
+          }
         } else {
-          // While closing, the real trigger stays hidden. Blob A inside the
-          // overlay represents the trigger and fuses with the returning droplet.
-          // When handoff fires at rawValue <= 0.0, triggerOpacity becomes 1.0.
-          triggerOpacity = 0.0;
+          triggerOpacity = ((0.42 - clampedValue) / 0.35).clamp(0.0, 1.0);
         }
 
         // Push vector: the trigger physically recoils as the popover snaps shut.
@@ -413,7 +423,7 @@ class _GlassPopoverState extends State<GlassPopover>
           opacity: triggerOpacity,
           child: GlassMaterializeScope(
             glassProgress: triggerOpacity * (outer?.glassProgress ?? 1.0),
-            contentOpacity: triggerOpacity * (outer?.contentOpacity ?? 1.0),
+            contentOpacity: outer?.contentOpacity ?? 1.0,
             contentSigma: outer?.contentSigma ?? 0.0,
             child: IgnorePointer(
               ignoring: isPopoverBlocking,
@@ -799,7 +809,7 @@ class _GlassPopoverState extends State<GlassPopover>
     // ── Per-frame AnimatedBuilder ────────────────────────────────────────────
     // Listens to BOTH the morph spring and the blur ramp so the backdrop blur
     // repaints as it eases in, independently of where the morph spring is.
-    return AnimatedBuilder(
+    final overlay = AnimatedBuilder(
       animation: Listenable.merge([_morphController.animation, _blurRamp]),
       builder: (context, child) {
         final rawValue = _morphController.value;
@@ -825,30 +835,64 @@ class _GlassPopoverState extends State<GlassPopover>
           verticalOffset: _verticalOffset,
         );
 
-        final currentHeight = lerpDouble(th, popoverHeight, state.sizeT)!;
-        final currentWidth = lerpDouble(tw, popoverWidth, state.sizeT)!;
+        final bool isPremiumQuality = effectiveQuality == GlassQuality.premium;
+        final double morphSizeT =
+            (_morphController.isClosing && isPremiumQuality)
+                ? (state.pathT + state.sizeT) * 0.5
+                : state.sizeT;
 
-        final double effectiveDx;
-        final double effectiveDy;
+        final double effectiveStartW =
+            (!_morphController.isClosing && isPremium && tw > th)
+                ? lerpDouble(
+                    th,
+                    tw,
+                    (1.0 - (clampedValue / 0.16)).clamp(0.0, 1.0),
+                  )!
+                : tw;
+
+        final currentHeight = lerpDouble(th, popoverHeight, morphSizeT)!
+            .clamp(0.0, double.infinity);
+        final currentWidth =
+            lerpDouble(effectiveStartW, popoverWidth, morphSizeT)!
+                .clamp(0.0, double.infinity);
+
+        final double anchorAlignX = (1.0 + _morphAlignment.x) / 2.0;
+        final double anchorAlignY = (1.0 + _morphAlignment.y) / 2.0;
+        final double pinnedLeft = anchorAlignX * (tw - currentWidth);
+        final double pinnedTop = anchorAlignY * (th - currentHeight);
+
+        final double anchorDriftX;
+        final double anchorDriftY;
         if (_morphController.isClosing) {
-          if (isPremium) {
-            effectiveDx = finalDx * state.pathT;
-            effectiveDy = finalDy * state.pathT;
-          } else {
-            effectiveDx = finalDx * state.sizeT;
-            effectiveDy = finalDy * state.sizeT;
-          }
+          anchorDriftX = 0.0;
+          anchorDriftY = 0.0;
         } else {
-          effectiveDx = state.currentDx;
-          effectiveDy = state.currentDy;
+          final double detachRelease = 1.0 - state.anchorScale * 0.65;
+          anchorDriftX = finalDx * (state.pathT - state.sizeT) * detachRelease;
+          anchorDriftY = finalDy * (state.pathT - state.sizeT) * detachRelease;
         }
 
         // Solid overlay during flight and metaball fusion.
-        // Handoff to the real trigger button occurs cleanly when hasHandedOff fires (rawValue <= 0.0).
+        // Over the final 22% of close, smoothly cross-fade into the real trigger
+        // before hasHandedOff fires at rawValue <= 0.0.
         final double overlayOpacity =
             (_morphController.isClosing && _morphController.hasHandedOff)
                 ? 0.0
-                : 1.0;
+                : _morphController.isClosing
+                    ? (clampedValue / 0.22).clamp(0.0, 1.0)
+                    : 1.0;
+
+        final double minTriggerSide = math.min(tw, th);
+        final double blobAWidth = lerpDouble(
+          minTriggerSide,
+          tw,
+          state.anchorScale * state.anchorScale,
+        )!;
+        final double blobAHeight = lerpDouble(
+          minTriggerSide,
+          th,
+          state.anchorScale * state.anchorScale,
+        )!;
 
         return Stack(
           children: [
@@ -856,26 +900,35 @@ class _GlassPopoverState extends State<GlassPopover>
             if (clampedValue > 0.3 && widget.barrierDismissible)
               Positioned.fill(
                 // Named like Flutter's ModalBarrier so a screen reader can
-                // close the popover as well as a pointer can.
-                child: Semantics(
-                  container: true,
-                  label: glassCupertinoLocalizationsOf(context)
-                      .modalBarrierDismissLabel,
-                  onDismiss: _closePopover,
-                  onTap: _closePopover,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    excludeFromSemantics: true,
+                // close the popover as well as a pointer can. BlockSemantics
+                // hides the page behind the open popover, as ModalBarrier
+                // does.
+                child: BlockSemantics(
+                  child: Semantics(
+                    container: true,
+                    label: glassCupertinoLocalizationsOf(context)
+                        .modalBarrierDismissLabel,
+                    onDismiss: _closePopover,
                     onTap: _closePopover,
-                    child: const ColoredBox(color: Color(0x00000000)),
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      excludeFromSemantics: true,
+                      onTap: _closePopover,
+                      child: const ColoredBox(color: Color(0x00000000)),
+                    ),
                   ),
                 ),
               ),
 
             // ── Non-dismissible barrier (absorbs taps without closing) ───────
+            // Blocks the page's semantics too, like a non-dismissible
+            // ModalBarrier: a pointer can't reach the page, so a screen
+            // reader shouldn't either.
             if (clampedValue > 0.3 && !widget.barrierDismissible)
               const Positioned.fill(
-                child: AbsorbPointer(),
+                child: BlockSemantics(
+                  child: AbsorbPointer(),
+                ),
               ),
 
             // ── Two-blob metaball morphing ───────────────────────────────────
@@ -899,18 +952,29 @@ class _GlassPopoverState extends State<GlassPopover>
                             // smoothly breaking the liquid bridge.
                             // Suppressed during close on standard/minimal quality
                             // to avoid duplicate button overlap.
-                            if (!_morphController.isClosing || isPremium)
+                            if (state.anchorScale > 0.25 &&
+                                (!_morphController.isClosing || isPremium))
                               Positioned(
-                                left: _triggerOverlayPosition.dx + state.pushDx,
-                                top: _triggerOverlayPosition.dy + state.pushDy,
+                                left: _triggerOverlayPosition.dx +
+                                    anchorAlignX * (tw - blobAWidth) +
+                                    anchorDriftX *
+                                        (1.0 - state.anchorScale) *
+                                        0.85 +
+                                    state.pushDx,
+                                top: _triggerOverlayPosition.dy +
+                                    anchorAlignY * (th - blobAHeight) +
+                                    anchorDriftY *
+                                        (1.0 - state.anchorScale) *
+                                        0.85 +
+                                    state.pushDy,
                                 child: Transform.scale(
                                   scale: state.anchorScale,
                                   child: GlassContainer(
                                     useOwnLayer: false,
                                     settings: rampedSettings,
                                     quality: effectiveQuality,
-                                    width: tw,
-                                    height: th,
+                                    width: blobAWidth,
+                                    height: blobAHeight,
                                     shape: LiquidRoundedRectangle(
                                       borderRadius: _triggerBorderRadius ??
                                           _triggerSize!.shortestSide / 2.0,
@@ -922,26 +986,33 @@ class _GlassPopoverState extends State<GlassPopover>
                             // ── Blob B: Popover body ─────────────────────────
                             Positioned(
                               left: _triggerOverlayPosition.dx +
-                                  tw / 2.0 +
-                                  effectiveDx -
-                                  currentWidth / 2.0 +
+                                  pinnedLeft +
+                                  anchorDriftX +
                                   (_horizontalOffset * clampedValue),
                               top: _triggerOverlayPosition.dy +
-                                  th / 2.0 +
-                                  effectiveDy -
-                                  currentHeight / 2.0 +
+                                  pinnedTop +
+                                  anchorDriftY +
                                   (_verticalOffset * clampedValue),
-                              child: IgnorePointer(
-                                ignoring: clampedValue < 0.8,
-                                child: _buildPopoverContainer(
-                                  state,
-                                  clampedValue,
-                                  currentWidth,
-                                  currentHeight,
-                                  rampedSettings,
-                                  effectiveQuality,
-                                  isDark,
-                                  popoverHeight,
+                              // Its own node, so the content keeps the body's
+                              // bounds and its own nodes, as on a page, rather
+                              // than merging into the full-screen
+                              // Semantics(textDirection:) wrapper below
+                              // OverlaySemanticsHost.
+                              child: Semantics(
+                                container: true,
+                                explicitChildNodes: true,
+                                child: IgnorePointer(
+                                  ignoring: clampedValue < 0.8,
+                                  child: _buildPopoverContainer(
+                                    state,
+                                    clampedValue,
+                                    currentWidth,
+                                    currentHeight,
+                                    rampedSettings,
+                                    effectiveQuality,
+                                    isDark,
+                                    popoverHeight,
+                                  ),
                                 ),
                               ),
                             ),
@@ -969,6 +1040,23 @@ class _GlassPopoverState extends State<GlassPopover>
         );
       },
     );
+
+    // OverlaySemanticsHost attaches the overlay's nodes to the Overlay rather
+    // than to the node OverlayPortal traverses them from. That node wraps
+    // OverlayPortal.child, which is null here (the trigger is the portal's
+    // sibling), so it is 0x0 and used to drop the open popover from the
+    // semantics tree; it is also in the page the barriers block. Both
+    // barriers block the page whenever they are up, so the host is always
+    // enabled. The non-boundary Semantics(textDirection:) wrapper is
+    // load-bearing: it gives the host's delegate a mergeable config to put in
+    // the sibling merge group (the barrier and the body are semantic
+    // boundaries whose own configToMergeUp is null).
+    return OverlaySemanticsHost(
+      child: Semantics(
+        textDirection: Directionality.maybeOf(context) ?? TextDirection.ltr,
+        child: overlay,
+      ),
+    );
   }
 
   Widget _buildPopoverContainer(
@@ -983,18 +1071,20 @@ class _GlassPopoverState extends State<GlassPopover>
   ) {
     // Morph border radius from pill → target corner radius.
     final maxRadius = math.min(currentWidth, currentHeight) / 2.0;
+    final bool isPremiumQuality = effectiveQuality == GlassQuality.premium;
+    final double morphSizeT = (_morphController.isClosing && isPremiumQuality)
+        ? (state.pathT + state.sizeT) * 0.5
+        : state.sizeT;
     final double radiusT =
-        Curves.easeInExpo.transform(state.sizeT.clamp(0.0, 1.0));
-    final bool isPremium = effectiveQuality == GlassQuality.premium &&
-        ImageFilter.isShaderFilterSupported;
-    final currentRadius = _morphController.isClosing
-        ? (isPremium
-            ? maxRadius
-            : lerpDouble(
-                _triggerBorderRadius ?? (_triggerSize!.shortestSide / 2.0),
-                widget.popoverBorderRadius,
-                radiusT,
-              )!)
+        Curves.easeInExpo.transform(morphSizeT.clamp(0.0, 1.0));
+    final bool isPremium =
+        isPremiumQuality && ImageFilter.isShaderFilterSupported;
+    final currentRadius = (_morphController.isClosing && !isPremium)
+        ? lerpDouble(
+            _triggerBorderRadius ?? (_triggerSize!.shortestSide / 2.0),
+            widget.popoverBorderRadius,
+            radiusT,
+          )!
         : lerpDouble(maxRadius, widget.popoverBorderRadius, radiusT)!;
 
     final teardropShape = LiquidRoundedRectangle(
@@ -1041,12 +1131,14 @@ class _GlassPopoverState extends State<GlassPopover>
               alignment: _morphAlignment,
               clipBehavior: Clip.none,
               children: [
-                // Content enters at 30 % morph progress and scales 0.5 → 1.0.
-                // On close the reverse plays, matching GlassMenu behaviour.
-                if (_morphController.isClosing
-                    ? clampedValue > 0.85
-                    : clampedValue > 0.3)
-                  _buildContentWithMeasurement(clampedValue, targetHeight),
+                // On open, content begins materializing once the droplet reaches
+                // 25 % size; on close, content exits before 50 % container size
+                // so it is never visible inside the shrinking button.
+                if (morphSizeT > (_morphController.isClosing ? 0.50 : 0.25))
+                  _buildContentWithMeasurement(
+                    morphSizeT.clamp(0.0, 1.0),
+                    targetHeight,
+                  ),
               ],
             ),
           ),
@@ -1056,20 +1148,14 @@ class _GlassPopoverState extends State<GlassPopover>
   }
 
   Widget _buildContentWithMeasurement(
-      double clampedValue, double targetHeight) {
-    // Fade in smoothly: fully opaque by 70 % morph progress.
+      double sizeProgress, double targetHeight) {
+    // Fade in/out smoothly in lockstep with the container size.
     final contentOpacity = _morphController.isClosing
-        ? ((clampedValue - 0.85) / 0.15).clamp(0.0, 1.0)
-        : ((clampedValue - 0.3) / 0.4).clamp(0.0, 1.0);
+        ? ((sizeProgress - 0.50) / 0.45).clamp(0.0, 1.0)
+        : ((sizeProgress - 0.25) / 0.55).clamp(0.0, 1.0);
 
-    // Scale 0.5 → 1.0 with easeOut, in sync with the expanding container.
-    final contentScale = lerpDouble(
-      0.5,
-      1.0,
-      Curves.easeOut.transform(
-        ((clampedValue - 0.3) / 0.7).clamp(0.0, 1.0),
-      ),
-    )!;
+    // Scale in sync with the expanding/contracting container.
+    final contentScale = sizeProgress;
 
     // _cachedContent was set in _openPopover (or refreshed in didUpdateWidget).
     // The null-coalesce is a last-resort safety net only.

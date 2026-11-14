@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
+import android.util.Log
 import android.util.Rational
 import android.view.HapticFeedbackConstants
 import android.view.WindowManager
@@ -32,7 +33,7 @@ class MainActivity : FlutterActivity() {
 
     private val channelName = "app.inf.flutter/native"
 
-    /** The link an `inf://open?url=…` intent brought, until Dart takes it. */
+    /** The link an intent brought (`inf://open?url=…`, a Weibo address, shared text), until Dart takes it. */
     private var pendingLink: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -76,8 +77,16 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun linkOf(intent: Intent?): String? =
-        intent?.data?.takeIf { it.scheme == "inf" && it.host == "open" }?.getQueryParameter("url")
+    /** A Weibo address opened or text shared here; Dart finds the link in shared text itself. */
+    private fun linkOf(intent: Intent?): String? {
+        if (intent?.action == Intent.ACTION_SEND) return intent.getStringExtra(Intent.EXTRA_TEXT)
+        val data = intent?.data ?: return null
+        return when (data.scheme) {
+            "inf" -> data.takeIf { it.host == "open" }?.getQueryParameter("url")
+            "http", "https" -> data.toString()
+            else -> null
+        }
+    }
 
     private fun seedCookies() {
         intent?.getStringExtra("seedCookie")?.takeIf { it.isNotBlank() }?.let { raw ->
@@ -204,9 +213,10 @@ class MainActivity : FlutterActivity() {
                                     val target = File(cacheDir, "motion-" + System.nanoTime() + ".jpg")
                                     try {
                                         MotionPhoto.compose(File(image), File(video), target, cacheDir)
-                                        val saved = saveImageToGallery(target, name, "image/jpeg")
+                                        val saved = saveImageToGallery(target, name, "image/jpeg", motionPhoto = true)
                                         runOnUiThread { result.success(saved) }
                                     } catch (error: Throwable) {
+                                        Log.w("INF", "save motion photo failed", error)
                                         runOnUiThread { result.error("save_motion_photo", error.message, null) }
                                     } finally {
                                         target.delete()
@@ -324,7 +334,7 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun saveImageToGallery(source: File, name: String, mime: String): String? {
+    private fun saveImageToGallery(source: File, name: String, mime: String, motionPhoto: Boolean = false): String? {
         if (!source.exists() || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
         val resolver = contentResolver
         val values = ContentValues().apply {
@@ -339,7 +349,20 @@ class MainActivity : FlutterActivity() {
         values.clear()
         values.put(MediaStore.Images.Media.IS_PENDING, 0)
         resolver.update(uri, values, null, null)
+        if (motionPhoto) markVivoLivePhoto(uri)
         return "Pictures/INF/$name"
+    }
+
+    /**
+     * vivo's gallery ignores the Motion Photo XMP and lists a picture as live only by MediaStore's
+     * vivo-only `live_photo` column, which its camera fills from a private trailer in the file.
+     * The column is writable; other vendors have no such column and reject the update.
+     */
+    private fun markVivoLivePhoto(uri: Uri) {
+        try {
+            contentResolver.update(uri, ContentValues().apply { put("live_photo", "motionphoto00010000000000000") }, null, null)
+        } catch (_: Exception) {
+        }
     }
 
     private fun saveVideoToGallery(source: File, name: String): String? {

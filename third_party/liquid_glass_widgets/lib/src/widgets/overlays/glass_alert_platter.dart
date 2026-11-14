@@ -13,10 +13,20 @@
 //   when their labels fit, otherwise they stack;
 // - a UIKit action sheet shown without a source view is this same platter with
 //   stacked actions (Cancel included), centred on screen.
+//
+// Behaviour, measured on the iOS 26.5 and iOS 27.0 simulators:
+//
+// - a header too tall for the screen scrolls (title and message together)
+//   while the actions stay pinned below it;
+// - with the keyboard up, the platter re-centres in the space above it;
+// - action titles are one line, and wrap only at accessibility text sizes.
+
+import 'dart:ui' show SemanticsRole;
 
 import 'package:flutter/cupertino.dart';
 
 import '../../../src/renderer/liquid_glass_renderer.dart';
+import '../../../src/utils/glass_localizations.dart';
 import '../../../theme/glass_theme.dart';
 import '../../../theme/glass_theme_helpers.dart';
 import '../../../types/glass_quality.dart';
@@ -35,6 +45,14 @@ const double kGlassAlertPlatterWidth = 320;
 Color glassAlertBarrierColor({required bool isDark}) =>
     isDark ? const Color(0x77000000) : const Color(0x35000000);
 
+/// Whether text is scaled into the accessibility sizes, where native action
+/// titles wrap instead of truncating. Same threshold as `CupertinoAlertDialog`.
+bool _isInAccessibilityMode(BuildContext context) {
+  const defaultFontSize = 14.0;
+  final scaled = MediaQuery.maybeTextScalerOf(context)?.scale(defaultFontSize);
+  return scaled != null && scaled > defaultFontSize * 1.4;
+}
+
 /// One action row of a [GlassAlertPlatter].
 class GlassAlertPlatterAction {
   const GlassAlertPlatterAction({
@@ -46,7 +64,9 @@ class GlassAlertPlatterAction {
   });
 
   final String label;
-  final VoidCallback onPressed;
+
+  /// Null disables the action.
+  final VoidCallback? onPressed;
   final bool isPrimary;
   final bool isDestructive;
   final Widget? icon;
@@ -64,6 +84,7 @@ class GlassAlertPlatter extends StatelessWidget {
     this.quality,
     this.maxWidth,
     this.forceStacked = false,
+    this.semanticsRole = SemanticsRole.alertDialog,
   });
 
   final List<GlassAlertPlatterAction> actions;
@@ -76,6 +97,11 @@ class GlassAlertPlatter extends StatelessWidget {
 
   /// Stack the actions even when they would fit side by side (action sheets).
   final bool forceStacked;
+
+  /// The route's semantics role: [SemanticsRole.alertDialog] for an alert, and
+  /// [SemanticsRole.dialog] for an action sheet, as `CupertinoAlertDialog` and
+  /// `CupertinoActionSheet` report them.
+  final SemanticsRole semanticsRole;
 
   /// The platter's glass settings.
   ///
@@ -110,74 +136,113 @@ class GlassAlertPlatter extends StatelessWidget {
     final platterSettings = _platterSettings(context);
     final hasHeader = title != null || message != null || content != null;
 
+    final messageColor = CupertinoColors.secondaryLabel.resolveFrom(context);
+
     // Native centres the platter in the safe area (its centre sits at
-    // (safeTop + height - safeBottom) / 2, i.e. y = 451 on a 874 pt iPhone).
-    return SafeArea(
-      child: Center(
-        child: ConstrainedBox(
-          constraints:
-              BoxConstraints(maxWidth: maxWidth ?? kGlassAlertPlatterWidth),
-          child: GlassContainer.card(
-            useOwnLayer: true,
-            settings: platterSettings,
-            quality: effectiveQuality,
-            shape: const LiquidRoundedSuperellipse(borderRadius: 34),
-            padding: EdgeInsets.zero,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (hasHeader)
-                  Padding(
-                    padding:
-                        const EdgeInsetsDirectional.fromSTEB(30, 22, 30, 4.33),
+    // (safeTop + height - safeBottom) / 2, i.e. y = 451 on a 874 pt iPhone),
+    // and in the space above the keyboard while one is up.
+    return AnimatedPadding(
+      padding: MediaQuery.viewInsetsOf(context),
+      duration: const Duration(milliseconds: 100),
+      curve: Curves.decelerate,
+      child: MediaQuery.removeViewInsets(
+        context: context,
+        removeLeft: true,
+        removeTop: true,
+        removeRight: true,
+        removeBottom: true,
+        child: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints:
+                  BoxConstraints(maxWidth: maxWidth ?? kGlassAlertPlatterWidth),
+              child: Semantics(
+                role: semanticsRole,
+                scopesRoute: true,
+                namesRoute: true,
+                explicitChildNodes: true,
+                label: glassCupertinoLocalizationsOf(context).alertDialogLabel,
+                // Replaces the host app's default text style, which under a
+                // MaterialApp is the red, underlined error style.
+                child: DefaultTextStyle(
+                  style: CupertinoTheme.of(context).textTheme.textStyle,
+                  child: GlassContainer.card(
+                    useOwnLayer: true,
+                    settings: platterSettings,
+                    quality: effectiveQuality,
+                    shape: const LiquidRoundedSuperellipse(borderRadius: 34),
+                    padding: EdgeInsets.zero,
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        if (title != null)
-                          SizedBox(
-                            width: double.infinity,
-                            child: Text(
-                              title!,
-                              style: TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w600,
-                                color:
-                                    CupertinoColors.label.resolveFrom(context),
+                        // Native scrolls the title and message together when
+                        // they outgrow the screen, keeping the actions visible.
+                        if (hasHeader)
+                          Flexible(
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsetsDirectional.fromSTEB(
+                                  30, 22, 30, 4.33),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (title != null)
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: Text(
+                                        title!,
+                                        style: TextStyle(
+                                          fontSize: 17,
+                                          fontWeight: FontWeight.w600,
+                                          color: CupertinoColors.label
+                                              .resolveFrom(context),
+                                        ),
+                                      ),
+                                    ),
+                                  if (title != null && message != null)
+                                    const SizedBox(height: 7.33),
+                                  if (message != null)
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: Text(
+                                        message!,
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          color: messageColor,
+                                        ),
+                                      ),
+                                    ),
+                                  if (content != null) ...[
+                                    if (title != null || message != null)
+                                      const SizedBox(height: 8),
+                                    // Plain text in custom content reads as
+                                    // message text.
+                                    DefaultTextStyle.merge(
+                                      style: TextStyle(
+                                        fontSize: 15,
+                                        color: messageColor,
+                                      ),
+                                      child: content!,
+                                    ),
+                                  ],
+                                ],
                               ),
                             ),
                           ),
-                        if (title != null && message != null)
-                          const SizedBox(height: 7.33),
-                        if (message != null)
-                          SizedBox(
-                            width: double.infinity,
-                            child: Text(
-                              message!,
-                              style: TextStyle(
-                                fontSize: 15,
-                                color: CupertinoColors.secondaryLabel
-                                    .resolveFrom(context),
-                              ),
-                            ),
+                        Padding(
+                          padding: EdgeInsets.fromLTRB(
+                              16, hasHeader ? 16 : 22, 16, 16),
+                          child: LayoutBuilder(
+                            builder: (context, constraints) =>
+                                _buildActions(context, constraints.maxWidth),
                           ),
-                        if (content != null) ...[
-                          if (title != null || message != null)
-                            const SizedBox(height: 8),
-                          content!,
-                        ],
+                        ),
                       ],
                     ),
                   ),
-                Padding(
-                  padding: EdgeInsets.fromLTRB(16, hasHeader ? 16 : 22, 16, 16),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) =>
-                        _buildActions(context, constraints.maxWidth),
-                  ),
                 ),
-              ],
+              ),
             ),
           ),
         ),
@@ -258,6 +323,32 @@ class _GlassAlertPlatterButtonState extends State<_GlassAlertPlatterButton> {
   bool _pressed = false;
 
   @override
+  void didUpdateWidget(covariant _GlassAlertPlatterButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.action.onPressed == null && _pressed) {
+      _pressed = false;
+    }
+  }
+
+  void _handleTapDown(TapDownDetails _) {
+    if (!_pressed) {
+      setState(() => _pressed = true);
+    }
+  }
+
+  void _handleTapUp(TapUpDetails _) {
+    if (_pressed && mounted) {
+      setState(() => _pressed = false);
+    }
+  }
+
+  void _handleTapCancel() {
+    if (_pressed && mounted) {
+      setState(() => _pressed = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final isDark = GlassTheme.brightnessOf(context) == Brightness.dark;
     // The filled capsule wash differs between the two runtimes (measured):
@@ -267,42 +358,61 @@ class _GlassAlertPlatterButtonState extends State<_GlassAlertPlatterButton> {
     final isIos26 = GlassThemeHelpers.resolveStyle(context) == GlassStyle.ios26;
     final restLight = isIos26 ? 0.10 : 0.15;
     final restDark = isIos26 ? 0.13 : 0.115;
+    final action = widget.action;
+    final enabled = action.onPressed != null;
+    final isPressed = enabled && _pressed;
     final fill = isDark
         ? CupertinoColors.white
-            .withValues(alpha: _pressed ? restDark + 0.085 : restDark)
+            .withValues(alpha: isPressed ? restDark + 0.085 : restDark)
         : CupertinoColors.black
-            .withValues(alpha: _pressed ? restLight + 0.10 : restLight);
-    final action = widget.action;
-    final textColor = action.isDestructive
-        ? CupertinoColors.systemRed.resolveFrom(context)
-        : CupertinoColors.label.resolveFrom(context);
+            .withValues(alpha: isPressed ? restLight + 0.10 : restLight);
+    // A disabled action keeps its fill and weight and dims its title to
+    // tertiaryLabel, which UIKit reports for a disabled UIAlertAction.
+    final textColor = !enabled
+        ? CupertinoColors.tertiaryLabel.resolveFrom(context)
+        : action.isDestructive
+            ? CupertinoColors.systemRed.resolveFrom(context)
+            : CupertinoColors.label.resolveFrom(context);
+    // One line, as native, except at accessibility sizes where native wraps the
+    // title and grows the button rather than truncating it.
+    final wraps = _isInAccessibilityMode(context);
     final label = Text(
       action.label,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
+      maxLines: wraps ? null : 1,
+      overflow: wraps ? null : TextOverflow.ellipsis,
+      textAlign: TextAlign.center,
       style: _labelStyle(action).copyWith(color: textColor),
     );
+    // A capsule, except that a button grown by a wrapped title takes ≈ 32 pt
+    // continuous corners (measured on iOS 27.0 at AX-XXXL) instead of
+    // ballooning into an oval.
+    final ShapeBorder shape = wraps
+        ? const RoundedSuperellipseBorder(
+            borderRadius: BorderRadius.all(Radius.circular(32)),
+          )
+        : const StadiumBorder();
 
     return GlassFocusRegion(
-      enabled: true,
+      enabled: enabled,
       isButton: true,
       semanticLabel: action.label,
-      shape: const StadiumBorder(),
+      shape: shape,
       onKeyboardActivate: action.onPressed,
       semanticOnTap: action.onPressed,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         excludeFromSemantics: true,
         onTap: action.onPressed,
-        onTapDown: (_) => setState(() => _pressed = true),
-        onTapUp: (_) => setState(() => _pressed = false),
-        onTapCancel: () => setState(() => _pressed = false),
+        onTapDown: enabled ? _handleTapDown : null,
+        onTapUp: enabled ? _handleTapUp : null,
+        onTapCancel: enabled ? _handleTapCancel : null,
         child: Container(
-          height: 48,
+          // 48 pt at regular text sizes; taller only when a wrapped title
+          // needs the room.
+          constraints: const BoxConstraints(minHeight: 48),
           alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration:
-              ShapeDecoration(color: fill, shape: const StadiumBorder()),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+          decoration: ShapeDecoration(color: fill, shape: shape),
           child: action.icon == null
               ? label
               : Row(

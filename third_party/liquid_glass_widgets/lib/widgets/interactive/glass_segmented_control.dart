@@ -6,6 +6,7 @@ import '../../src/types/glass_interaction_behavior.dart';
 import '../../theme/glass_theme.dart';
 import '../../theme/glass_theme_helpers.dart';
 import '../../types/glass_quality.dart';
+import '../../types/glass_style.dart';
 import '../shared/adaptive_liquid_glass_layer.dart';
 import '../surfaces/shared/tab_bar_types.dart' show MaskingQuality;
 import '../surfaces/glass_tab_bar.dart'
@@ -194,6 +195,7 @@ class GlassSegmentedControl extends StatefulWidget {
     this.padding = const EdgeInsets.all(2),
     this.selectedTextStyle,
     this.unselectedTextStyle,
+    this.activeSelectedColor,
     this.backgroundColor,
     this.indicatorColor,
     this.indicatorSettings,
@@ -267,6 +269,7 @@ class GlassSegmentedControl extends StatefulWidget {
     this.padding = const EdgeInsets.all(2),
     this.selectedTextStyle,
     this.unselectedTextStyle,
+    this.activeSelectedColor,
     this.backgroundColor,
     this.indicatorColor,
     this.indicatorSettings,
@@ -399,6 +402,23 @@ class GlassSegmentedControl extends StatefulWidget {
   /// If null, uses default style with fontSize 13, fontWeight w500,
   /// and white color at 60% opacity.
   final TextStyle? unselectedTextStyle;
+
+  /// Optional foreground color (text and icon) for the selected segment while
+  /// the active liquid-glass lens is lifted (pressed or dragged).
+  ///
+  /// Because the solid resting [indicatorColor] pill fades out to 0% opacity as
+  /// the interactive glass lens blooms (`thickness: 0.0 → 0.15`), a
+  /// high-contrast inverted resting pill (e.g. a dark pill in Light Mode with
+  /// white selected text, or a white pill in Dark Mode with dark selected text)
+  /// would otherwise leave its resting foreground color over the clear glass
+  /// lens.
+  ///
+  /// When `null` (default), [GlassSegmentedControl] automatically interpolates
+  /// the active segment's text and icon color to the theme's primary label
+  /// color whenever [indicatorColor] has inverted luminance relative to the
+  /// ambient [GlassTheme] brightness (and keeps the resting color unchanged
+  /// when [indicatorColor] is not inverted).
+  final Color? activeSelectedColor;
 
   /// Background color of the segmented control.
   ///
@@ -591,12 +611,18 @@ class _GlassSegmentedControlState extends State<GlassSegmentedControl> {
 
   // Default track background colors — match native UISegmentedControl on
   // iOS 26 and iOS 27 (CupertinoColors.tertiarySystemFill: rgba(120,120,128,0.12)
-  // in light mode, rgba(120,120,128,0.24) in dark mode).
+  // in light mode, rgba(120,120,128,0.24) in dark mode; #EEEEEF under explicit
+  // GlassStyle.ios27 theme).
   static const _defaultLightBg = Color(0x1F787880);
+  static const _ios27LightBg = Color(0x21767680);
   static const _defaultDarkBg = Color(0x3D787880);
 
   @override
   Widget build(BuildContext context) {
+    final themeStyle = GlassTheme.maybeOf(context)?.data.style;
+    final isNativeTheme =
+        themeStyle == GlassStyle.ios27 || themeStyle == GlassStyle.ios26;
+    final lightBg = isNativeTheme ? _ios27LightBg : _defaultLightBg;
     final effectiveQuality = GlassThemeHelpers.resolveQuality(
       context,
       widgetQuality: widget.quality,
@@ -619,8 +645,7 @@ class _GlassSegmentedControlState extends State<GlassSegmentedControl> {
     // ── Scrollable mode: 100% mirrors GlassTabBar(isScrollable: true) ────────
     if (widget.isScrollable) {
       final isLight = GlassTheme.brightnessOf(context) == Brightness.light;
-      final bg = widget.backgroundColor ??
-          (isLight ? _defaultLightBg : _defaultDarkBg);
+      final bg = widget.backgroundColor ?? (isLight ? lightBg : _defaultDarkBg);
       final borderRadius = GlassDefaults.safeBorderRadius(widget.borderRadius);
 
       final content = Container(
@@ -641,6 +666,7 @@ class _GlassSegmentedControlState extends State<GlassSegmentedControl> {
           indicatorColor: widget.indicatorColor,
           selectedLabelStyle: widget.selectedTextStyle,
           unselectedLabelStyle: widget.unselectedTextStyle,
+          activeSelectedColor: widget.activeSelectedColor,
           selectedIconColor: widget.selectedIconColor,
           unselectedIconColor: widget.unselectedIconColor,
           iconSize: widget.iconSize,
@@ -671,7 +697,7 @@ class _GlassSegmentedControlState extends State<GlassSegmentedControl> {
     // ── Fixed mode: equal-width SegmentedControlContent ───────────────────────
     final backgroundColor = widget.backgroundColor ??
         (GlassTheme.brightnessOf(context) == Brightness.light
-            ? _defaultLightBg
+            ? lightBg
             : _defaultDarkBg);
 
     // SizedBox sets the height without clipping. DecoratedBox paints the
@@ -696,6 +722,9 @@ class _GlassSegmentedControlState extends State<GlassSegmentedControl> {
             onSegmentSelected: widget.onSegmentSelected,
             selectedTextStyle: widget.selectedTextStyle,
             unselectedTextStyle: widget.unselectedTextStyle,
+            activeSelectedColor: widget.activeSelectedColor,
+            selectedIconColor: widget.selectedIconColor,
+            unselectedIconColor: widget.unselectedIconColor,
             indicatorColor: widget.indicatorColor,
             indicatorSettings: widget.indicatorSettings,
             indicatorPinchStrength: widget.indicatorPinchStrength,

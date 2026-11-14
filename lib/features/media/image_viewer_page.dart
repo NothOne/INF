@@ -209,7 +209,8 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
       if (saved == null) throw StateError('not saved');
       Haptic.success.play();
       showMessage(context, kind.done + saved);
-    } catch (_) {
+    } catch (error) {
+      debugPrint('INF save: ${kind.name} failed: $error');
       Haptic.error.play();
       if (mounted) showMessage(context, kind.failed);
     } finally {

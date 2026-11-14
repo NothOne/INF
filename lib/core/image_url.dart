@@ -40,3 +40,12 @@ String sinaimgSized(String url, String size) {
   if (match == null) return clean;
   return match.group(1)! + size + '/' + match.group(3)!;
 }
+
+final RegExp _avatarCrop = RegExp(r'(/crop\.\d+\.\d+\.\d+\.\d+)\.\d+/');
+final RegExp _avatarSize = RegExp(r'(sinaimg\.cn)/(orj|thumb|mw)\d+/');
+
+/// An avatar at its full size: the crop's last number is the size it is drawn at, and 1024 is
+/// the largest; the signature in the query does not cover it.
+String avatarLarge(String url) => _avatarCrop.hasMatch(url)
+    ? url.replaceFirstMapped(_avatarCrop, (m) => '${m[1]}.1024/')
+    : url.replaceFirstMapped(_avatarSize, (m) => '${m[1]}/large/');
