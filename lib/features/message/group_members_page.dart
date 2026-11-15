@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../../core/api.dart';
 import '../../core/layout.dart';
 import '../../core/look.dart';
 import '../../core/models.dart';
@@ -7,66 +10,105 @@ import '../../core/navigation.dart';
 import '../../core/widgets/avatar.dart';
 import '../../core/widgets/common.dart';
 
-/// The people the chat page has seen speak in a group, with a search box over them.
+/// Everyone in a group chat, with a search box over them.
 ///
-/// m.weibo.cn has no member list for a group (see `WeiboApi.groupSpeakers`), so the entries here are
-/// the senders of the messages that have been loaded — not the roster. The header says so, and the
-/// page offers to page back through the history for more of them rather than implying the list is
-/// complete.
+/// The members come from weibo.com's `query_group.json`, which hands them out in pages. It has no way
+/// to ask for one by name, so the search runs over what has been loaded and says how much of the
+/// group that is — the count beside it is the group's real size, so the gap is visible rather than
+/// implied.
 class GroupMembersPage extends StatefulWidget {
   const GroupMembersPage({
     super.key,
     required this.gid,
     required this.name,
-    required this.speakers,
-    this.memberCount = 0,
-    this.hasMoreHistory = false,
-    this.onLoadOlder,
+    this.info,
   });
 
   final String gid;
   final String name;
-  final List<User> speakers;
 
-  /// The group's real size, from the title. Exact, even though its members cannot be listed.
-  final int memberCount;
-  final bool hasMoreHistory;
-  final Future<List<User>> Function()? onLoadOlder;
+  /// The group's own answer, for the size and to mark the owner and admins.
+  final GroupInfo? info;
 
   @override
   State<GroupMembersPage> createState() => _GroupMembersPageState();
 }
 
 class _GroupMembersPageState extends State<GroupMembersPage> {
+  /// How many the service returns at a time. Asking for more does not get more.
+  static const _pageSize = 50;
+
   final TextEditingController _query = TextEditingController();
-  late List<User> _speakers = widget.speakers;
+  final ScrollController _scroll = ScrollController();
+  final List<GroupMember> _members = [];
+  bool _loading = true;
   bool _loadingMore = false;
+  bool _hasMore = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load(reset: true);
+    _scroll.addListener(() {
+      if (_scroll.position.extentAfter < 400) _load();
+    });
+  }
 
   @override
   void dispose() {
     _query.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
-  List<User> get _shown {
+  Future<void> _load({bool reset = false}) async {
+    if (_loadingMore || (!reset && !_hasMore)) return;
+    if (reset) {
+      setState(() {
+        _loading = true;
+        _error = null;
+        _members.clear();
+        _hasMore = true;
+      });
+    } else {
+      setState(() => _loadingMore = true);
+    }
+    try {
+      final page = await WeiboApi.instance.groupMembers(widget.gid, offset: _members.length, count: _pageSize);
+      if (!mounted) return;
+      setState(() {
+        final seen = {for (final member in _members) member.uid};
+        _members.addAll(page.where((member) => seen.add(member.uid)));
+        // A page shorter than asked for is the last one; the answer carries no cursor.
+        _hasMore = page.length >= _pageSize;
+        _loading = false;
+        _loadingMore = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadingMore = false;
+        if (_members.isEmpty) _error = error is ApiException ? error.message : '成员加载失败';
+      });
+    }
+  }
+
+  List<GroupMember> get _shown {
     final query = _query.text.trim().toLowerCase();
-    if (query.isEmpty) return _speakers;
-    return _speakers
-        .where((user) => user.screenName.toLowerCase().contains(query) || user.id == query)
+    if (query.isEmpty) return _members;
+    return _members
+        .where((member) => member.screenName.toLowerCase().contains(query) || member.uid == query)
         .toList();
   }
 
-  Future<void> _more() async {
-    final load = widget.onLoadOlder;
-    if (load == null || _loadingMore) return;
-    setState(() => _loadingMore = true);
-    try {
-      final all = await load();
-      if (!mounted) return;
-      if (all.isNotEmpty) setState(() => _speakers = all);
-    } finally {
-      if (mounted) setState(() => _loadingMore = false);
-    }
+  String? _role(GroupMember member) {
+    final info = widget.info;
+    if (info == null) return null;
+    if (member.uid == info.ownerId) return '群主';
+    if (info.adminIds.contains(member.uid)) return '管理员';
+    return null;
   }
 
   @override
@@ -76,6 +118,7 @@ class _GroupMembersPageState extends State<GroupMembersPage> {
     final gutter = contentGutter(context);
     final shown = _shown;
     final searching = _query.text.trim().isNotEmpty;
+    final total = widget.info?.memberCount ?? 0;
     return Scaffold(
       backgroundColor: scheme.surface,
       extendBodyBehindAppBar: chrome.extendsBehindBars,
@@ -122,48 +165,76 @@ class _GroupMembersPageState extends State<GroupMembersPage> {
               alignment: Alignment.centerLeft,
               child: Text(
                 searching
-                    ? '在已看到的 ${_speakers.length} 位成员里找到 ${shown.length} 位'
-                    : _speakers.isEmpty
-                        ? '还没有可以列出的成员'
-                        : widget.memberCount > 0
-                            ? '已看到 ${_speakers.length} 位 · 群共 ${widget.memberCount} 人'
-                            : '已看到 ${_speakers.length} 位',
+                    ? '在已加载的 ${_members.length} 位成员里找到 ${shown.length} 位'
+                    : total > 0
+                        ? '已加载 ${_members.length} / $total 人'
+                        : '已加载 ${_members.length} 人',
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
               ),
             ),
           ),
-          Expanded(
-            child: shown.isEmpty
-                ? EmptyHint(text: searching ? '没有匹配的成员' : '群里还没有人发过言')
-                : ListView.builder(
-                    padding: EdgeInsets.only(bottom: 24 + MediaQuery.paddingOf(context).bottom),
-                    itemCount: shown.length + (searching || !widget.hasMoreHistory ? 0 : 1),
-                    itemBuilder: (context, index) {
-                      if (index >= shown.length) {
-                        return Center(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            child: TextButton(
-                              onPressed: _loadingMore ? null : _more,
-                              child: Text(_loadingMore ? '正在往前翻…' : '往前翻聊天记录，看到更多成员'),
-                            ),
-                          ),
-                        );
-                      }
-                      final user = shown[index];
-                      return ListTile(
-                        leading: Avatar(url: user.avatarUrl, size: 40, verified: user.verified),
-                        title: Text(user.screenName, maxLines: 1, overflow: TextOverflow.ellipsis),
-                        subtitle: user.description.isEmpty
-                            ? null
-                            : Text(user.description, maxLines: 1, overflow: TextOverflow.ellipsis),
-                        onTap: () => openUser(context, user.id),
-                      );
-                    },
-                  ),
-          ),
+          Expanded(child: _body(context, shown, searching)),
         ],
       ),
+    );
+  }
+
+  Widget _body(BuildContext context, List<GroupMember> shown, bool searching) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return ErrorRetry(message: _error!, onRetry: () => _load(reset: true));
+    }
+    if (shown.isEmpty) {
+      return EmptyHint(text: searching ? '没有匹配的成员' : '这个群还没有成员');
+    }
+    return ListView.builder(
+      controller: _scroll,
+      padding: EdgeInsets.only(bottom: 24 + MediaQuery.paddingOf(context).bottom),
+      itemCount: shown.length + (!searching && _hasMore ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index >= shown.length) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 18),
+            child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+          );
+        }
+        final member = shown[index];
+        final role = _role(member);
+        return ListTile(
+          leading: Avatar(url: member.avatarUrl, size: 40, verified: member.verified),
+          title: Row(
+            children: [
+              Flexible(child: Text(member.screenName, maxLines: 1, overflow: TextOverflow.ellipsis)),
+              if (role != null) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    role,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: Theme.of(context).colorScheme.primary,
+                          fontSize: 10,
+                        ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          trailing: member.level > 0
+              ? Text(
+                  'Lv.${member.level}',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                )
+              : null,
+          onTap: () => openUser(context, member.uid),
+        );
+      },
     );
   }
 }

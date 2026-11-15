@@ -54,9 +54,6 @@ class _ChatPageState extends State<ChatPage> {
   /// and the member count. Null until a page has come back.
   String? _groupTitle;
 
-  /// Everyone whose messages have come back so far, by id. m.weibo.cn has no member list, so this is
-  /// the only thing there is to show as "who is in this group" (see `WeiboApi.groupSpeakers`).
-  final Map<String, User> _speakers = {};
   bool _loading = true;
   bool _loadingOlder = false;
   bool _hasMore = true;
@@ -133,7 +130,6 @@ class _ChatPageState extends State<ChatPage> {
           _cursor = page.messages.nextCursor;
           _hasMore = page.messages.nextCursor != null;
           _groupTitle = page.title ?? _groupTitle;
-          _speakers.addAll(page.users);
           _loading = false;
           _error = null;
         });
@@ -173,8 +169,6 @@ class _ChatPageState extends State<ChatPage> {
           _cursor = page.messages.nextCursor;
           _hasMore = page.messages.nextCursor != null && older.isNotEmpty;
           _groupTitle = page.title ?? _groupTitle;
-          // Every page of history names its senders; that is how the member list fills in.
-          _speakers.addAll(page.users);
         });
       } else {
         final page = await WeiboApi.instance.chat(widget.uid, _cursor);
@@ -265,27 +259,17 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _openGroupInfo() async {
-    final title = _groupTitle;
     final left = await openGroupInfo(
       context,
       gid: widget.uid,
-      title: title ?? widget.name ?? '群聊',
-      speakers: WeiboApi.instance.groupSpeakers(_speakers),
-      hasMoreHistory: _hasMore,
-      onLoadOlder: _loadOlderForInfo,
+      name: _title,
+      memberCount: _memberCount,
     );
     if (left == true && mounted) Navigator.of(context).pop();
   }
 
-  /// Pulls one more page of history in, so the group's page can show more of the people who speak.
-  ///
-  /// Answers with the whole set after paging, not just the new names: the pages that show it keep
-  /// their own copy, and handing back only the additions would leave them showing a stale list.
-  Future<List<User>> _loadOlderForInfo() async {
-    await _loadOlder();
-    if (!mounted) return const [];
-    return WeiboApi.instance.groupSpeakers(_speakers);
-  }
+  /// The count the group's message title carries, for the header before the real answer arrives.
+  int get _memberCount => _groupTitle == null ? 0 : splitGroupTitle(_groupTitle!).count;
 
   /// The group's name with its member count stripped off, for the top bar.
   String get _title {

@@ -1168,7 +1168,14 @@ DirectMessage? _toMessage(Map<String, dynamic> msg, {Map<String, User>? users}) 
 List<DirectMessage> parseGroupChat(dynamic data) {
   final root = asMap(data);
   if (root == null) return const [];
-  final users = parseGroupUsers(data);
+  final users = <String, User>{};
+  final usersJson = asMap(root['users']);
+  if (usersJson != null) {
+    for (final entry in usersJson.entries) {
+      final user = toUser(entry.value);
+      if (user != null) users[user.id.isEmpty ? entry.key : user.id] = user;
+    }
+  }
   final messages = <DirectMessage>[];
   for (final element in asList(root['msgs'])) {
     final msg = asMap(element);
@@ -1180,25 +1187,57 @@ List<DirectMessage> parseGroupChat(dynamic data) {
   return messages;
 }
 
-/// The senders on one page of a group chat, by id.
-///
-/// This is the only view of a group's membership m.weibo.cn gives: the page's `users` map holds the
-/// people who sent the messages in `msgs`, and the service has no member list at all.
-Map<String, User> parseGroupUsers(dynamic data) {
-  final users = <String, User>{};
-  final usersJson = asMap(asMap(data)?['users']);
-  if (usersJson == null) return users;
-  for (final entry in usersJson.entries) {
-    final user = toUser(entry.value);
-    if (user != null) users[user.id.isEmpty ? entry.key : user.id] = user;
-  }
-  return users;
-}
-
 /// The group's title, which is where m.weibo.cn keeps its name and member count.
 String? groupTitle(dynamic data) {
   final title = textOf(asMap(asMap(data)?['data'])?['title']) ?? textOf(asMap(data)?['title']);
   return (title == null || title.isEmpty) ? null : title;
+}
+
+/// The announcement out of a `bulletin`'s content, or null when it says nothing.
+///
+/// The content is plain text with newlines; it is run through `weiboHtmlToText` all the same, because
+/// some groups keep HTML in it.
+String? parseGroupNotice(dynamic content) {
+  final raw = textOf(content);
+  if (raw == null) return null;
+  final text = weiboHtmlToText(raw).trim();
+  return text.isEmpty ? null : text;
+}
+
+/// The members out of a `query_group.json` answer.
+///
+/// The answer carries them under `member_infos`, and some answers also under `members` — both are
+/// read, because which one is populated has varied. A member's name is `screen_name`, falling back to
+/// the remark the reader gave them and then to the pinyin field.
+List<GroupMember> parseGroupMembers(Map<String, dynamic>? root) {
+  if (root == null) return const [];
+  final members = <GroupMember>[];
+  final seen = <String>{};
+  void add(dynamic raw) {
+    final map = asMap(raw);
+    if (map == null) return;
+    final uid = idOf(map['uid']) ?? idOf(map['id']);
+    if (uid == null || uid.isEmpty || !seen.add(uid)) return;
+    final name = textOf(map['screen_name']) ??
+        textOf(map['name']) ??
+        textOf(map['jp']) ??
+        uid;
+    members.add(GroupMember(
+      uid: uid,
+      screenName: name,
+      avatarUrl: textOf(map['profile_image_url']) ?? textOf(map['avatar']) ?? '',
+      verified: boolOf(map['verified']),
+      level: intOf(map['level']) ?? 0,
+    ));
+  }
+
+  for (final raw in asList(root['member_infos'])) {
+    add(raw);
+  }
+  for (final raw in asList(root['members'])) {
+    add(raw);
+  }
+  return members;
 }
 
 UnreadCounts parseUnread(dynamic data) {

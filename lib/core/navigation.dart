@@ -199,48 +199,23 @@ Future<void> openChat(
 
 /// A group chat's 群聊信息; completes with true once the reader left the group there.
 ///
-/// [title] is the group's title as its message pages spell it (`群名(828)`) — the only place its name
-/// and size are available. [speakers] are the people whose messages the chat page has loaded, since
-/// m.weibo.cn has no member list.
+/// [name] and [memberCount] are what the chat page already knows from the message title; the page
+/// replaces them with weibo.com's own answer as soon as it arrives.
 Future<bool?> openGroupInfo(
   BuildContext context, {
   required String gid,
-  required String title,
-  List<User> speakers = const [],
-  bool hasMoreHistory = false,
-  Future<List<User>> Function()? onLoadOlder,
+  required String name,
+  int memberCount = 0,
 }) =>
-    pushInf<bool>(
-      context,
-      GroupInfoPage(
-        gid: gid,
-        title: title,
-        speakers: speakers,
-        hasMoreHistory: hasMoreHistory,
-        onLoadOlder: onLoadOlder,
-      ),
-    );
+    pushInf<bool>(context, GroupInfoPage(gid: gid, name: name, memberCount: memberCount));
 
 Future<void> openGroupMembers(
   BuildContext context, {
   required String gid,
   required String name,
-  required List<User> speakers,
-  int memberCount = 0,
-  bool hasMoreHistory = false,
-  Future<List<User>> Function()? onLoadOlder,
+  GroupInfo? info,
 }) =>
-    pushInf(
-      context,
-      GroupMembersPage(
-        gid: gid,
-        name: name,
-        speakers: speakers,
-        memberCount: memberCount,
-        hasMoreHistory: hasMoreHistory,
-        onLoadOlder: onLoadOlder,
-      ),
-    );
+    pushInf(context, GroupMembersPage(gid: gid, name: name, info: info));
 
 Future<void> openChatSearch(
   BuildContext context, {

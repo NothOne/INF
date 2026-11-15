@@ -418,20 +418,70 @@ class ChatTarget {
   const ChatTarget(this.id, this.isGroup);
 }
 
-/// What is known about a group chat's own page.
+/// A group chat, as weibo.com's webim describes it.
 ///
-/// m.weibo.cn has no group description endpoint and no member list — every candidate path was tried
-/// on a real account and answered 404 or an empty page (see `WeiboApi.groupSpeakers`). The name and
-/// the member count ride in the title of every message page, `群名(828)`, and that is the whole of
-/// what the service tells us about a group itself.
+/// This comes from `api.weibo.com/webim/groupchat/query.json?id=`, not from m.weibo.cn — the phone
+/// site has no group description of its own. The announcement rides in the same answer, which is why
+/// there is no separate request for it.
 class GroupInfo {
   final String gid;
   final String name;
-
-  /// The member count the title carries, or 0 when it did not have one.
   final int memberCount;
 
-  const GroupInfo({required this.gid, required this.name, this.memberCount = 0});
+  /// The size the group is allowed to grow to, for "828 / 1000" in the header.
+  final int maxMembers;
+
+  final String ownerId;
+
+  /// The admins, which together with [ownerId] is who may change the announcement.
+  final Set<String> adminIds;
+
+  /// The announcement, or null when the group has none.
+  final String? notice;
+
+  /// Seconds since the epoch, or null when the answer did not carry it.
+  final int? createdAt;
+
+  /// The place the group says it is in, if it says.
+  final String? place;
+
+  const GroupInfo({
+    required this.gid,
+    required this.name,
+    this.memberCount = 0,
+    this.maxMembers = 0,
+    this.ownerId = '',
+    this.adminIds = const {},
+    this.notice,
+    this.createdAt,
+    this.place,
+  });
+
+  bool isOwner(String? uid) => uid != null && uid == ownerId;
+
+  bool isAdmin(String? uid) => uid != null && (adminIds.contains(uid) || isOwner(uid));
+}
+
+/// One person in a group chat.
+///
+/// `level` is the group's own activity rank, which the web client shows beside the name; `jp` is the
+/// pinyin the member list sorts by.
+class GroupMember {
+  final String uid;
+  final String screenName;
+  final String avatarUrl;
+  final bool verified;
+  final int level;
+
+  const GroupMember({
+    required this.uid,
+    required this.screenName,
+    required this.avatarUrl,
+    this.verified = false,
+    this.level = 0,
+  });
+
+  User toUser() => User(id: uid, screenName: screenName, avatarUrl: avatarUrl, verified: verified);
 }
 
 /// A group chat's name and member count, as its title spells them: `群名(123)`.

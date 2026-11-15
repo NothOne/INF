@@ -9,69 +9,167 @@ import '../../core/look.dart';
 import '../../core/models.dart';
 import '../../core/native.dart';
 import '../../core/navigation.dart';
+import '../../core/session.dart';
 import '../../core/widgets/avatar.dart';
 import '../../core/widgets/common.dart';
 
 /// A group chat's own page, opened from the ⋯ in the chat's top bar.
 ///
-/// What m.weibo.cn will say about a group is a short list. Its name and member count ride in the title
-/// of every message page (`群名(828)`); every other candidate — member list, announcement, settings —
-/// was tried against a real account and answered 404 or an empty page (see `WeiboApi.groupSpeakers`).
-///
-/// So the member strip here is **the people whose messages have been loaded**, not the roster, and it
-/// says so. The group's real size is the count in the title, which is exact even though its members are
-/// not enumerable. Nothing on this page pretends to be the announcement or a mute switch, because
-/// there is nowhere to read or write either.
+/// Everything here comes from weibo.com's webim backend — the phone site has no group description at
+/// all. `groupchat/query.json` answers with the name, the size, the owner, the admins and the
+/// announcement in one go; `query_group.json` pages the members out; the notification switch has its
+/// own pair of endpoints (see `WeiboApi.groupInfo`). The announcement is edited in place by the owner
+/// or an admin, and read-only for everyone else.
 ///
 /// Pops with true once the group was left.
 class GroupInfoPage extends StatefulWidget {
   const GroupInfoPage({
     super.key,
     required this.gid,
-    required this.title,
-    this.speakers = const [],
-    this.hasMoreHistory = false,
-    this.onLoadOlder,
+    required this.name,
+    this.memberCount = 0,
   });
 
   final String gid;
 
-  /// The group's title as its message pages spell it, `群名(828)`.
-  final String title;
+  /// The name the chat page knows, shown until the real answer arrives.
+  final String name;
 
-  /// Everyone whose messages the chat page has loaded, alphabetically.
-  final List<User> speakers;
-
-  /// Whether there is more history to page in, which is the only way to see more of the speakers.
-  final bool hasMoreHistory;
-
-  /// Pages more history in and answers with the speakers it turned up.
-  final Future<List<User>> Function()? onLoadOlder;
+  /// Likewise the count from the title, so the header is not blank while it loads.
+  final int memberCount;
 
   @override
   State<GroupInfoPage> createState() => _GroupInfoPageState();
 }
 
 class _GroupInfoPageState extends State<GroupInfoPage> {
-  late List<User> _speakers = widget.speakers;
-  bool _loadingMore = false;
+  GroupInfo? _info;
+  List<GroupMember> _members = const [];
+  bool _muted = false;
+  bool _loading = true;
   bool _busy = false;
+  String? _error;
+
+  String? get _selfId => Session.instance.uid;
 
   String get _link => 'https://m.weibo.cn/message/chat?gid=${widget.gid}';
 
-  GroupInfo get _info => WeiboApi.instance.groupInfoFromTitle(widget.gid, widget.title);
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
 
-  Future<void> _moreSpeakers() async {
-    final load = widget.onLoadOlder;
-    if (load == null || _loadingMore) return;
-    setState(() => _loadingMore = true);
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
-      final all = await load();
+      // Independent requests, so they go out together: the group's own answer is what the page is
+      // built around, and the members are the strip under it.
+      final info = await WeiboApi.instance.groupInfo(widget.gid);
       if (!mounted) return;
-      // The chat page holds the accumulated set and hands back the whole of it.
-      if (all.isNotEmpty) setState(() => _speakers = all);
-    } finally {
-      if (mounted) setState(() => _loadingMore = false);
+      setState(() {
+        _info = info;
+        _loading = false;
+      });
+      final (members, muted) = await (
+        WeiboApi.instance.groupMembers(widget.gid, count: 12),
+        WeiboApi.instance.groupMuted(widget.gid),
+      ).wait;
+      if (!mounted) return;
+      setState(() {
+        _members = members;
+        _muted = muted;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = error is ApiException ? error.message : '群资料加载失败';
+      });
+    }
+  }
+
+  String get _name => (_info?.name.isNotEmpty ?? false) ? _info!.name : widget.name;
+
+  int get _count => _info?.memberCount ?? widget.memberCount;
+
+  Future<void> _openMembers() => openGroupMembers(
+        context,
+        gid: widget.gid,
+        name: _name,
+        info: _info,
+      );
+
+  Future<void> _toggleMuted(bool value) async {
+    final previous = _muted;
+    setState(() => _muted = value);
+    (value ? Haptic.toggleOn : Haptic.toggleOff).play();
+    try {
+      await WeiboApi.instance.setGroupMuted(widget.gid, value);
+      if (mounted) showMessage(context, value ? '这个群的消息不再提醒' : '已恢复提醒');
+    } catch (error) {
+      Haptic.error.play();
+      if (!mounted) return;
+      setState(() => _muted = previous);
+      showMessage(context, error is ApiException ? error.message : '设置失败');
+    }
+  }
+
+  Future<void> _editNotice() async {
+    final current = _info?.notice ?? '';
+    final controller = TextEditingController(text: current);
+    final next = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('编辑群公告'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          minLines: 4,
+          maxLines: 10,
+          decoration: const InputDecoration(hintText: '写点什么让大家都知道'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (next == null || next == current) return;
+    try {
+      await WeiboApi.instance.setGroupNotice(widget.gid, next);
+      Haptic.success.play();
+      if (!mounted) return;
+      setState(() => _info = GroupInfo(
+            gid: widget.gid,
+            name: _name,
+            memberCount: _count,
+            maxMembers: _info?.maxMembers ?? 0,
+            ownerId: _info?.ownerId ?? '',
+            adminIds: _info?.adminIds ?? const {},
+            notice: next.isEmpty ? null : next,
+            createdAt: _info?.createdAt,
+            place: _info?.place,
+          ));
+      showMessage(context, '群公告已更新');
+    } catch (error) {
+      Haptic.error.play();
+      if (mounted) showMessage(context, error is ApiException ? error.message : '没有权限修改群公告');
+    }
+  }
+
+  Future<void> _share() async {
+    try {
+      await SharePlus.instance.share(ShareParams(text: '微博群聊：$_name\n$_link', subject: _name));
+    } catch (_) {
+      await _copy(_link);
     }
   }
 
@@ -84,15 +182,6 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
   Future<void> _openInBrowser() async {
     if (await Native.openUrl(_link)) return;
     if (mounted) showMessage(context, '没有可以打开链接的浏览器');
-  }
-
-  Future<void> _share() async {
-    final name = _info.name;
-    try {
-      await SharePlus.instance.share(ShareParams(text: '微博群聊：$name\n$_link', subject: name));
-    } catch (_) {
-      await _copy(_link);
-    }
   }
 
   Future<void> _leave() async {
@@ -125,10 +214,11 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
     final chrome = InfChrome.of(context);
     final gutter = contentGutter(context);
     final info = _info;
+    final notice = info?.notice;
+    final canEdit = info?.isAdmin(_selfId) ?? false;
     return Scaffold(
       backgroundColor: scheme.surface,
       extendBodyBehindAppBar: chrome.extendsBehindBars,
@@ -140,93 +230,152 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
           const SizedBox(width: 4),
         ],
       ),
-      body: ContentColumn(
-        child: ListView(
-          padding: EdgeInsets.fromLTRB(
-            gutter,
-            (chrome.extendsBehindBars ? MediaQuery.paddingOf(context).top + kToolbarHeight : 0) + 16,
-            gutter,
-            28 + MediaQuery.paddingOf(context).bottom,
-          ),
-          children: [
-            Center(
-              child: CircleAvatar(
-                radius: 32,
-                backgroundColor: scheme.secondaryContainer,
-                child: Icon(Icons.groups_rounded, size: 34, color: scheme.onSecondaryContainer),
-              ),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: ContentColumn(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(
+              gutter,
+              (chrome.extendsBehindBars ? MediaQuery.paddingOf(context).top + kToolbarHeight : 0) + 16,
+              gutter,
+              28 + MediaQuery.paddingOf(context).bottom,
             ),
-            const SizedBox(height: 12),
-            Text(info.name, textAlign: TextAlign.center, style: textTheme.titleLarge),
-            const SizedBox(height: 4),
-            Text(
-              info.memberCount > 0
-                  ? '群号 ${widget.gid} · ${info.memberCount} 人'
-                  : '群号 ${widget.gid}',
-              textAlign: TextAlign.center,
-              style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 20),
-            _MembersStrip(
-              speakers: _speakers,
-              count: info.memberCount,
-              onTap: () => openGroupMembers(
-                context,
+            children: [
+              _Header(
+                name: _name,
                 gid: widget.gid,
-                name: info.name,
-                speakers: _speakers,
-                memberCount: info.memberCount,
-                hasMoreHistory: widget.hasMoreHistory,
-                onLoadOlder: widget.onLoadOlder,
+                count: _count,
+                max: info?.maxMembers ?? 0,
+                place: info?.place,
+                createdAt: info?.createdAt,
               ),
-            ),
-            if (_speakers.isNotEmpty && widget.hasMoreHistory)
-              Padding(
-                padding: const EdgeInsets.only(left: 4, top: 2),
-                child: TextButton.icon(
-                  onPressed: _loadingMore ? null : _moreSpeakers,
-                  icon: const Icon(Icons.expand_more_rounded, size: 18),
-                  label: Text(_loadingMore ? '正在往前翻…' : '往前翻聊天记录，看到更多成员'),
+              if (_loading)
+                const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: Center(child: CircularProgressIndicator()))
+              else if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: ErrorRetry(message: _error!, onRetry: _load),
+                )
+              else ...[
+                const SizedBox(height: 18),
+                _MembersStrip(members: _members, count: _count, onTap: _openMembers),
+                const SizedBox(height: 10),
+                const Divider(height: 24),
+                _SectionCard(
+                  children: [
+                    _Row(
+                      icon: Icons.campaign_outlined,
+                      label: '群公告',
+                      value: notice == null ? '暂无公告' : null,
+                      onTap: canEdit
+                          ? _editNotice
+                          : (notice == null ? null : () => _showNotice(notice)),
+                      badge: canEdit ? '编辑' : null,
+                    ),
+                    _Row(
+                      icon: Icons.notifications_off_outlined,
+                      label: '消息免打扰',
+                      trailing: Switch(value: _muted, onChanged: _toggleMuted),
+                      onTap: () => _toggleMuted(!_muted),
+                    ),
+                  ],
                 ),
-              ),
-            const SizedBox(height: 8),
-            const Divider(height: 24),
-            _SectionCard(
-              children: [
-                _Row(icon: Icons.ios_share_rounded, label: '分享群', onTap: _share),
-                _Row(icon: Icons.tag_rounded, label: '复制群号', onTap: () => _copy(widget.gid)),
-                _Row(icon: Icons.open_in_browser_rounded, label: '在浏览器中打开', onTap: _openInBrowser),
+                const SizedBox(height: 10),
+                _SectionCard(
+                  children: [
+                    _Row(icon: Icons.ios_share_rounded, label: '分享群', onTap: _share),
+                    _Row(icon: Icons.tag_rounded, label: '复制群号', onTap: () => _copy(widget.gid)),
+                    _Row(icon: Icons.open_in_browser_rounded, label: '在浏览器中打开', onTap: _openInBrowser),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                _SectionCard(
+                  children: [
+                    _Row(icon: Icons.logout_rounded, label: '退出群聊', danger: true, onTap: _busy ? null : _leave),
+                  ],
+                ),
               ],
-            ),
-            const SizedBox(height: 10),
-            _SectionCard(
-              children: [
-                _Row(icon: Icons.logout_rounded, label: '退出群聊', danger: true, onTap: _busy ? null : _leave),
-              ],
-            ),
-            const SizedBox(height: 18),
-            // Said plainly rather than left as missing rows the reader would wonder about: these are
-            // things the phone site does not expose for a group, not things this app forgot.
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Text(
-                '群公告、消息免打扰、完整成员名单，网页版微博没有提供，这里也拿不到。'
-                '看到的消息条数越多，下面能列出的成员越多。',
-                style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant, height: 1.5),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
+    );
+  }
+
+  Future<void> _showNotice(String notice) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('群公告'),
+        content: SingleChildScrollView(child: Text(notice)),
+        actions: [
+          TextButton(
+            onPressed: () => _copy(notice).then((_) {
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+            }),
+            child: const Text('复制'),
+          ),
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('关闭')),
+        ],
+      ),
+    );
+  }
+}
+
+class _Header extends StatelessWidget {
+  const _Header({
+    required this.name,
+    required this.gid,
+    required this.count,
+    required this.max,
+    this.place,
+    this.createdAt,
+  });
+
+  final String name;
+  final String gid;
+  final int count;
+  final int max;
+  final String? place;
+  final int? createdAt;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final details = <String>[
+      '群号 $gid',
+      if (count > 0) max > 0 ? '$count / $max 人' : '$count 人',
+      if (place != null && place!.isNotEmpty) place!,
+      if (createdAt != null) '${DateTime.fromMillisecondsSinceEpoch(createdAt! * 1000).year} 年创建',
+    ];
+    return Column(
+      children: [
+        Center(
+          child: CircleAvatar(
+            radius: 32,
+            backgroundColor: scheme.secondaryContainer,
+            child: Icon(Icons.groups_rounded, size: 34, color: scheme.onSecondaryContainer),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(name, textAlign: TextAlign.center, style: textTheme.titleLarge),
+        const SizedBox(height: 4),
+        Text(
+          details.join(' · '),
+          textAlign: TextAlign.center,
+          style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+        ),
+      ],
     );
   }
 }
 
 /// The strip of faces at the top, and the way into the full list.
 class _MembersStrip extends StatelessWidget {
-  const _MembersStrip({required this.speakers, required this.count, required this.onTap});
+  const _MembersStrip({required this.members, required this.count, required this.onTap});
 
-  final List<User> speakers;
+  final List<GroupMember> members;
   final int count;
   final VoidCallback onTap;
 
@@ -242,22 +391,20 @@ class _MembersStrip extends StatelessWidget {
         child: Row(
           children: [
             Expanded(
-              child: speakers.isEmpty
-                  ? Text(
-                      '还没有可列出的成员',
-                      style: textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                    )
+              child: members.isEmpty
+                  ? Text('查看成员', style: textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant))
                   : Wrap(
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        for (final speaker in speakers.take(8)) Avatar(url: speaker.avatarUrl, size: 38),
+                        for (final member in members.take(9))
+                          Avatar(url: member.avatarUrl, size: 38, verified: member.verified),
                       ],
                     ),
             ),
             const SizedBox(width: 8),
             Text(
-              speakers.isEmpty ? '成员' : '${speakers.length} 位',
+              count > 0 ? '$count 人' : '全部成员',
               style: textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
             ),
             Icon(Icons.chevron_right_rounded, size: 20, color: scheme.onSurfaceVariant),
@@ -286,10 +433,23 @@ class _SectionCard extends StatelessWidget {
 }
 
 class _Row extends StatelessWidget {
-  const _Row({required this.icon, required this.label, this.onTap, this.danger = false});
+  const _Row({
+    required this.icon,
+    required this.label,
+    this.value,
+    this.trailing,
+    this.onTap,
+    this.badge,
+    this.danger = false,
+  });
 
   final IconData icon;
   final String label;
+  final String? value;
+  final Widget? trailing;
+
+  /// A short right-hand word, such as 编辑, for a row that opens an editor rather than a detail.
+  final String? badge;
   final VoidCallback? onTap;
   final bool danger;
 
@@ -313,7 +473,27 @@ class _Row extends StatelessWidget {
                 style: textTheme.bodyMedium?.copyWith(color: danger ? scheme.error : scheme.onSurface),
               ),
             ),
-            if (onTap != null) Icon(Icons.chevron_right_rounded, size: 20, color: scheme.onSurfaceVariant),
+            if (value != null)
+              Flexible(
+                child: Text(
+                  value!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                  style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                ),
+              ),
+            ?trailing,
+            if (badge != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 6),
+                child: Text(
+                  badge!,
+                  style: textTheme.labelSmall?.copyWith(color: scheme.primary),
+                ),
+              ),
+            if (onTap != null)
+              Icon(Icons.chevron_right_rounded, size: 20, color: scheme.onSurfaceVariant),
           ],
         ),
       ),

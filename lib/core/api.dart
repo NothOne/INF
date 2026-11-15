@@ -585,49 +585,25 @@ class WeiboApi {
   Future<PageResult<DirectMessage>> groupChat(String gid, String? cursor) async =>
       (await groupChatPage(gid, cursor)).messages;
 
-  /// A page of group messages, the group's title as that page carried it, and the senders on it.
+  /// A page of group messages, and the group's title as that page carried it.
   ///
-  /// The title is the only place m.weibo.cn spells out the group's name and member count
-  /// (`群名(828)`), so it is taken from the same request rather than asked for again. The `users` map
-  /// holds the senders on this page — all there is of the group's membership, since the service has no
-  /// member list (see [groupSpeakers]).
-  Future<({PageResult<DirectMessage> messages, String? title, Map<String, User> users})> groupChatPage(
-    String gid,
-    String? cursor,
-  ) async {
+  /// The title is `群名(828)` — the only thing m.weibo.cn says about a group itself, and enough to
+  /// paint the chat's top bar. The group's full description, members and announcement come from
+  /// weibo.com instead (see [groupInfo]).
+  Future<({PageResult<DirectMessage> messages, String? title})> groupChatPage(String gid, String? cursor) async {
     final data = await _get('api/groupchat/list', query: {
       'gid': gid,
       'count': '20',
       'max_mid': cursor,
     });
     final messages = parseGroupChat(data);
-    return (
-      messages: PageResult(messages, messages.length > 1 ? messages.last.id : null),
-      title: groupTitle(data),
-      users: parseGroupUsers(data),
-    );
-  }
-
-  /// Everyone who has spoken in the group, accumulated as its history is paged in.
-  ///
-  /// m.weibo.cn has no member list for a group. Every candidate was tried on a real account and
-  /// answered 404 or an empty page: `api/groupchat/members|memberlist|members/list`, the H5
-  /// `groupChat/userChat/*` names, and weibo.com's `webim/groupchat/query*`. What the message pages
-  /// do carry is a `users` map of the senders on that page, and that is all there is to work from.
-  ///
-  /// So this is the set of people who have spoken in the history that has been loaded, not the
-  /// roster — the page says so rather than presenting it as the group's membership. It grows as the
-  /// chat page pages back through history, which is why it takes the accumulated map.
-  List<User> groupSpeakers(Map<String, User> users) {
-    final speakers = users.values.where((user) => user.id.isNotEmpty).toList();
-    speakers.sort((a, b) => a.screenName.compareTo(b.screenName));
-    return speakers;
+    return (messages: PageResult(messages, messages.length > 1 ? messages.last.id : null), title: groupTitle(data));
   }
 
   /// The group's name and member count out of the title its message pages carry.
   ///
-  /// The count in `群名(828)` is the group's real size and is the one thing about membership the
-  /// service will tell us.
+  /// Only used to paint the chat's top bar before weibo.com's own answer arrives; [groupInfo] is the
+  /// real source.
   GroupInfo groupInfoFromTitle(String gid, String? title) {
     final split = splitGroupTitle(title ?? '');
     return GroupInfo(gid: gid, name: split.name, memberCount: split.count);
@@ -903,6 +879,156 @@ class WeiboApi {
   }
 
   // ---- plumbing -----------------------------------------------------------------------------
+
+  // ---- group chat (weibo.com's webim) --------------------------------------------------------
+
+  /// The group-chat backend the web client at `api.weibo.com/chat` talks to.
+  ///
+  /// None of this exists on m.weibo.cn: every candidate there answered 404 or an empty page (see
+  /// `DEVLOG.md`). The web chat's own bundle names these endpoints, and they answer for an account
+  /// that has been signed in through weibo.com — its cookie is in the WebView's jar, because the
+  /// passport login plants one alongside m.weibo.cn's.
+  ///
+  /// Two things are easy to get wrong and both were found on-device:
+  ///  * The group's id goes in `id`, not `gid`. `gid` is answered with "invalid parameter".
+  ///  * `query_group` wants `source`; without it the service says `appkey` is missing and answers
+  ///    with an empty member list.
+  static const _webimSource = '209678993';
+
+  /// What the phone site calls a group: `api/groupchat/list`'s `gid` is this one's `id`.
+  Future<dynamic> _webim(String path, Map<String, String> query) async {
+    final (cookie, xsrf) = await _weiboComCookie();
+    try {
+      final response = await _dio.get(
+        'https://api.weibo.com/webim/$path',
+        queryParameters: query,
+        options: Options(
+          responseType: ResponseType.plain,
+          headers: {
+            'Referer': 'https://api.weibo.com/chat',
+            'Cookie': cookie,
+            // The web client sends it with every call; the service checks it for writes.
+            'X-XSRF-TOKEN': xsrf,
+          },
+        ),
+      );
+      final body = response.data;
+      final map = asMap(body is String ? _jsonOrNull(body) : body);
+      if (map == null) throw ApiException('接口返回格式错误');
+      if (map['result'] == false || map['error'] != null) {
+        throw ApiException(textOf(map['error']) ?? '群聊接口拒绝了这个请求');
+      }
+      return map;
+    } on DioException catch (error) {
+      throw _dioError(error);
+    }
+  }
+
+  static dynamic _jsonOrNull(String body) {
+    try {
+      return jsonDecode(body);
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// A group's own page: its name, size, owner, admins and announcement.
+  ///
+  /// The announcement is inside this answer (`bulletin.content`), so it needs no request of its own —
+  /// which is just as well, because there is no announcement endpoint.
+  Future<GroupInfo> groupInfo(String gid) async {
+    final map = await _webim('groupchat/query.json', {'id': gid});
+    final bulletin = asMap(map['bulletin']);
+    final admins = [for (final id in asList(map['admins'])) idOf(id) ?? ''].where((id) => id.isNotEmpty).toSet();
+    return GroupInfo(
+      gid: gid,
+      name: textOf(map['name']) ?? textOf(map['system_name']) ?? '',
+      memberCount: intOf(map['member_count']) ?? 0,
+      maxMembers: intOf(map['max_member']) ?? 0,
+      ownerId: idOf(map['owner']) ?? '',
+      adminIds: admins,
+      notice: parseGroupNotice(bulletin?['content']),
+      createdAt: intOf(map['create_time']),
+      place: textOf(asMap(map['position'])?['name']),
+    );
+  }
+
+  /// The group's members.
+  ///
+  /// The service hands these out in pages of its own size (`query_member_count`). The answer carries a
+  /// `members` array beside `member_infos`; both are read, because which one is populated has varied
+  /// between answers. There is no cursor in the answer, so a page that comes back shorter than asked
+  /// for is the last one.
+  Future<List<GroupMember>> groupMembers(String gid, {int offset = 0, int count = 50}) async {
+    final map = await _webim('query_group.json', {
+      'id': gid,
+      'source': _webimSource,
+      'is_pc': '1',
+      'query_member': '1',
+      'query_member_count': '$count',
+      if (offset > 0) 'member_offset': '$offset',
+      'sort_by_jp': '1',
+    });
+    return parseGroupMembers(map);
+  }
+
+  /// Whether this group's messages are muted for the account.
+  ///
+  /// `switch` is 1 for muted and 2 for not — not the 0/1 that the name suggests, which is why the
+  /// parser reads it explicitly rather than testing truthiness.
+  Future<bool> groupMuted(String gid) async {
+    final map = await _webim('2/notice_center/discussion_group/push_settings.json', {
+      'call_from': 'mobile',
+      'dgid': gid,
+    });
+    return intOf(map['switch']) == 1;
+  }
+
+  Future<void> setGroupMuted(String gid, bool muted) async {
+    await _postWebim('2/notice_center/discussion_group/set_push_settings.json', {
+      'dgid': gid,
+      'switch': muted ? '1' : '2',
+      'call_from': 'mobile',
+    });
+  }
+
+  /// Posts the group's announcement. Only the owner and admins may, and the service refuses quietly
+  /// otherwise, so the caller shows the error rather than assuming it worked.
+  Future<void> setGroupNotice(String gid, String notice) async {
+    await _postWebim('groupchat/send_bulletin.json', {
+      'id': gid,
+      'content': notice,
+      'keep_time': '8640000',
+    });
+  }
+
+  Future<dynamic> _postWebim(String path, Map<String, String> body) async {
+    final (cookie, xsrf) = await _weiboComCookie();
+    try {
+      final response = await _dio.post(
+        'https://api.weibo.com/webim/$path',
+        data: body,
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+          responseType: ResponseType.plain,
+          headers: {
+            'Referer': 'https://api.weibo.com/chat',
+            'Origin': 'https://api.weibo.com',
+            'Cookie': cookie,
+            'X-XSRF-TOKEN': xsrf,
+          },
+        ),
+      );
+      final map = asMap(response.data is String ? _jsonOrNull(response.data) : response.data);
+      if (map == null) throw ApiException('接口返回格式错误');
+      if (map['result'] == false || map['error'] != null) {
+        throw ApiException(textOf(map['error']) ?? '群聊接口拒绝了这个请求');
+      }
+      return map;
+    } on DioException catch (error) {
+      throw _dioError(error);
+    }
+  }
 
   Future<dynamic> _get(
     String path, {
