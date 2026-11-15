@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
 
+import 'liquid_glass.dart' show GlassQuiet;
 import 'touches.dart';
 
 
@@ -316,6 +317,8 @@ class _ContainerTransitionState extends State<_ContainerTransition> {
     // page from scratch.
     return AnimatedBuilder(
       animation: animation,
+      // The page itself is not rebuilt as the transition runs: only the wrapper changes. A page
+      // rebuilt every frame would undo everything the rest of this route does to keep it still.
       child: RepaintBoundary(child: widget.child),
       builder: (context, page) {
         final settled = animation.isCompleted;
@@ -385,7 +388,17 @@ class _ContainerTransitionState extends State<_ContainerTransition> {
                           sigmaY: blur,
                           tileMode: TileMode.decal,
                         ),
-                        child: Transform.translate(offset: Offset(dx, dy), child: page),
+                        child: Transform.translate(
+                          offset: Offset(dx, dy),
+                          // Inside the `Opacity` and the blur, because that is what the glass has to
+                          // know about: drawn through a translucent layer, glass reads an empty
+                          // backdrop and comes out as black blocks. Flat colour for the length of
+                          // the travel, back to glass once the page has settled.
+                          child: GlassQuiet(
+                            quiet: !settled,
+                            child: page!,
+                          ),
+                        ),
                       ),
                     ),
                   ],

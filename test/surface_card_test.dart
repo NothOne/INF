@@ -103,9 +103,11 @@ void main() {
     final anchor = tester.getRect(find.byKey(key));
     await tester.tap(find.text('open'));
     await tester.pump();
-    // The first frame of the growth: the panel is at the control it came from.
+    // The first frame of the growth: the panel is at the control it came from. Measured on the
+    // window, not on the content: the content is laid out at the panel's resting size and only the
+    // window over it travels.
     await tester.pump(const Duration(milliseconds: 1));
-    final firstFrame = tester.getRect(find.text('panel'));
+    final firstFrame = tester.getRect(find.byKey(const ValueKey('surface-card-window')));
     expect(firstFrame.top, closeTo(anchor.top, 40));
 
     // And once it has arrived it is inside the window, not hanging off an edge.

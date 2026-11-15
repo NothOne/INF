@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../core/api.dart';
 import '../../core/haptics.dart';
@@ -10,6 +9,7 @@ import '../../core/look.dart';
 import '../../core/models.dart';
 import '../../core/prefs.dart';
 import '../../core/status_store.dart';
+import '../../core/temp_files.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/mention_picker.dart';
 import '../../core/widgets/smart_image.dart';
@@ -138,14 +138,9 @@ class _ComposePageState extends State<ComposePage> {
     try {
       final picked = await _picker.pickMultiImage(imageQuality: 92, limit: room);
       if (picked.isEmpty) return;
-      final dir = await getApplicationDocumentsDirectory();
-      final folder = Directory('${dir.path}/drafts');
-      if (!await folder.exists()) await folder.create(recursive: true);
       final next = <String>[];
       for (final file in picked.take(room)) {
-        final target = '${folder.path}/${DateTime.now().microsecondsSinceEpoch}-${file.name}';
-        await File(file.path).copy(target);
-        next.add(target);
+        next.add(await DraftFiles.add(File(file.path)));
       }
       if (mounted) setState(() => _images.addAll(next));
     } catch (error) {
@@ -178,12 +173,17 @@ class _ComposePageState extends State<ComposePage> {
     drafts.removeWhere((d) => d.id == id);
     drafts.add(draft);
     await Prefs.instance.saveDrafts(drafts);
+    // A picture the reader took back out of the post is in no draft any more.
+    await DraftFiles.sweep();
   }
 
   Future<void> _removeDraft() async {
     if (_draftId == 0) return;
+    final draft = Prefs.instance.drafts.where((d) => d.id == _draftId).firstOrNull;
     final drafts = Prefs.instance.drafts.where((d) => d.id != _draftId).toList();
     await Prefs.instance.saveDrafts(drafts);
+    // The pictures came with the draft; nothing else refers to them now.
+    if (draft != null) await DraftFiles.delete(draft.images);
   }
 
   Future<void> _send() async {
@@ -358,9 +358,10 @@ class _ComposePageState extends State<ComposePage> {
                   _Toolbar(
                     canAddImage: _isOriginal && _images.length < 9,
                     emojiOpen: _emoji.open,
+                    emojiVisible: _emoji.boardVisible,
                     count: _length,
                     over: _length > 2000,
-                    inset: _emoji.heightFor(context),
+                    inset: _emoji.insetFor(context),
                     onPickImage: _pickImages,
                     onMention: _pickMention,
                     onTopic: () => _insert('##'),
@@ -521,6 +522,7 @@ class _Toolbar extends StatelessWidget {
   const _Toolbar({
     required this.canAddImage,
     required this.emojiOpen,
+    required this.emojiVisible,
     required this.count,
     required this.over,
     required this.inset,
@@ -533,6 +535,7 @@ class _Toolbar extends StatelessWidget {
 
   final bool canAddImage;
   final bool emojiOpen;
+  final bool emojiVisible;
   final int count;
   final bool over;
   final double inset;
@@ -581,7 +584,7 @@ class _Toolbar extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         row,
-        EmojiKeyboardSlot(open: emojiOpen, height: inset, onPick: onPickEmoji),
+        EmojiKeyboardSlot(visible: emojiVisible, height: inset, onPick: onPickEmoji),
       ],
     );
     return InfChrome.of(context).edgePanel(context, child: column);

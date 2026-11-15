@@ -1,12 +1,12 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_cache_manager/flutter_cache_manager.dart';
-import 'package:path_provider/path_provider.dart';
 
+import 'image_cache.dart';
 import 'image_url.dart';
 import 'models.dart';
 import 'native.dart';
+import 'temp_files.dart';
 
 /// From the file's first bytes: the URL says `.jpg` for GIFs too.
 Future<({String extension, String mime})> imageTypeOf(File file) async {
@@ -40,13 +40,16 @@ String exportName(String extension) => 'INF-${DateTime.now().millisecondsSinceEp
 
 /// The picture at [url] as a file other apps can take. sinaimg refuses requests without a Weibo
 /// Referer, so this hands over the bytes, usually straight from the cache the app has drawn from.
+///
+/// The copy goes in [TempFiles]: the caller is done with it once the gallery or the share sheet
+/// has it, and [TempFiles.sweep] takes anything a crash left behind.
 Future<({String path, String name, String mime})> exportImage(String url) async {
-  final cached = await DefaultCacheManager().getSingleFile(sanitizeImageUrl(url), headers: weiboImageHeaders());
+  final cached = await InfImageCache.manager.getSingleFile(sanitizeImageUrl(url), headers: weiboImageHeaders());
   final type = await imageTypeOf(cached);
   final name = exportName(type.extension);
-  final path = '${(await getTemporaryDirectory()).path}/$name';
-  await cached.copy(path);
-  return (path: path, name: name, mime: type.mime);
+  final file = await TempFiles.file(name);
+  await cached.copy(file.path);
+  return (path: file.path, name: name, mime: type.mime);
 }
 
 /// How a batch save went: [live] of the [saved] went in as live photos, [stills] live photos only
@@ -65,7 +68,10 @@ Future<SaveAllResult> saveImagesToGallery(List<Media> images, {void Function(int
       String? result;
       if (image.isLive) {
         try {
-          final clip = await DefaultCacheManager().getSingleFile(sanitizeImageUrl(image.liveUrl!), headers: weiboImageHeaders());
+          final clip = await InfImageCache.manager.getSingleFile(
+            sanitizeImageUrl(image.liveUrl!),
+            headers: weiboImageHeaders(),
+          );
           result = await Native.saveMotionPhoto(file.path, clip.path, file.name.replaceFirst(RegExp(r'\.\w+$'), '.jpg'));
         } catch (error) {
           debugPrint('INF save: live photo ${image.liveUrl}: $error');

@@ -1,9 +1,13 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../core/api.dart';
 import '../../core/haptics.dart';
 import '../../core/look.dart';
 import '../../core/models.dart';
+import '../../core/temp_files.dart';
 import 'common.dart';
 import 'mention_picker.dart';
 import 'surface_card_route.dart';
@@ -59,14 +63,30 @@ class CommentSheet extends StatefulWidget {
 class _CommentSheetState extends State<CommentSheet> {
   final TextEditingController _text = TextEditingController();
   final FocusNode _focus = FocusNode();
+  final ImagePicker _picker = ImagePicker();
   bool _crossPost = false;
   bool _sending = false;
   final EmojiKeyboard _emoji = EmojiKeyboard();
   String? _error;
   final HapticThreshold _limit = HapticThreshold();
 
+  /// The picture to go with the comment, copied into the scratch folder until it is sent.
+  ///
+  /// One, not nine. Weibo's own comment box allows a single picture, and the comment endpoints take
+  /// one `picId`, so a second slot would only promise what the request cannot carry.
+  ///
+  /// Whether an account may send one at all is Weibo's call, not the app's: the permission is granted
+  /// to some accounts and not others. Nothing here hides the button from the accounts that lack it —
+  /// the app cannot know which they are — so a refusal arrives as an upload error and is explained
+  /// in [_failure].
+  String? _picture;
+
   bool get _isReply => widget.commentId != null;
   int get _length => _text.text.characters.length;
+
+  /// Whether there is anything to send: words within the limit. A picture does not stand on its own —
+  /// the endpoints take one, but a comment without words is not what either client offers.
+  bool get _canSend => _text.text.trim().isNotEmpty && _length <= 140;
 
   @override
   void initState() {
@@ -85,6 +105,8 @@ class _CommentSheetState extends State<CommentSheet> {
     _emoji.dispose();
     _text.dispose();
     _focus.dispose();
+    // Nothing was sent, so the copy in the scratch folder is nobody's.
+    if (_picture != null) TempFiles.delete(_picture!);
     super.dispose();
   }
 
@@ -113,17 +135,24 @@ class _CommentSheetState extends State<CommentSheet> {
 
   Future<void> _send() async {
     final content = _text.text.trim();
-    if (content.isEmpty || _sending || _length > 140) return;
+    final picture = _picture;
+    if (!_canSend || _sending) return;
     setState(() {
       _sending = true;
       _error = null;
     });
     try {
+      // Uploaded as the comment is sent, not when it is picked: a picture the reader thought better
+      // of never reaches the service, and no id is left behind for a comment that was not made.
+      final picId = picture == null
+          ? null
+          : await WeiboApi.instance.uploadCommentImage(widget.statusId, File(picture));
       if (_isReply) {
-        await WeiboApi.instance.reply(widget.statusId, widget.commentId!, content);
+        await WeiboApi.instance.reply(widget.statusId, widget.commentId!, content, picId: picId);
       } else {
-        await WeiboApi.instance.comment(widget.statusId, content);
+        await WeiboApi.instance.comment(widget.statusId, content, picId: picId);
       }
+      if (picture != null) await TempFiles.delete(picture);
       if (!mounted) return;
       Haptic.success.play();
       final bar = infSnackBar(context, Text(_isReply ? '回复成功' : '评论成功'));
@@ -133,10 +162,49 @@ class _CommentSheetState extends State<CommentSheet> {
     } catch (error) {
       if (!mounted) return;
       Haptic.error.play();
-      setState(() => _error = error is ApiException ? error.message : '发送失败');
+      setState(() => _error = _failure(error));
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  /// Why the comment did not go out.
+  ///
+  /// Pictures in a comment are a permission Weibo hands out to some accounts and not others. Nothing
+  /// in the response names that permission — a refused upload is what it looks like from here — so
+  /// the message says that is likely what happened rather than showing a bare "图片上传失败", which
+  /// reads as an app fault and invites a retry that will fail the same way.
+  String _failure(Object error) {
+    final message = error is ApiException ? error.message : '';
+    if (_picture != null) {
+      final refused = message.isEmpty || message.contains('图片上传失败') || message.contains('权限');
+      if (refused) return '这条评论没有发出去。发图片评论需要微博的权限，不是所有账号都有';
+    }
+    return message.isEmpty ? '发送失败' : message;
+  }
+
+  /// Picks the picture for this comment, replacing any already attached.
+  Future<void> _pickPicture() async {
+    final picked = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 92);
+    if (picked == null) return;
+    final file = await TempFiles.file('comment-${DateTime.now().microsecondsSinceEpoch}.jpg');
+    await File(picked.path).copy(file.path);
+    // The panel can be dismissed while the picker is in front of it. The copy was made for a comment
+    // that no longer exists, so it goes rather than waiting for the sweep.
+    if (!mounted) {
+      await TempFiles.delete(file.path);
+      return;
+    }
+    final previous = _picture;
+    setState(() => _picture = file.path);
+    if (previous != null) await TempFiles.delete(previous);
+  }
+
+  Future<void> _removePicture() async {
+    final picture = _picture;
+    if (picture == null) return;
+    setState(() => _picture = null);
+    await TempFiles.delete(picture);
   }
 
   Future<void> _pickMention() async {
@@ -149,7 +217,7 @@ class _CommentSheetState extends State<CommentSheet> {
     final scheme = Theme.of(context).colorScheme;
     final quoted = _quotedLine();
     final over = _length > 140;
-    final slot = _emoji.heightFor(context);
+    final slot = _emoji.boardHeight(context);
     final panel = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -188,7 +256,7 @@ class _CommentSheetState extends State<CommentSheet> {
                       const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
                     else
                       FilledButton(
-                        onPressed: _text.text.trim().isEmpty || over ? null : _send,
+                        onPressed: _canSend ? _send : null,
                         style: FilledButton.styleFrom(
                           minimumSize: const Size(58, 32),
                           padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -242,6 +310,16 @@ class _CommentSheetState extends State<CommentSheet> {
                     ),
                   ),
                 ),
+              // The picture sits above the field's controls, where what has been attached to the
+              // comment is looked for, and takes its usual 56 dp square — a comment carries one.
+              if (_picture != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: _AttachedPicture(path: _picture!, onRemove: _sending ? null : _removePicture),
+                  ),
+                ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(6, 0, 8, 4),
                 child: Row(
@@ -266,6 +344,13 @@ class _CommentSheetState extends State<CommentSheet> {
                       iconSize: 20,
                       tooltip: '表情',
                       icon: Icon(_emoji.open ? Icons.keyboard_rounded : Icons.emoji_emotions_outlined),
+                    ),
+                    IconButton(
+                      onPressed: _sending ? null : (_picture == null ? _pickPicture : _removePicture),
+                      iconSize: 20,
+                      tooltip: _picture == null ? '图片' : '取消图片',
+                      icon: Icon(_picture == null ? Icons.image_outlined : Icons.image_rounded),
+                      color: _picture == null ? null : scheme.primary,
                     ),
                     const SizedBox(width: 2),
                     InkWell(
@@ -304,7 +389,10 @@ class _CommentSheetState extends State<CommentSheet> {
             ],
           ),
         ),
-        EmojiKeyboardSlot(open: _emoji.open, height: slot, onPick: _insert),
+        // The board only takes height when it is open. While the keyboard is up the panel has
+        // already been placed above it (see `surface_card_route.dart`), so holding the keyboard's
+        // height here as well left a slab of empty panel between the field and the keys.
+        if (slot > 0) EmojiKeyboardSlot(visible: _emoji.boardVisible, height: slot, onPick: _insert),
       ],
     );
     // Rounded on every corner: the panel no longer stands on the bottom edge of the screen, it
@@ -326,5 +414,51 @@ class _CommentSheetState extends State<CommentSheet> {
     final target = widget.target;
     if (target == null) return null;
     return '@${target.author.screenName}：${target.text}'.replaceAll('\n', ' ');
+  }
+}
+
+/// The picture attached to the comment: a small square with its own remove button, the same size as
+/// the one the composer shows.
+class _AttachedPicture extends StatelessWidget {
+  const _AttachedPicture({required this.path, this.onRemove});
+
+  final String path;
+
+  /// Null while the comment is going out, when taking the picture back no longer means anything.
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 56,
+      height: 56,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.file(File(path), fit: BoxFit.cover),
+            ),
+          ),
+          if (onRemove != null)
+            Positioned(
+              top: 3,
+              right: 3,
+              child: GestureDetector(
+                onTap: onRemove,
+                child: Container(
+                  width: 20,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.58),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.close_rounded, size: 13, color: Colors.white),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }

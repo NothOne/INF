@@ -19,7 +19,9 @@ import '../features/media/image_viewer_page.dart';
 import '../features/media/video_page.dart';
 import '../features/place/place_sheet.dart';
 import '../features/message/chat_page.dart';
+import '../features/message/chat_search_page.dart';
 import '../features/message/group_info_page.dart';
+import '../features/message/group_members_page.dart';
 import '../features/relations/relations_page.dart';
 import '../features/search/search_page.dart';
 import '../features/settings/settings_page.dart';
@@ -196,8 +198,57 @@ Future<void> openChat(
     pushInf(context, ChatPage(uid: uid, name: name, avatar: avatar, group: group), pane: 'chat:$uid');
 
 /// A group chat's 群聊信息; completes with true once the reader left the group there.
-Future<bool?> openGroupInfo(BuildContext context, {required String gid, required String name, required List<User> members}) =>
-    pushInf<bool>(context, GroupInfoPage(gid: gid, name: name, members: members));
+///
+/// [title] is the group's title as its message pages spell it (`群名(828)`) — the only place its name
+/// and size are available. [speakers] are the people whose messages the chat page has loaded, since
+/// m.weibo.cn has no member list.
+Future<bool?> openGroupInfo(
+  BuildContext context, {
+  required String gid,
+  required String title,
+  List<User> speakers = const [],
+  bool hasMoreHistory = false,
+  Future<List<User>> Function()? onLoadOlder,
+}) =>
+    pushInf<bool>(
+      context,
+      GroupInfoPage(
+        gid: gid,
+        title: title,
+        speakers: speakers,
+        hasMoreHistory: hasMoreHistory,
+        onLoadOlder: onLoadOlder,
+      ),
+    );
+
+Future<void> openGroupMembers(
+  BuildContext context, {
+  required String gid,
+  required String name,
+  required List<User> speakers,
+  int memberCount = 0,
+  bool hasMoreHistory = false,
+  Future<List<User>> Function()? onLoadOlder,
+}) =>
+    pushInf(
+      context,
+      GroupMembersPage(
+        gid: gid,
+        name: name,
+        speakers: speakers,
+        memberCount: memberCount,
+        hasMoreHistory: hasMoreHistory,
+        onLoadOlder: onLoadOlder,
+      ),
+    );
+
+Future<void> openChatSearch(
+  BuildContext context, {
+  required List<DirectMessage> messages,
+  Future<List<DirectMessage>> Function()? onLoadOlder,
+  String? selfId,
+}) =>
+    pushInf(context, ChatSearchPage(messages: messages, onLoadOlder: onLoadOlder, selfId: selfId));
 
 Future<void> openWeb(BuildContext context, String url) => pushInf(context, WebPage(url: url));
 

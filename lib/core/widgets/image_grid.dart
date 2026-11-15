@@ -42,12 +42,13 @@ class StatusImageGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final items = media.take(9).toList();
     if (items.isEmpty) return const SizedBox.shrink();
-    // A grid is built a little before it scrolls into view; that is the cue to fetch the full
-    // pictures in the background.
+    final lone = items.length == 1;
+    // A grid is built a little before it scrolls into view; that is the cue to fetch what it will
+    // draw — the same rendition as the cell, never the original (see [ImagePrefetcher]).
     if (enabled) {
       ImagePrefetcher.instance.request([
         for (final item in items)
-          if (item.kind == MediaKind.image) item.url,
+          if (item.kind == MediaKind.image) thumbnailUrl(item, single: lone),
       ]);
     }
     return LayoutBuilder(

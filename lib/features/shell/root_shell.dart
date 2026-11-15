@@ -6,6 +6,7 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
 
 import '../../core/container_route.dart';
 import '../../core/haptics.dart';
+import '../../core/image_cache.dart';
 import '../../core/layout.dart';
 import '../../core/links.dart';
 import '../../core/liquid_glass.dart' show GlassDuring;
@@ -124,7 +125,12 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _openIncomingLink();
+    if (state == AppLifecycleState.resumed) {
+      _openIncomingLink();
+      // Back from the background is a natural point to hold the cache to its budget: the reader
+      // is looking at a page, not waiting for the picture they just scrolled to.
+      InfImageCache.instance.sweep();
+    }
   }
 
   /// A link handed over as `inf://open?url=…` (a browser bookmarklet, adb), a Weibo address the

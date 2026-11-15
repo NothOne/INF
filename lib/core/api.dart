@@ -582,14 +582,55 @@ class WeiboApi {
     return PageResult(messages, messages.length > 1 ? messages.last.id : null);
   }
 
-  Future<PageResult<DirectMessage>> groupChat(String gid, String? cursor) async {
+  Future<PageResult<DirectMessage>> groupChat(String gid, String? cursor) async =>
+      (await groupChatPage(gid, cursor)).messages;
+
+  /// A page of group messages, the group's title as that page carried it, and the senders on it.
+  ///
+  /// The title is the only place m.weibo.cn spells out the group's name and member count
+  /// (`群名(828)`), so it is taken from the same request rather than asked for again. The `users` map
+  /// holds the senders on this page — all there is of the group's membership, since the service has no
+  /// member list (see [groupSpeakers]).
+  Future<({PageResult<DirectMessage> messages, String? title, Map<String, User> users})> groupChatPage(
+    String gid,
+    String? cursor,
+  ) async {
     final data = await _get('api/groupchat/list', query: {
       'gid': gid,
       'count': '20',
       'max_mid': cursor,
     });
     final messages = parseGroupChat(data);
-    return PageResult(messages, messages.length > 1 ? messages.last.id : null);
+    return (
+      messages: PageResult(messages, messages.length > 1 ? messages.last.id : null),
+      title: groupTitle(data),
+      users: parseGroupUsers(data),
+    );
+  }
+
+  /// Everyone who has spoken in the group, accumulated as its history is paged in.
+  ///
+  /// m.weibo.cn has no member list for a group. Every candidate was tried on a real account and
+  /// answered 404 or an empty page: `api/groupchat/members|memberlist|members/list`, the H5
+  /// `groupChat/userChat/*` names, and weibo.com's `webim/groupchat/query*`. What the message pages
+  /// do carry is a `users` map of the senders on that page, and that is all there is to work from.
+  ///
+  /// So this is the set of people who have spoken in the history that has been loaded, not the
+  /// roster — the page says so rather than presenting it as the group's membership. It grows as the
+  /// chat page pages back through history, which is why it takes the accumulated map.
+  List<User> groupSpeakers(Map<String, User> users) {
+    final speakers = users.values.where((user) => user.id.isNotEmpty).toList();
+    speakers.sort((a, b) => a.screenName.compareTo(b.screenName));
+    return speakers;
+  }
+
+  /// The group's name and member count out of the title its message pages carry.
+  ///
+  /// The count in `群名(828)` is the group's real size and is the one thing about membership the
+  /// service will tell us.
+  GroupInfo groupInfoFromTitle(String gid, String? title) {
+    final split = splitGroupTitle(title ?? '');
+    return GroupInfo(gid: gid, name: split.name, memberCount: split.count);
   }
 
   Future<void> sendMessage(String uid, String content) async {
@@ -792,7 +833,7 @@ class WeiboApi {
     await _post(path, {'id': statusId}, referer: '$_web/detail/$statusId');
   }
 
-  Future<String> uploadImage(File file) async {
+  Future<String> uploadImage(File file, {String? referer}) async {
     final st = await _token(refresh: true);
     final response = await _dio.post(
       'api/statuses/uploadPic',
@@ -808,7 +849,8 @@ class WeiboApi {
       options: Options(headers: {
         'X-XSRF-TOKEN': st,
         'Origin': _web,
-        'Referer': '${_web}/compose/',
+        // The same upload serves a post and a comment; each sends the page it is written on.
+        'Referer': referer ?? '$_web/compose/',
       }),
     );
     final root = _decodeEnvelope(response, false, returnRoot: true);
@@ -818,6 +860,9 @@ class WeiboApi {
     if (nested != null && nested.isNotEmpty) return nested;
     throw ApiException('图片上传失败');
   }
+
+  Future<String> uploadCommentImage(String statusId, File file) =>
+      uploadImage(file, referer: '$_web/detail/$statusId');
 
   Future<void> postStatus(String content, List<String> picIds) async {
     await _post('api/statuses/update', {
@@ -835,20 +880,25 @@ class WeiboApi {
     }, referer: '${_web}/compose/');
   }
 
-  Future<void> comment(String statusId, String content) async {
+  Future<void> comment(String statusId, String content, {String? picId}) async {
     await _post('api/comments/create', {
       'content': content,
       'mid': statusId,
+      // A comment with a picture is the same request with the uploaded id attached; the picture is
+      // uploaded exactly as a post's is, so an account weibo.com refuses pictures to gets the same
+      // refusal here and nowhere else.
+      'picId': ?picId,
     }, referer: '${_web}/detail/$statusId');
   }
 
-  Future<void> reply(String statusId, String commentId, String content) async {
+  Future<void> reply(String statusId, String commentId, String content, {String? picId}) async {
     await _post('api/comments/reply', {
       'id': statusId,
       'mid': statusId,
       'cid': commentId,
       'reply': commentId,
       'content': content,
+      'picId': ?picId,
     }, referer: '${_web}/detail/$statusId');
   }
 

@@ -3,15 +3,17 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart' show DownloadProgress, FileInfo;
 import 'package:video_player/video_player.dart';
 
 import '../../core/haptics.dart';
+import '../../core/image_cache.dart';
 import '../../core/image_url.dart';
 import '../../core/media_save.dart';
 import '../../core/models.dart';
 import '../../core/native.dart';
 import '../../core/share.dart';
+import '../../core/temp_files.dart';
 import '../../core/touches.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/image_actions.dart';
@@ -130,7 +132,7 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
       _originalProgress = null;
     });
     try {
-      final stream = DefaultCacheManager().getFileStream(url, headers: weiboImageHeaders(), withProgress: true);
+      final stream = InfImageCache.manager.getFileStream(url, headers: weiboImageHeaders(), withProgress: true);
       await for (final response in stream) {
         if (!mounted) return;
         if (response is FileInfo) break;
@@ -169,6 +171,8 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
     try {
       final file = await _exportFile(index);
       await shareFile(file.path, mime: file.mime, name: file.name);
+      // The copy exists only for the share sheet; the picture itself is still in the cache.
+      await TempFiles.delete(file.path);
     } catch (_) {
       Haptic.error.play();
       if (mounted) showMessage(context, '图片分享失败');
@@ -178,7 +182,7 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
   }
 
   /// The live photo's motion clip, from the same disk cache its playback reads.
-  Future<File> _liveClip(int index) => DefaultCacheManager().getSingleFile(
+  Future<File> _liveClip(int index) => InfImageCache.manager.getSingleFile(
         sanitizeImageUrl(widget.images[index].liveUrl!),
         headers: weiboImageHeaders(),
       );
@@ -188,11 +192,13 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
     if (_saving) return;
     final kind = as ?? (widget.images[index].isLive ? _SaveAs.motionPhoto : _SaveAs.picture);
     setState(() => _saving = true);
+    String? copy;
     try {
       final String? saved;
       switch (kind) {
         case _SaveAs.picture:
           final file = await _exportFile(index);
+          copy = file.path;
           saved = await Native.saveImageToGallery(file.path, file.name, mime: file.mime);
           if (saved == null) {
             await shareFile(file.path, mime: file.mime);
@@ -200,6 +206,7 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
           }
         case _SaveAs.motionPhoto:
           final file = await _exportFile(index);
+          copy = file.path;
           final clip = await _liveClip(index);
           final name = file.name.replaceFirst(RegExp(r'\.\w+$'), '.jpg');
           saved = await Native.saveMotionPhoto(file.path, clip.path, name);
@@ -217,6 +224,7 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
       Haptic.error.play();
       if (mounted) showMessage(context, kind.failed);
     } finally {
+      if (copy != null) await TempFiles.delete(copy);
       if (mounted) setState(() => _saving = false);
     }
   }
@@ -1015,7 +1023,7 @@ class _LiveOverlayState extends State<_LiveOverlay> {
       if (_loading) return;
       _loading = true;
       try {
-        final file = await DefaultCacheManager().getSingleFile(
+        final file = await InfImageCache.manager.getSingleFile(
           sanitizeImageUrl(widget.url),
           headers: weiboImageHeaders(),
         );

@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../core/api.dart';
 import '../../core/haptics.dart';
@@ -15,6 +14,7 @@ import '../../core/navigation.dart';
 import 'chat_link_sheet.dart';
 import '../../core/parse.dart';
 import '../../core/session.dart';
+import '../../core/temp_files.dart';
 import '../../core/widgets/avatar.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/mention_picker.dart';
@@ -49,6 +49,14 @@ class _ChatPageState extends State<ChatPage> {
   String? _error;
   User? _peer;
   String? _selfId;
+
+  /// The group's title as its message pages spell it, `群名(人数)`: where m.weibo.cn keeps the name
+  /// and the member count. Null until a page has come back.
+  String? _groupTitle;
+
+  /// Everyone whose messages have come back so far, by id. m.weibo.cn has no member list, so this is
+  /// the only thing there is to show as "who is in this group" (see `WeiboApi.groupSpeakers`).
+  final Map<String, User> _speakers = {};
   bool _loading = true;
   bool _loadingOlder = false;
   bool _hasMore = true;
@@ -117,17 +125,29 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _loadLatest({bool initial = false, bool quiet = false, bool scroll = true}) async {
     if (!quiet && mounted) setState(() => _loading = initial);
     try {
-      final page = widget.group
-          ? await WeiboApi.instance.groupChat(widget.uid, null)
-          : await WeiboApi.instance.chat(widget.uid, null);
-      if (!mounted) return;
-      setState(() {
-        _messages = page.items.reversed.toList();
-        _cursor = page.nextCursor;
-        _hasMore = page.nextCursor != null;
-        _loading = false;
-        _error = null;
-      });
+      if (widget.group) {
+        final page = await WeiboApi.instance.groupChatPage(widget.uid, null);
+        if (!mounted) return;
+        setState(() {
+          _messages = page.messages.items.reversed.toList();
+          _cursor = page.messages.nextCursor;
+          _hasMore = page.messages.nextCursor != null;
+          _groupTitle = page.title ?? _groupTitle;
+          _speakers.addAll(page.users);
+          _loading = false;
+          _error = null;
+        });
+      } else {
+        final page = await WeiboApi.instance.chat(widget.uid, null);
+        if (!mounted) return;
+        setState(() {
+          _messages = page.items.reversed.toList();
+          _cursor = page.nextCursor;
+          _hasMore = page.nextCursor != null;
+          _loading = false;
+          _error = null;
+        });
+      }
       _remember();
       if (scroll && !initial) _scrollToBottom();
     } catch (error) {
@@ -144,21 +164,53 @@ class _ChatPageState extends State<ChatPage> {
     if (_loadingOlder || !_hasMore || _cursor == null) return;
     setState(() => _loadingOlder = true);
     try {
-      final page = widget.group
-          ? await WeiboApi.instance.groupChat(widget.uid, _cursor)
-          : await WeiboApi.instance.chat(widget.uid, _cursor);
-      if (!mounted) return;
-      final older = page.items.reversed.toList();
-      setState(() {
-        _messages = [...older, ..._messages];
-        _cursor = page.nextCursor;
-        _hasMore = page.nextCursor != null && older.isNotEmpty;
-      });
+      if (widget.group) {
+        final page = await WeiboApi.instance.groupChatPage(widget.uid, _cursor);
+        if (!mounted) return;
+        final older = page.messages.items.reversed.toList();
+        setState(() {
+          _messages = [...older, ..._messages];
+          _cursor = page.messages.nextCursor;
+          _hasMore = page.messages.nextCursor != null && older.isNotEmpty;
+          _groupTitle = page.title ?? _groupTitle;
+          // Every page of history names its senders; that is how the member list fills in.
+          _speakers.addAll(page.users);
+        });
+      } else {
+        final page = await WeiboApi.instance.chat(widget.uid, _cursor);
+        if (!mounted) return;
+        final older = page.items.reversed.toList();
+        setState(() {
+          _messages = [...older, ..._messages];
+          _cursor = page.nextCursor;
+          _hasMore = page.nextCursor != null && older.isNotEmpty;
+        });
+      }
       _remember();
     } catch (_) {
     } finally {
       if (mounted) setState(() => _loadingOlder = false);
     }
+  }
+
+  /// One more page of history for the search page, which pages through the same cursor the list does.
+  Future<List<DirectMessage>> _loadOlderForSearch() async {
+    if (_loadingOlder || !_hasMore || _cursor == null) return const [];
+    final before = _messages.length;
+    await _loadOlder();
+    return _messages.length > before ? _messages.take(_messages.length - before).toList() : const [];
+  }
+
+  Future<void> _openSearch() async {
+    await openChatSearch(
+      context,
+      messages: List.of(_messages),
+      onLoadOlder: _loadOlderForSearch,
+      selfId: _selfId,
+    );
+    // The search page may have pulled more history in, so the list is put back on the newest message
+    // it already had rather than on the messages the search brought in.
+    if (mounted) _remember();
   }
 
   void _scrollToBottom() {
@@ -194,9 +246,8 @@ class _ChatPageState extends State<ChatPage> {
     final picked = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 90);
     if (picked == null) return;
     setState(() => _sending = true);
+    final file = await TempFiles.file('chat-${DateTime.now().millisecondsSinceEpoch}.jpg');
     try {
-      final temp = await getTemporaryDirectory();
-      final file = File('${temp.path}/chat-${DateTime.now().millisecondsSinceEpoch}.jpg');
       await File(picked.path).copy(file.path);
       final target = ChatTarget(widget.uid, widget.group);
       final fids = await WeiboApi.instance.uploadChatImage(file, target);
@@ -207,24 +258,42 @@ class _ChatPageState extends State<ChatPage> {
       Haptic.error.play();
       if (mounted) showMessage(context, error is ApiException ? error.message : '图片发送失败');
     } finally {
+      // Only the upload needed it.
+      await TempFiles.delete(file.path);
       if (mounted) setState(() => _sending = false);
     }
   }
 
   Future<void> _openGroupInfo() async {
-    final members = <String, User>{};
-    for (final message in _messages.reversed) {
-      members.putIfAbsent(
-        message.senderId,
-        () => User(id: message.senderId, screenName: message.senderName ?? message.senderId, avatarUrl: message.senderAvatar),
-      );
-    }
-    final left = await openGroupInfo(context, gid: widget.uid, name: _title, members: members.values.toList());
+    final title = _groupTitle;
+    final left = await openGroupInfo(
+      context,
+      gid: widget.uid,
+      title: title ?? widget.name ?? '群聊',
+      speakers: WeiboApi.instance.groupSpeakers(_speakers),
+      hasMoreHistory: _hasMore,
+      onLoadOlder: _loadOlderForInfo,
+    );
     if (left == true && mounted) Navigator.of(context).pop();
   }
 
+  /// Pulls one more page of history in, so the group's page can show more of the people who speak.
+  ///
+  /// Answers with the whole set after paging, not just the new names: the pages that show it keep
+  /// their own copy, and handing back only the additions would leave them showing a stale list.
+  Future<List<User>> _loadOlderForInfo() async {
+    await _loadOlder();
+    if (!mounted) return const [];
+    return WeiboApi.instance.groupSpeakers(_speakers);
+  }
+
+  /// The group's name with its member count stripped off, for the top bar.
   String get _title {
-    if (widget.group) return widget.name ?? '群聊';
+    if (widget.group) {
+      final title = _groupTitle;
+      final name = title == null ? null : splitGroupTitle(title).name;
+      return name?.isNotEmpty == true ? name! : (widget.name ?? '群聊');
+    }
     return _peer?.screenName ?? widget.name ?? '私信';
   }
 
@@ -239,6 +308,11 @@ class _ChatPageState extends State<ChatPage> {
         flexibleSpace: lookBarBackground(context),
         title: Text(_title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
+          IconButton(
+            onPressed: _openSearch,
+            tooltip: '查找聊天记录',
+            icon: const Icon(Icons.search_rounded),
+          ),
           if (!widget.group)
             IconButton(
               onPressed: () => openUser(context, widget.uid),
@@ -246,6 +320,7 @@ class _ChatPageState extends State<ChatPage> {
               icon: const Icon(Icons.person_outline_rounded),
             )
           else
+            // The ⋯ opens the group's own page, where its members, announcement and switch live.
             IconButton(
               onPressed: _openGroupInfo,
               tooltip: '群聊信息',
@@ -262,7 +337,8 @@ class _ChatPageState extends State<ChatPage> {
             focus: _focus,
             sending: _sending,
             emojiOpen: _emoji.open,
-            inset: _emoji.heightFor(context),
+            emojiVisible: _emoji.boardVisible,
+            inset: _emoji.insetFor(context),
             onEmoji: () => _emoji.toggle(context, _focus),
             onPickImage: _sendImage,
             onSend: _send,
@@ -544,6 +620,7 @@ class _InputBar extends StatelessWidget {
     required this.focus,
     required this.sending,
     required this.emojiOpen,
+    required this.emojiVisible,
     required this.inset,
     required this.onEmoji,
     required this.onPickImage,
@@ -555,6 +632,7 @@ class _InputBar extends StatelessWidget {
   final FocusNode focus;
   final bool sending;
   final bool emojiOpen;
+  final bool emojiVisible;
   final double inset;
   final VoidCallback onEmoji;
   final VoidCallback onPickImage;
@@ -616,7 +694,7 @@ class _InputBar extends StatelessWidget {
               ),
             ),
           ),
-        EmojiKeyboardSlot(open: emojiOpen, height: inset, onPick: onPickEmoji),
+        EmojiKeyboardSlot(visible: emojiVisible, height: inset, onPick: onPickEmoji),
       ],
     );
     return InfChrome.of(context).edgePanel(context, child: ContentColumn(child: column));

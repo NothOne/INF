@@ -1,13 +1,19 @@
-import 'package:flutter_cache_manager/flutter_cache_manager.dart';
-
+import 'image_cache.dart';
 import 'image_url.dart';
 import 'native.dart';
 import 'prefs.dart';
 
-/// Downloads the full-size pictures of posts as they scroll into view, into the same disk cache
-/// the viewer reads from, so opening a picture decodes a local file instead of waiting on the
-/// network. The newest request goes first and the queue is short: a fast fling should spend the
-/// bandwidth on what the reader stopped at, not on everything that flew past.
+/// Warms the disk cache with the renditions a list is about to draw, so scrolling into a picture
+/// shows it from the file instead of waiting on the network.
+///
+/// It used to ask for each post's *original* — nine of them per grid, a megabyte or two each, for
+/// every post that went past — which is what made the cache grow without bound and, once a budget
+/// was in place, made it churn: download nine originals, trim the oldest nine away, repeat. What
+/// is prefetched now is the rendition the grid actually draws; the original is fetched when a
+/// picture is opened (`StatusImageGrid` starts it on the way down of the finger, the viewer for
+/// both sides of the page), by which time the preview is on disk and shows in the same frame.
+/// The newest request goes first and the queue is short: a fast fling should spend the bandwidth
+/// on what the reader stopped at, not on everything that flew past.
 class ImagePrefetcher {
   ImagePrefetcher._();
   static final ImagePrefetcher instance = ImagePrefetcher._();
@@ -73,9 +79,12 @@ class ImagePrefetcher {
     if (!_requested.add(url)) return;
     if (_requested.length > _rememberLimit) _requested.remove(_requested.first);
     try {
-      await DefaultCacheManager().getSingleFile(url, headers: weiboImageHeaders(url));
+      await InfImageCache.manager.getSingleFile(url, headers: weiboImageHeaders(url));
     } catch (_) {
       _requested.remove(url);
     }
+    // A prefetch run is when the cache grows fastest, so this is where the budget is enforced. It
+    // is throttled inside, so a run of hundreds of pictures still holds exactly one reading.
+    await InfImageCache.instance.sweep();
   }
 }

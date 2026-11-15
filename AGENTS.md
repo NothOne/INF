@@ -51,7 +51,9 @@ Flutter SDK 在工作区外（`../.tools/flutter`），运行时要写它的 `bi
 | 打开页面 | 在 `navigation.dart` 加 `openXxx(context, …)`，其他地方只调它，不直接 `Navigator.push` |
 | 风格相关的视觉 | 用 `InfChrome.of(context)` / `InfLook.of(context)`，不读 `Prefs.visualStyle`，不自己判断 `glass`。液态玻璃的档位用 `InfLook.liquidUltra` / `glassQualityOf` / `glassIsPremium`，不读 `Prefs.liquidTier` |
 | 模糊 | 用 `FadeSafeBackdrop`，不直接用 `BackdropFilter`（淡入淡出时会变灰） |
-| 网络图片 / WebView | `SmartImage` / `Avatar` / `InfWebView`，不用 `Image.network` 或裸 `WebView` |
+| 网络图片 / WebView | `SmartImage` / `Avatar` / `InfWebView`，不用 `Image.network` 或裸 `WebView`；磁盘缓存一律经 `InfImageCache.manager`，不用 `DefaultCacheManager()` |
+| 临时文件（存图、分享、下载、草稿原图） | `TempFiles.file()` / `DraftFiles.add()`，用完 `delete`；不要自己往 `getTemporaryDirectory()` 写 |
+| 表情 | 不是缓存，别当缓存清：映射在 `Prefs.emojis`，图片在 `libCachedImageData` 且被 `InfImageCache` 永久豁免。新增来源也要走 `EmojiStore.learn` |
 | 震动 | 只用 `Haptic.xxx.play()` / `HapticThreshold` |
 | 动画时长、曲线 | 用 `InfMotion` 常量 |
 | 按宽度调整布局 | 只用 `WindowClass.of(context)` 和 `contentGutter` / `ContentColumn` / `ContentBar` |

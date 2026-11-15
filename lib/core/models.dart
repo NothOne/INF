@@ -418,6 +418,32 @@ class ChatTarget {
   const ChatTarget(this.id, this.isGroup);
 }
 
+/// What is known about a group chat's own page.
+///
+/// m.weibo.cn has no group description endpoint and no member list — every candidate path was tried
+/// on a real account and answered 404 or an empty page (see `WeiboApi.groupSpeakers`). The name and
+/// the member count ride in the title of every message page, `群名(828)`, and that is the whole of
+/// what the service tells us about a group itself.
+class GroupInfo {
+  final String gid;
+  final String name;
+
+  /// The member count the title carries, or 0 when it did not have one.
+  final int memberCount;
+
+  const GroupInfo({required this.gid, required this.name, this.memberCount = 0});
+}
+
+/// A group chat's name and member count, as its title spells them: `群名(123)`.
+///
+/// m.weibo.cn puts the count in the title rather than in a field, and the parentheses are part of the
+/// name when the name itself ends in one — so only a trailing `(digits)` is taken off.
+({String name, int count}) splitGroupTitle(String title) {
+  final match = RegExp(r'^(.*)\((\d+)\)\s*$').firstMatch(title.trim());
+  if (match == null) return (name: title.trim(), count: 0);
+  return (name: match.group(1)!, count: int.tryParse(match.group(2)!) ?? 0);
+}
+
 class UnreadCounts {
   final int mentionsInStatuses;
   final int mentionsInComments;

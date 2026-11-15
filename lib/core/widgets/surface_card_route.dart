@@ -37,10 +37,10 @@ Future<T?> showSurfaceCard<T>(
 }) {
   final box = anchor.findRenderObject();
   if (box is! RenderBox || !box.hasSize) return Future.value();
-  final origin = box.localToGlobal(Offset.zero) & box.size;
   return Navigator.of(anchor).push<T>(
     SurfaceCardRoute<T>(
-      origin: origin,
+      anchor: anchor,
+      origin: box.localToGlobal(Offset.zero) & box.size,
       radius: radius,
       originRadius: originRadius,
       surface: InfChrome.of(context).typingSheet,
@@ -67,15 +67,32 @@ double panelWidthFor(Size room) {
 /// The route behind [showSurfaceCard].
 class SurfaceCardRoute<T> extends PopupRoute<T> {
   SurfaceCardRoute({
-    required this.origin,
+    required this.anchor,
+    required Rect origin,
     required this.builder,
     required this.surface,
     required this.radius,
     this.originRadius = 16,
-  });
+  }) : _openedAt = origin;
 
-  /// The widget that was tapped, in global coordinates: the panel grows from here and returns here.
-  final Rect origin;
+  /// The control the panel came from.
+  ///
+  /// Kept as a context, not only as the rectangle it had at the tap, because that rectangle moves
+  /// while the panel is open: a comment bar sits above the keyboard when the panel opens and back on
+  /// the foot of the screen once the keys are gone. Returning to the old rectangle would carry the
+  /// panel *up* off the bottom edge and stop it in the middle of the page, instead of folding it down
+  /// into the bar it belongs to.
+  final BuildContext anchor;
+
+  /// Where [anchor] is now; where it was at the tap if it has left the tree.
+  Rect get origin {
+    final box = anchor.mounted ? anchor.findRenderObject() : null;
+    if (box is RenderBox && box.hasSize) return box.localToGlobal(Offset.zero) & box.size;
+    return _openedAt;
+  }
+
+  /// The rectangle [anchor] had when the panel opened.
+  final Rect _openedAt;
 
   /// What the panel is made of, per style.
   final SurfaceCardSurface surface;
@@ -108,30 +125,43 @@ class SurfaceCardRoute<T> extends PopupRoute<T> {
       _SurfaceCardPage<T>(route: this, animation: animation);
 }
 
-class _SurfaceCardPage<T> extends StatelessWidget {
+class _SurfaceCardPage<T> extends StatefulWidget {
   const _SurfaceCardPage({required this.route, required this.animation});
 
   final SurfaceCardRoute<T> route;
   final Animation<double> animation;
 
   @override
+  State<_SurfaceCardPage<T>> createState() => _SurfaceCardPageState<T>();
+}
+
+class _SurfaceCardPageState<T> extends State<_SurfaceCardPage<T>> {
+  @override
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
     return AnimatedBuilder(
-      animation: animation,
+      animation: widget.animation,
       builder: (context, _) => LayoutBuilder(
         builder: (context, constraints) {
-          final room = constraints.biggest;
+          // The room the panel has above the keyboard. `constraints` is the whole overlay — the
+          // keyboard does not shrink it — so taking the inset out here is what keeps the panel from
+          // being laid out under the keys: at full height it rests against the bottom of the
+          // *screen*, which is exactly where the keyboard is, and the field it exists for is
+          // covered by it.
+          final room = Size(
+            constraints.maxWidth,
+            (constraints.maxHeight - media.viewInsets.bottom).clamp(0.0, constraints.maxHeight),
+          );
           return _TravellingPanel(
-            origin: route.origin,
-            progress: animation.value,
-            originRadius: route.originRadius,
+            origin: widget.route.origin,
+            progress: widget.animation.value,
+            originRadius: widget.route.originRadius,
             width: panelWidthFor(room),
             room: room,
             safe: media.padding,
-            radius: route.radius,
-            surface: route.surface,
-            child: route.builder(context),
+            radius: widget.route.radius,
+            surface: widget.route.surface,
+            child: widget.route.builder(context),
           );
         },
       ),
@@ -166,7 +196,10 @@ class _TravellingPanel extends StatefulWidget {
   final double progress;
   final double originRadius;
   final double width;
+
+  /// The room the panel has, with the keyboard taken out of it.
   final Size room;
+
   final EdgeInsets safe;
   final BorderRadius radius;
   final SurfaceCardSurface surface;
@@ -217,12 +250,24 @@ class _TravellingPanelState extends State<_TravellingPanel> {
             borderRadius: widget.radius,
             clipBehavior: Clip.antiAlias,
             child: OverflowBox(
-              alignment: Alignment.topCenter,
+              // Anchored at the bottom: the panel's foot is what the reader is working with (the
+              // field, the row of buttons, the board), so when the panel is taller than the room it
+              // has, the part that goes is the top — the quoted line — not the board.
+              alignment: Alignment.bottomCenter,
               minWidth: widget.width,
               maxWidth: widget.width,
-              minHeight: height,
-              maxHeight: height,
-              child: widget.surface(context, radius: widget.radius, child: widget.child),
+              // No height limit, so the panel is laid out at its natural height and the clip above
+              // decides how much of it shows. A fixed height here would hold the panel at whatever
+              // it measured the first time, and a board opening under it would have nowhere to
+              // appear — that is what left the emoji picker with no room to draw in.
+              minHeight: 0,
+              maxHeight: double.infinity,
+              // Measured on every layout, not only the first: the board changes the panel's height
+              // while the panel is already open.
+              child: _Measured(
+                onHeight: _recordHeight,
+                child: widget.surface(context, radius: widget.radius, child: widget.child),
+              ),
             ),
           ),
         ),
@@ -250,12 +295,20 @@ class _TravellingPanelState extends State<_TravellingPanel> {
     });
   }
 
-  /// Where the panel rests: centred across the room, and against the bottom of it so the keyboard
-  /// decides how high it sits rather than covering it. It never climbs past the top of the room.
+  /// Where the panel rests: centred across the room, its foot on the bottom of it.
+  ///
+  /// The panel's foot is the bottom of the room, and the room already excludes the keyboard. The
+  /// board is what keeps the field still when the keys go away: it is exactly as tall as they were,
+  /// so the panel's foot follows the room down and its top — the field — stays on its line (see
+  /// `EmojiKeyboard.boardHeight`).
+  ///
+  /// When the panel is taller than the room it has, it is cut to the room rather than pushed up past
+  /// the top edge, which would have put its foot — the board — off the bottom of the screen.
   Rect _rest(double height) {
     final left = (widget.room.width - widget.width) / 2;
-    final top = (widget.room.height - height).clamp(widget.safe.top + 8, widget.room.height);
-    return Rect.fromLTWH(left, top, widget.width, height);
+    final available = (widget.room.height - widget.safe.top - 8).clamp(0.0, widget.room.height);
+    final fitted = math.min(height, available);
+    return Rect.fromLTWH(left, widget.room.height - fitted, widget.width, fitted);
   }
 }
 

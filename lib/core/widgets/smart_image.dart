@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../image_cache.dart';
 import '../image_url.dart';
 
 /// Shares the in-memory cache with [SmartImage], so resolving it for a picture already on screen
@@ -17,6 +18,7 @@ CachedNetworkImageProvider _provider(String url) {
     url,
     headers: weiboImageHeaders(url),
     cacheKey: identity == url ? null : identity,
+    cacheManager: InfImageCache.manager,
   );
 }
 

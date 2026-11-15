@@ -64,6 +64,21 @@ enum ImagePreload {
   const ImagePreload(this.label);
 }
 
+/// How much disk the picture cache may take, trimmed oldest first once it goes over.
+enum ImageCacheLimit {
+  small('200 MB', 200 << 20),
+  medium('500 MB', 500 << 20),
+  large('1 GB', 1 << 30),
+  huge('2 GB', 2 << 30),
+  none('不清理', null);
+
+  final String label;
+
+  /// The budget in bytes, or null when the cache is never trimmed.
+  final int? bytes;
+  const ImageCacheLimit(this.label, this.bytes);
+}
+
 /// Which layout the shell uses; [auto] goes by the width of the window (see `WindowClass`).
 enum DeviceLayout {
   auto('自动', '窗口够宽时（平板、横屏、折叠屏展开）换成侧边导航和居中的内容列'),
@@ -238,6 +253,18 @@ class Prefs extends ChangeNotifier {
 
   Future<void> setImagePreload(ImagePreload value) async {
     await _prefs.setString('image_preload', value.name);
+    notifyListeners();
+  }
+
+  /// The picture cache's byte budget. Defaults to 500 MB: enough that the pictures a session
+  /// shows stay, small enough that a month of scrolling does not become a gigabyte.
+  ImageCacheLimit get imageCacheLimit {
+    final value = _prefs.getString('image_cache_limit');
+    return ImageCacheLimit.values.where((limit) => limit.name == value).firstOrNull ?? ImageCacheLimit.medium;
+  }
+
+  Future<void> setImageCacheLimit(ImageCacheLimit value) async {
+    await _prefs.setString('image_cache_limit', value.name);
     notifyListeners();
   }
 

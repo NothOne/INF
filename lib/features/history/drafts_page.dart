@@ -10,6 +10,7 @@ import '../../core/models.dart';
 import '../../core/navigation.dart';
 import '../../core/parse.dart';
 import '../../core/prefs.dart';
+import '../../core/temp_files.dart';
 import '../../core/widgets/common.dart';
 
 class DraftsPage extends StatefulWidget {
@@ -41,6 +42,7 @@ class _DraftsPageState extends State<DraftsPage> {
       }
       final drafts = Prefs.instance.drafts.where((d) => d.id != draft.id).toList();
       await Prefs.instance.saveDrafts(drafts);
+      await DraftFiles.delete(draft.images);
       Haptic.success.play();
       if (mounted) showMessage(context, '已发送');
     } catch (error) {
@@ -75,6 +77,7 @@ class _DraftsPageState extends State<DraftsPage> {
     if (confirmed != true) return;
     final drafts = Prefs.instance.drafts.where((d) => d.id != draft.id).toList();
     await Prefs.instance.saveDrafts(drafts);
+    await DraftFiles.delete(draft.images);
   }
 
   @override

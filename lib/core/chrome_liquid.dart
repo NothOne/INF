@@ -5,7 +5,47 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
 import 'liquid_glass.dart';
 import 'look.dart' hide GlassSheet;
 
-/// Liquid glass, drawn by `liquid_glass_widgets`: floating controls and sheets are its glass, under/// the theme the sliders set (see [liquidGlassTheme]). Top bars, edge panels and the page behind
+/// Wraps every glass surface this style draws.
+///
+/// While [GlassQuiet] says the page is being animated by a route transition, the surface is drawn
+/// as flat colour instead: the glass would read the empty backdrop of the translucent layer the
+/// transition puts the page in and come out as black blocks. See [GlassQuiet] for why stepping the
+/// quality down is not enough.
+///
+/// The flat version keeps the same size, shape and content, so nothing moves when the transition
+/// ends and the glass comes back.
+Widget _glass(
+  BuildContext context, {
+  required Widget child,
+  BorderRadius? radius,
+  double? height,
+  Color? fill,
+  EdgeInsetsGeometry? padding,
+}) {
+  if (GlassQuiet.of(context)) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      height: height,
+      padding: padding,
+      decoration: BoxDecoration(
+        color: fill ?? scheme.surfaceContainerHigh,
+        borderRadius: radius,
+      ),
+      child: child,
+    );
+  }
+  return GlassContainer(
+    useOwnLayer: true,
+    quality: glassQualityOf(InfLook.of(context)),
+    height: height,
+    padding: padding,
+    shape: LiquidRoundedSuperellipse(borderRadius: radius?.topLeft.x ?? 16),
+    child: child,
+  );
+}
+
+/// Liquid glass, drawn by `liquid_glass_widgets`: floating controls and sheets are its glass, under
+/// the theme the sliders set (see [liquidGlassTheme]). Top bars, edge panels and the page behind
 /// are the plain page colour: no frost, no veil, nothing tinted for glass to pick up.
 class LiquidChrome extends GlassChrome {
   const LiquidChrome();
@@ -30,25 +70,25 @@ class LiquidChrome extends GlassChrome {
   @override
   List<Widget> barActions(BuildContext context, List<Widget> actions) {
     if (actions.isEmpty) return const [SizedBox(width: 4)];
-    final quality = glassQualityOf(InfLook.of(context));
     return [
       Center(
-        child: GlassContainer(
-          useOwnLayer: true,
-          quality: quality,
+        child: _glass(
+          context,
           height: _barControl,
-          shape: const LiquidRoundedSuperellipse(borderRadius: _barControl / 2),
-          padding: const EdgeInsets.symmetric(horizontal: 2),
-          child: IconButtonTheme(
-            data: IconButtonThemeData(
-              style: IconButton.styleFrom(
-                minimumSize: const Size.square(_barControl),
-                padding: EdgeInsets.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                iconSize: 21,
+          radius: BorderRadius.circular(_barControl / 2),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: IconButtonTheme(
+              data: IconButtonThemeData(
+                style: IconButton.styleFrom(
+                  minimumSize: const Size.square(_barControl),
+                  padding: EdgeInsets.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  iconSize: 21,
+                ),
               ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: actions),
             ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: actions),
           ),
         ),
       ),
@@ -68,11 +108,10 @@ class LiquidChrome extends GlassChrome {
     final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 3, 12, InfChrome.barTabsHeight - height - 3),
-      child: GlassContainer(
-        useOwnLayer: true,
-        quality: glassQualityOf(InfLook.of(context)),
+      child: _glass(
+        context,
         height: height,
-        shape: const LiquidRoundedSuperellipse(borderRadius: height / 2),
+        radius: BorderRadius.circular(height / 2),
         child: TabBar(
           controller: controller,
           indicatorSize: TabBarIndicatorSize.tab,
@@ -99,12 +138,7 @@ class LiquidChrome extends GlassChrome {
 
   @override
   Widget floatingPanel(BuildContext context, {required BorderRadius radius, required Widget child, double body = 0}) =>
-      GlassContainer(
-        useOwnLayer: true,
-        quality: glassQualityOf(InfLook.of(context)),
-        shape: LiquidRoundedSuperellipse(borderRadius: radius.topLeft.x),
-        child: child,
-      );
+      _glass(context, radius: radius, child: child);
 
   /// Glass with the accent as its icon, as iOS 26 draws a compose button: the colour marks the
   /// action without flooding a disc of it over the page. The tint carries only enough of it to keep
@@ -122,14 +156,25 @@ class LiquidChrome extends GlassChrome {
       child: Builder(
         builder: (buttonContext) => Tooltip(
           message: tooltip,
-          child: GlassButton(
-            useOwnLayer: true,
-            quality: glassQualityOf(InfLook.of(context)),
-            icon: icon,
-            iconSize: 26,
-            iconColor: scheme.primary,
-            onTap: () => onPressed(buttonContext),
-          ),
+          child: GlassQuiet.of(context)
+              // A route is animating: a filled disc, sized like the button it stands in for.
+              ? RawMaterialButton(
+                  onPressed: () => onPressed(buttonContext),
+                  shape: const CircleBorder(),
+                  fillColor: floatingButtonTint(context),
+                  child: Padding(
+                    padding: const EdgeInsets.all(13),
+                    child: IconTheme(data: IconThemeData(color: scheme.primary, size: 26), child: icon),
+                  ),
+                )
+              : GlassButton(
+                  useOwnLayer: true,
+                  quality: glassQualityOf(InfLook.of(context)),
+                  icon: icon,
+                  iconSize: 26,
+                  iconColor: scheme.primary,
+                  onTap: () => onPressed(buttonContext),
+                ),
         ),
       ),
     );
@@ -150,6 +195,17 @@ class LiquidChrome extends GlassChrome {
   /// 0.32 at the solid end, 0.10 at the clear one.
   @override
   Widget floatingCapsule(BuildContext context, {required Widget child, VoidCallback? onTap}) {
+    if (GlassQuiet.of(context)) {
+      return Material(
+        color: floatingCapsuleInk(context).withValues(alpha: 0.12),
+        shape: const StadiumBorder(),
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          onTap: onTap,
+          child: child,
+        ),
+      );
+    }
     return GlassButton.custom(
       useOwnLayer: true,
       quality: glassQualityOf(InfLook.of(context)),
@@ -171,11 +227,13 @@ class LiquidChrome extends GlassChrome {
       padding: EdgeInsets.zero,
       content: LiquidGlassTheme(
         tint: tint.withValues(alpha: 0.78),
-        child: GlassContainer(
-          useOwnLayer: true,
-          quality: glassQualityOf(InfLook.of(context)),
-          shape: const LiquidRoundedSuperellipse(borderRadius: 16),
+        child: _glass(
+          context,
+          radius: BorderRadius.circular(16),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          // A snackbar's fill is not the surface colour: it is dark in both appearances so white
+          // text reads on it.
+          fill: tint,
           child: DefaultTextStyle(
             style: const TextStyle(color: Colors.white, fontSize: 14),
             child: content,
@@ -267,15 +325,22 @@ class _LiquidBarFrostState extends State<_LiquidBarFrost> {
       tween: Tween<double>(end: _scrolledUnder ? 1.0 : 0.0),
       duration: const Duration(milliseconds: 260),
       curve: Curves.easeOut,
-      builder: (context, t, _) => GlassSurface(
-        // Nothing under the bar, nothing to frost: the page shows through untouched.
-        strength: t,
-        tint: engaged,
-        rimSides: Border(
-          bottom: BorderSide(color: scheme.onSurface.withValues(alpha: 0.06 * t), width: 0.6),
-        ),
-        child: const SizedBox.expand(),
-      ),
+      builder: (context, t, _) {
+        // A route is animating: a flat pane, for the same reason the other glass steps aside — a
+        // blur layer inside the transition's translucent layer reads an empty backdrop.
+        if (GlassQuiet.of(context)) {
+          return ColoredBox(color: engaged.withValues(alpha: engaged.a * t), child: const SizedBox.expand());
+        }
+        return GlassSurface(
+          // Nothing under the bar, nothing to frost: the page shows through untouched.
+          strength: t,
+          tint: engaged,
+          rimSides: Border(
+            bottom: BorderSide(color: scheme.onSurface.withValues(alpha: 0.06 * t), width: 0.6),
+          ),
+          child: const SizedBox.expand(),
+        );
+      },
     );
   }
 }
@@ -289,15 +354,30 @@ class _BarRoundButton extends StatelessWidget {
   final String tooltip;
 
   @override
-  Widget build(BuildContext context) => GlassButton(
-        useOwnLayer: true,
-        quality: glassQualityOf(InfLook.of(context)),
-        label: tooltip,
-        width: _barControl,
-        height: _barControl,
-        iconSize: 21,
-        iconColor: Theme.of(context).colorScheme.onSurface,
-        icon: Icon(icon),
-        onTap: () => Navigator.maybePop(context),
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    if (GlassQuiet.of(context)) {
+      return IconButton(
+        onPressed: () => Navigator.maybePop(context),
+        tooltip: tooltip,
+        icon: Icon(icon, size: 21, color: scheme.onSurface),
+        style: IconButton.styleFrom(
+          backgroundColor: scheme.surfaceContainerHigh,
+          shape: const CircleBorder(),
+          minimumSize: const Size.square(_barControl),
+        ),
       );
+    }
+    return GlassButton(
+      useOwnLayer: true,
+      quality: glassQualityOf(InfLook.of(context)),
+      label: tooltip,
+      width: _barControl,
+      height: _barControl,
+      iconSize: 21,
+      iconColor: scheme.onSurface,
+      icon: Icon(icon),
+      onTap: () => Navigator.maybePop(context),
+    );
+  }
 }

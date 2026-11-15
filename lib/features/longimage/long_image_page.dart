@@ -1,13 +1,12 @@
-import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../core/look.dart';
 import '../../core/models.dart';
 import '../../core/share.dart';
+import '../../core/temp_files.dart';
 import '../../core/widgets/app_logo.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/status_card.dart';
@@ -35,10 +34,10 @@ class _LongImagePageState extends State<LongImagePage> {
       final image = await boundary.toImage(pixelRatio: 2.2);
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
       if (data == null) throw StateError('no png');
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/inf-long-${DateTime.now().millisecondsSinceEpoch}.png');
+      final file = await TempFiles.file('inf-long-${DateTime.now().millisecondsSinceEpoch}.png');
       await file.writeAsBytes(data.buffer.asUint8List());
       await shareFile(file.path, mime: 'image/png');
+      await TempFiles.delete(file.path);
     } catch (_) {
       if (mounted) showMessage(context, '长图生成失败');
     } finally {

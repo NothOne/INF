@@ -1168,14 +1168,7 @@ DirectMessage? _toMessage(Map<String, dynamic> msg, {Map<String, User>? users}) 
 List<DirectMessage> parseGroupChat(dynamic data) {
   final root = asMap(data);
   if (root == null) return const [];
-  final users = <String, User>{};
-  final usersJson = asMap(root['users']);
-  if (usersJson != null) {
-    for (final entry in usersJson.entries) {
-      final user = toUser(entry.value);
-      if (user != null) users[user.id.isEmpty ? entry.key : user.id] = user;
-    }
-  }
+  final users = parseGroupUsers(data);
   final messages = <DirectMessage>[];
   for (final element in asList(root['msgs'])) {
     final msg = asMap(element);
@@ -1185,6 +1178,27 @@ List<DirectMessage> parseGroupChat(dynamic data) {
   }
   messages.sort((a, b) => b.createdAt.compareTo(a.createdAt));
   return messages;
+}
+
+/// The senders on one page of a group chat, by id.
+///
+/// This is the only view of a group's membership m.weibo.cn gives: the page's `users` map holds the
+/// people who sent the messages in `msgs`, and the service has no member list at all.
+Map<String, User> parseGroupUsers(dynamic data) {
+  final users = <String, User>{};
+  final usersJson = asMap(asMap(data)?['users']);
+  if (usersJson == null) return users;
+  for (final entry in usersJson.entries) {
+    final user = toUser(entry.value);
+    if (user != null) users[user.id.isEmpty ? entry.key : user.id] = user;
+  }
+  return users;
+}
+
+/// The group's title, which is where m.weibo.cn keeps its name and member count.
+String? groupTitle(dynamic data) {
+  final title = textOf(asMap(asMap(data)?['data'])?['title']) ?? textOf(asMap(data)?['title']);
+  return (title == null || title.isEmpty) ? null : title;
 }
 
 UnreadCounts parseUnread(dynamic data) {

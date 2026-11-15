@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -9,97 +10,153 @@ import '../../core/models.dart';
 import '../../core/widgets/avatar.dart';
 import '../../core/widgets/smart_image.dart';
 
-/// Keeps the emoji panel in the keyboard's rectangle instead of stacking it above the keys.
+/// The keys and the emoji board, and the handover between them.
 ///
-/// While the panel is closed, [heightFor] is the live keyboard inset. Opening dismisses the
-/// keyboard and holds that height, so the composer does not jump. Closing asks for the keyboard
-/// again and keeps the gap until the inset arrives.
+/// The board is exactly as tall as the space the keys are *not* using, frame by frame: nothing while
+/// they are up, and what they give up as they leave. That is the whole of what keeps a composer
+/// still. The keys take a couple of hundred milliseconds to go, and on every frame of that the board
+/// grows by the height they just lost, so the row above it — the field, the buttons — keeps its line
+/// from the first frame to the last. Measuring the board once and holding it at the keyboard's height
+/// instead made the field jump by the whole keyboard and slide back down.
+///
+/// Both shapes of composer get that from here: a panel that the router has already raised above the
+/// keys asks for [boardHeight], and a bar pinned to the foot of the screen asks for [insetFor], which
+/// is the same number plus the keys the panel was already clear of.
 class EmojiKeyboard extends ChangeNotifier {
+  /// Whether the board is showing.
   bool open = false;
-  double _keyboard = 0;
-  bool _awaitingKeyboard = false;
-  Timer? _timer;
 
-  double heightFor(BuildContext context) {
-    final inset = MediaQuery.viewInsetsOf(context).bottom;
-    if (!open && inset > _keyboard) _keyboard = inset;
-    if (_awaitingKeyboard && inset > 80) {
-      _awaitingKeyboard = false;
-      _timer?.cancel();
-    }
-    final panel = _keyboard > 120 ? _keyboard : 280.0;
-    if (open || _awaitingKeyboard) return panel;
-    return inset;
+  /// The tallest the keys have been seen, which is how tall the board ends up.
+  double _keys = 0;
+
+  /// The last inset read, so a keyboard still on its way is told apart from one that has arrived.
+  double _inset = 0;
+
+  /// Set while the board is handing its space back to the keys, which are on their way up. The board
+  /// stays, shrinking, until they are back at the height it is giving up.
+  double? _handingBack;
+
+  Timer? _handover;
+
+  /// The board's full height. A keyboard under 120 is a hardware keyboard or a phone that has not
+  /// shown one yet, so the board falls back to a sensible size of its own.
+  double get _keysHeight => _keys > 120 ? _keys : 280;
+
+  void _note(double inset) {
+    if (inset > _keys) _keys = inset;
+    if (inset == _inset) return;
+    _inset = inset;
+    // The keys are still moving; the handover is over only when they stop.
+    if (_handingBack != null) _arm();
   }
 
-  void toggle(BuildContext context, FocusNode focus) {
-    if (open) {
-      _awaitingKeyboard = true;
-      open = false;
-      focus.requestFocus();
-      _armFallback();
-      notifyListeners();
-      return;
-    }
+  /// The height the board needs right now: what the keys have given up. Zero while the keys are up
+  /// and the board is shut, so a panel that is already above the keys holds nothing for a board that
+  /// is not there.
+  double boardHeight(BuildContext context) {
     final inset = MediaQuery.viewInsetsOf(context).bottom;
-    if (inset > _keyboard) _keyboard = inset;
-    _awaitingKeyboard = false;
-    _timer?.cancel();
-    focus.unfocus();
-    open = true;
+    _note(inset);
+    // The keys are back at the height the board was holding for them: the swap is done. Nothing to
+    // notify about — this very build is already answering with the post-handover number.
+    if (_handingBack != null && inset >= _handingBack! - 1) _settled();
+    if (!open && _handingBack == null) return 0;
+    return math.max(0, _keysHeight - inset);
+  }
+
+  /// What a bar pinned to the foot of the screen leaves under itself: the keys while they are there,
+  /// the board while it is. Handing one to the other does not change this number, which is what keeps
+  /// the bar still through the swap.
+  double insetFor(BuildContext context) => MediaQuery.viewInsetsOf(context).bottom + boardHeight(context);
+
+  void toggle(BuildContext context, FocusNode focus) {
+    _note(MediaQuery.viewInsetsOf(context).bottom);
+    open = !open;
+    if (open) {
+      // The keys go away as the board arrives, so the board takes their place rather than stacking
+      // on top of them.
+      _settled();
+      focus.unfocus();
+    } else {
+      _takeKeysBack();
+      focus.requestFocus();
+    }
     notifyListeners();
   }
 
-  /// A tap in the field dismisses the panel and lets the keyboard take its place.
+  /// Whether the board should be drawn: while it is open, and while it is handing its space back to
+  /// the keys. Hiding it the instant the keyboard was asked for left a blank strip shrinking under
+  /// the composer until the keys arrived.
+  bool get boardVisible => open || _handingBack != null;
+
+  /// A tap in the field dismisses the board and lets the keyboard take its place.
   void onFocusChanged(bool hasFocus) {
     if (!hasFocus || !open) return;
     open = false;
-    _awaitingKeyboard = true;
-    _armFallback();
+    _takeKeysBack();
     notifyListeners();
   }
 
-  void _armFallback() {
-    _timer?.cancel();
-    _timer = Timer(const Duration(milliseconds: 450), () {
-      if (!_awaitingKeyboard) return;
-      _awaitingKeyboard = false;
+  /// The board gives its space back to the keys, which are on their way up.
+  ///
+  /// The board is held at its full height until the first frame the keys are seen, so the composer
+  /// does not drop the keyboard's height and jump back up as they arrive.
+  void _takeKeysBack() {
+    _handingBack = _keysHeight;
+    _arm();
+  }
+
+  /// Ends the handover once the keys have not moved for longer than a keyboard takes to arrive.
+  ///
+  /// A keyboard that never comes — no soft keyboard, a field that refuses the focus — would
+  /// otherwise leave the composer standing above an empty strip for good, and a keyboard shorter
+  /// than the one being handed over would leave a gap the size of the difference.
+  void _arm() {
+    _handover?.cancel();
+    _handover = Timer(const Duration(milliseconds: 350), () {
+      if (_handingBack == null) return;
+      _settled();
       notifyListeners();
     });
   }
 
+  void _settled() {
+    _handingBack = null;
+    _handover?.cancel();
+    _handover = null;
+  }
+
   @override
   void dispose() {
-    _timer?.cancel();
+    _handover?.cancel();
     super.dispose();
   }
 }
 
-/// The strip under a composer: either empty space the size of the keyboard, or the emoji panel.
+/// The strip under a composer: the emoji panel, in the space the keys would take.
+///
+/// The height is always held, even when there is nothing to draw in it: a bar pinned to the foot of
+/// the screen is lifted clear of the keys by this strip, so it has to keep its size while the keys
+/// are up. [visible] outlives [open] by the handover back to the keys, so the board stays drawn while
+/// it shrinks and the keys rise over it, instead of the strip going blank halfway through.
 class EmojiKeyboardSlot extends StatelessWidget {
   const EmojiKeyboardSlot({
     super.key,
-    required this.open,
+    required this.visible,
     required this.height,
     this.onPick,
   });
 
-  final bool open;
+  final bool visible;
   final double height;
   final ValueChanged<String>? onPick;
 
   @override
   Widget build(BuildContext context) {
+    if (height <= 0) return const SizedBox.shrink();
+    if (!visible) return SizedBox(height: height);
     return SizedBox(
       height: height,
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 140),
-        switchInCurve: Curves.easeOut,
-        switchOutCurve: Curves.easeIn,
-        child: open
-            ? EmojiPanel(key: const ValueKey('emoji'), height: height, onPick: onPick)
-            : SizedBox(key: const ValueKey('keys'), height: height),
-      ),
+      child: EmojiPanel(key: const ValueKey('emoji'), height: height, onPick: onPick),
     );
   }
 }

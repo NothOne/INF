@@ -239,6 +239,100 @@ class _InfGlassQualityState extends State<InfGlassQuality> {
   }
 }
 
+/// Holds the glass inside it at [GlassQuality.standard] while the page it is on is moving — being
+/// pushed over, popped back to, or otherwise part of a route transition.
+///
+/// The same reason [GlassDuring] exists, for a page rather than a tab switch: premium glass draws
+/// through a compositing layer of its own and re-reads the backdrop every frame, and a route
+/// transition puts that layer inside a translucent one. The two do not agree frame by frame, so the
+/// glass comes out as black blocks for the length of the transition. Measured here: the settings
+/// page's liquid preview did exactly that on the way back into settings from a pushed page.
+///
+/// Nothing is drawn differently once the route has settled, which is most of a page's life: this
+/// listens to the route's own animation and only steps down while it runs.
+class GlassSettled extends StatefulWidget {
+  const GlassSettled({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  State<GlassSettled> createState() => _GlassSettledState();
+}
+
+class _GlassSettledState extends State<GlassSettled> {
+  ModalRoute<dynamic>? _route;
+  bool _moving = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (identical(route, _route)) return;
+    _route?.animation?.removeStatusListener(_statusChanged);
+    _route?.secondaryAnimation?.removeStatusListener(_statusChanged);
+    _route = route
+      ?..animation?.addStatusListener(_statusChanged)
+      ..secondaryAnimation?.addStatusListener(_statusChanged);
+    _moving = _readsMoving();
+  }
+
+  @override
+  void dispose() {
+    _route?.animation?.removeStatusListener(_statusChanged);
+    _route?.secondaryAnimation?.removeStatusListener(_statusChanged);
+    super.dispose();
+  }
+
+  /// Whether this page is part of a transition right now — either because it is being pushed or
+  /// popped itself ([ModalRoute.animation]), or because a page is being pushed over it or popped
+  /// off it ([ModalRoute.secondaryAnimation]).
+  ///
+  /// The second one is why this is not just `animation`: coming *back* to settings, the settings
+  /// page's own animation is already complete and stays that way — it is the page above it that
+  /// moves, and that is what puts the glass inside a fading layer.
+  bool _readsMoving() {
+    // `dismissed` is a route at rest as much as `completed` is: an animation only counts as moving
+    // while it is actually running.
+    bool moving(Animation<double>? animation) =>
+        animation != null &&
+        animation.status != AnimationStatus.completed &&
+        animation.status != AnimationStatus.dismissed;
+    return moving(_route?.animation) || moving(_route?.secondaryAnimation);
+  }
+
+  void _statusChanged(AnimationStatus status) {
+    final moving = _readsMoving();
+    if (moving != _moving && mounted) setState(() => _moving = moving);
+  }
+
+  @override
+  Widget build(BuildContext context) => GlassDuring(active: _moving, child: widget.child);
+}
+
+/// Tells the glass below that the page it is on is being animated by a route transition, so every
+/// glass surface should draw as flat colour for the length of it.
+///
+/// Not the same thing as [GlassSettled] / [GlassDuring]. Those step the quality down, which is
+/// enough when the culprit is a compositing layer of premium glass. This is for the case where the
+/// *page itself* is drawn through a translucent layer — a container transform wraps the whole page
+/// in `Opacity` and `ImageFiltered` — and there is no lower quality to step to: the glass reads the
+/// empty backdrop of that layer and comes out as black blocks, at standard as much as at premium.
+/// A flat fill is the only thing that cannot go wrong, and a page in the middle of a 450 ms growth
+/// is blurred and scaled anyway, so what it costs in looks is not visible.
+class GlassQuiet extends InheritedWidget {
+  const GlassQuiet({super.key, required this.quiet, required super.child});
+
+  /// Whether the glass below should be drawn as flat colour.
+  final bool quiet;
+
+  /// Whether some page around [context] is being animated right now.
+  static bool of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<GlassQuiet>()?.quiet ?? false;
+
+  @override
+  bool updateShouldNotify(GlassQuiet oldWidget) => oldWidget.quiet != quiet;
+}
+
 /// Holds the glass inside it at [GlassQuality.standard] while [active], for a change that redraws
 /// the glass every frame and cannot wait for it.
 ///

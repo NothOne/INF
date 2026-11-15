@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/api.dart';
@@ -16,6 +15,7 @@ import '../../core/native.dart';
 import '../../core/prefs.dart';
 import '../../core/session.dart';
 import '../../core/share.dart';
+import '../../core/temp_files.dart';
 import '../../core/touches.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/smart_image.dart';
@@ -286,10 +286,10 @@ class _VideoPageState extends State<VideoPage> with WidgetsBindingObserver {
       _downloading = true;
       _downloadProgress = 0;
     });
+    File? file;
     try {
-      final dir = await getTemporaryDirectory();
       final name = 'INF-video-${DateTime.now().millisecondsSinceEpoch}.mp4';
-      final file = File('${dir.path}/$name');
+      file = await TempFiles.file(name);
       final headers = <String, String>{
         'Referer': 'https://m.weibo.cn/',
         'User-Agent': Session.instance.userAgent,
@@ -319,6 +319,9 @@ class _VideoPageState extends State<VideoPage> with WidgetsBindingObserver {
       Haptic.error.play();
       if (mounted) showMessage(context, '下载失败，请稍后重试');
     } finally {
+      // The download exists for the gallery or the share sheet: tens of megabytes, and the cache
+      // is for pictures.
+      if (file != null) await TempFiles.delete(file.path);
       if (mounted) setState(() => _downloading = false);
     }
   }

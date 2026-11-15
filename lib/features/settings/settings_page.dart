@@ -1,17 +1,15 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
     show GlassButton, GlassContainer, LiquidRoundedSuperellipse;
-import 'package:path_provider/path_provider.dart';
 
 import '../../core/haptics.dart';
+import '../../core/image_cache.dart';
 import '../../core/layout.dart';
 import '../../core/liquid_glass.dart';
 import '../../core/look.dart';
 import '../../core/prefs.dart';
 import '../../core/motion.dart';
+import '../../core/temp_files.dart';
 import '../../core/theme.dart';
 import '../../core/version.dart';
 import '../../core/widgets/avatar.dart';
@@ -25,8 +23,13 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  int? _cacheBytes;
   bool _clearing = false;
+
+  /// What the picture cache takes now, shown next to its budget.
+  int? _imageBytes;
+
+  /// What sharing, saving, downloading and drafts have put in the scratch folders.
+  int? _tempBytes;
 
   @override
   void initState() {
@@ -34,20 +37,23 @@ class _SettingsPageState extends State<SettingsPage> {
     _measureCache();
   }
 
+  /// Everything the picture cache holds — it is one folder now, so this is the exact figure rather
+  /// than the whole cache directory. See `InfImageCache`.
   Future<void> _measureCache() async {
     try {
-      final dir = await getTemporaryDirectory();
-      var total = 0;
-      await for (final entity in dir.list(recursive: true, followLinks: false)) {
-        if (entity is File) {
-          try {
-            total += await entity.length();
-          } catch (_) {}
-        }
-      }
-      if (mounted) setState(() => _cacheBytes = total);
+      final image = await InfImageCache.instance.size();
+      final temp = await TempFiles.size();
+      if (!mounted) return;
+      setState(() {
+        _imageBytes = image;
+        _tempBytes = temp;
+      });
     } catch (_) {
-      if (mounted) setState(() => _cacheBytes = 0);
+      if (!mounted) return;
+      setState(() {
+        _imageBytes = 0;
+        _tempBytes = 0;
+      });
     }
   }
 
@@ -95,21 +101,67 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  /// The budget as a list rather than a segmented row: five labels do not fit across a phone, and
+  /// each one needs room for what it means for this reader.
+  void _showCacheLimit(BuildContext context) {
+    showActionSheet<void>(
+      context: context,
+      builder: (sheetContext) => AnimatedBuilder(
+        animation: Prefs.instance,
+        builder: (sheetContext, _) {
+          final current = Prefs.instance.imageCacheLimit;
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const ListTile(title: Text('图片缓存上限', style: TextStyle(fontWeight: FontWeight.w700))),
+                for (final limit in ImageCacheLimit.values)
+                  ListTile(
+                    title: Text(limit.label),
+                    trailing: limit == current ? const Icon(Icons.check_rounded) : null,
+                    onTap: () async {
+                      Haptic.selection.play();
+                      Navigator.pop(sheetContext);
+                      await Prefs.instance.setImageCacheLimit(limit);
+                      // Applied at once rather than at the next download, so dropping from 2 GB to
+                      // 200 MB frees the space while the reader is looking at the figure.
+                      await InfImageCache.instance.sweep(force: true);
+                      if (mounted) await _measureCache();
+                    },
+                  ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> _clearCache() async {
     setState(() => _clearing = true);
     try {
-      await DefaultCacheManager().emptyCache();
-      final dir = await getTemporaryDirectory();
-      await for (final entity in dir.list(recursive: false, followLinks: false)) {
-        final name = entity.path.split(Platform.pathSeparator).last;
-        if (name.startsWith('libCachedImageData') || name.startsWith('cache')) {
-          try {
-            await entity.delete(recursive: true);
-          } catch (_) {}
-        }
-      }
+      await InfImageCache.instance.clear();
       await _measureCache();
       if (mounted) showMessage(context, '图片缓存已清除');
+    } catch (_) {
+      if (mounted) showMessage(context, '清除失败，请稍后重试');
+    } finally {
+      if (mounted) setState(() => _clearing = false);
+    }
+  }
+
+  /// The copies saving, sharing, downloading and drafting left behind. Unlike the picture cache
+  /// these are not worth keeping: every one of them was made for a single use.
+  Future<void> _clearTemp() async {
+    setState(() => _clearing = true);
+    try {
+      await TempFiles.clear();
+      // Draft pictures belong to drafts that still exist, so only the orphans go; the count here
+      // is of the scratch folder alone.
+      await DraftFiles.sweep();
+      await _measureCache();
+      if (mounted) showMessage(context, '临时文件已清除');
     } catch (_) {
       if (mounted) showMessage(context, '清除失败，请稍后重试');
     } finally {
@@ -341,7 +393,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 const Divider(),
                 const _SectionTitle('存储'),
                 _ChoiceRow<ImagePreload>(
-                  title: '预加载大图',
+                  title: '预加载图片',
                   options: [for (final value in ImagePreload.values) (value, value.label)],
                   selected: prefs.imagePreload,
                   onSelect: prefs.setImagePreload,
@@ -349,15 +401,37 @@ class _SettingsPageState extends State<SettingsPage> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 7),
                   child: Text(
-                    '浏览时在后台下载正在看的微博的原图，点开时直接显示清晰大图',
+                    '浏览时提前下载列表里要显示的图片，滑动到的时候不用等。看图时才会下载原图',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
                   ),
                 ),
                 ListTile(
-                  title: const Text('图片缓存'),
-                  subtitle: Text(_cacheBytes == null ? '计算中…' : formatBytes(_cacheBytes!)),
+                  title: const Text('图片缓存上限'),
+                  subtitle: Text(
+                    prefs.imageCacheLimit == ImageCacheLimit.none
+                        ? '不自动清理，只受系统存储空间限制'
+                        : '存满 ${prefs.imageCacheLimit.label} 就删掉最久没看过的图片',
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => _showCacheLimit(context),
+                ),
+                ListTile(
+                  title: const Text('图片占用'),
+                  subtitle: Text(_imageBytes == null ? '计算中…' : formatBytes(_imageBytes!)),
                   trailing: TextButton(
                     onPressed: _clearing ? null : _clearCache,
+                    child: Text(_clearing ? '清除中…' : '清除'),
+                  ),
+                ),
+                ListTile(
+                  title: const Text('临时文件'),
+                  subtitle: Text(
+                    _tempBytes == null
+                        ? '计算中…'
+                        : '${formatBytes(_tempBytes!)} · 保存、分享、下载留下的副本，24 小时后自动清掉',
+                  ),
+                  trailing: TextButton(
+                    onPressed: _clearing ? null : _clearTemp,
                     child: Text(_clearing ? '清除中…' : '清除'),
                   ),
                 ),
@@ -550,7 +624,14 @@ class _LiquidTunerState extends State<_LiquidTuner> {
             // while the app itself is on standard; switching tiers rebuilds it in place.
             child: InfGlassQuality(
               look: look.copyWith(liquidTier: LiquidTier.ultra),
-              child: const LiquidGlassTheme(child: _LiquidPreview()),
+              // Inside the tier scope, not outside it: `resolveQuality` reads the *nearest*
+              // adaptive scope, so a cap above this one would be shadowed by the premium ceiling
+              // it establishes. Held at standard while the route moves — premium glass reads the
+              // backdrop through a layer of its own, and this page is faded in and out by the
+              // route transition, so the preview came out as black blocks until it ended.
+              child: GlassSettled(
+                child: const LiquidGlassTheme(child: _LiquidPreview()),
+              ),
             ),
           ),
           const SizedBox(height: 6),
