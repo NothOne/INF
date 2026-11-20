@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../../core/api.dart';
+import '../../core/comment_store.dart';
 import '../../core/haptics.dart';
 import '../../core/look.dart';
 import '../../core/models.dart';
@@ -15,24 +15,33 @@ import 'surface_card_route.dart';
 /// A comment is a panel of the page it answers, not a destination. It grows out of the control that
 /// opened it and goes back into it, the way a post's menu does — see [showSurfaceCard] — so the page
 /// behind stays visible around it and the reader can see where it came from.
+///
+/// [rootId] is the comment whose thread this reply belongs to; [commentId] is the comment being
+/// answered. For a reply to a top-level comment the two are the same, and only [commentId] is
+/// passed. They are only different when a reply to a reply is answered.
+///
+/// [countOnPost] is passed through to [CommentStore.send]: off where the caller only knows the
+/// post's id, so a count is not invented from a zero.
 Future<bool?> showCommentSheet(
   BuildContext context, {
   required BuildContext anchor,
-  required String statusId,
+  required Status status,
   String? commentId,
+  String? rootId,
   String? replyToName,
   String? replyToText,
-  Status? target,
+  bool countOnPost = true,
 }) {
   return showSurfaceCard<bool>(
     context,
     anchor: anchor,
     builder: (sheetContext) => CommentSheet(
-      statusId: statusId,
+      status: status,
       commentId: commentId,
+      rootId: rootId,
       replyToName: replyToName,
       replyToText: replyToText,
-      target: target,
+      countOnPost: countOnPost,
       onSent: () => Navigator.of(sheetContext).pop(true),
     ),
   );
@@ -41,19 +50,32 @@ Future<bool?> showCommentSheet(
 class CommentSheet extends StatefulWidget {
   const CommentSheet({
     super.key,
-    required this.statusId,
+    required this.status,
     required this.onSent,
     this.commentId,
+    this.rootId,
     this.replyToName,
     this.replyToText,
-    this.target,
+    this.countOnPost = true,
   });
 
-  final String statusId;
+  /// The post being commented on. Its id addresses the request, and its author and text are what
+  /// the panel quotes.
+  final Status status;
+
+  /// The comment being answered; null for a new comment on the post.
   final String? commentId;
+
+  /// The comment the thread hangs off, when this answers a reply rather than the top-level comment.
+  final String? rootId;
+
   final String? replyToName;
   final String? replyToText;
-  final Status? target;
+
+  /// Whether the post's comment count can be raised from what the caller knows. Off for a page that
+  /// has the post's id but not its counts.
+  final bool countOnPost;
+
   final VoidCallback onSent;
 
   @override
@@ -87,7 +109,6 @@ class _CommentSheetState extends State<CommentSheet> {
   /// Whether there is anything to send: words within the limit. A picture does not stand on its own —
   /// the endpoints take one, but a comment without words is not what either client offers.
   bool get _canSend => _text.text.trim().isNotEmpty && _length <= 140;
-
   @override
   void initState() {
     super.initState();
@@ -134,53 +155,39 @@ class _CommentSheetState extends State<CommentSheet> {
   }
 
   Future<void> _send() async {
-    final content = _text.text.trim();
     final picture = _picture;
     if (!_canSend || _sending) return;
     setState(() {
       _sending = true;
       _error = null;
     });
-    try {
-      // Uploaded as the comment is sent, not when it is picked: a picture the reader thought better
-      // of never reaches the service, and no id is left behind for a comment that was not made.
-      final picId = picture == null
-          ? null
-          : await WeiboApi.instance.uploadCommentImage(widget.statusId, File(picture));
-      if (_isReply) {
-        await WeiboApi.instance.reply(widget.statusId, widget.commentId!, content, picId: picId);
-      } else {
-        await WeiboApi.instance.comment(widget.statusId, content, picId: picId);
-      }
-      if (picture != null) await TempFiles.delete(picture);
-      if (!mounted) return;
-      Haptic.success.play();
-      final bar = infSnackBar(context, Text(_isReply ? '回复成功' : '评论成功'));
-      final messenger = ScaffoldMessenger.of(context);
-      widget.onSent();
-      messenger.showSnackBar(bar);
-    } catch (error) {
-      if (!mounted) return;
-      Haptic.error.play();
-      setState(() => _error = _failure(error));
-    } finally {
-      if (mounted) setState(() => _sending = false);
+    // The picture goes up as the comment is sent, not when it is picked: a picture the reader
+    // thought better of never reaches the service, and no id is left behind for a comment that was
+    // not made. That, and the two ids a reply needs, live in [CommentStore.send].
+    final crossPost = _crossPost && widget.commentId == null && picture == null;
+    final failure = await CommentStore.instance.send(
+      status: widget.status,
+      text: _text.text,
+      rootId: widget.commentId == null ? null : (widget.rootId ?? widget.commentId),
+      replyToId: widget.commentId,
+      replyToName: widget.replyToName,
+      picturePath: picture,
+      crossPost: crossPost,
+      countOnPost: widget.countOnPost,
+    );
+    if (!mounted) return;
+    if (failure != null) {
+      setState(() {
+        _sending = false;
+        _error = failure;
+      });
+      return;
     }
-  }
-
-  /// Why the comment did not go out.
-  ///
-  /// Pictures in a comment are a permission Weibo hands out to some accounts and not others. Nothing
-  /// in the response names that permission — a refused upload is what it looks like from here — so
-  /// the message says that is likely what happened rather than showing a bare "图片上传失败", which
-  /// reads as an app fault and invites a retry that will fail the same way.
-  String _failure(Object error) {
-    final message = error is ApiException ? error.message : '';
-    if (_picture != null) {
-      final refused = message.isEmpty || message.contains('图片上传失败') || message.contains('权限');
-      if (refused) return '这条评论没有发出去。发图片评论需要微博的权限，不是所有账号都有';
-    }
-    return message.isEmpty ? '发送失败' : message;
+    Haptic.success.play();
+    final bar = infSnackBar(context, Text(_isReply ? '回复成功' : (crossPost ? '已评论并转发' : '评论成功')));
+    final messenger = ScaffoldMessenger.of(context);
+    widget.onSent();
+    messenger.showSnackBar(bar);
   }
 
   /// Picks the picture for this comment, replacing any already attached.
@@ -196,7 +203,11 @@ class _CommentSheetState extends State<CommentSheet> {
       return;
     }
     final previous = _picture;
-    setState(() => _picture = file.path);
+    setState(() {
+      _picture = file.path;
+      // Repost endpoint cannot carry a picture, so attaching one turns off 同时转发 immediately.
+      _crossPost = false;
+    });
     if (previous != null) await TempFiles.delete(previous);
   }
 
@@ -332,8 +343,10 @@ class _CommentSheetState extends State<CommentSheet> {
                     ),
                     IconButton(
                       onPressed: () {
+                        final selection = _text.selection;
+                        final start = selection.isValid ? selection.start : _text.text.length;
                         _insert('##');
-                        _text.selection = TextSelection.collapsed(offset: _text.text.length - 1);
+                        _text.selection = TextSelection.collapsed(offset: start + 1);
                       },
                       iconSize: 20,
                       tooltip: '话题',
@@ -353,29 +366,34 @@ class _CommentSheetState extends State<CommentSheet> {
                       color: _picture == null ? null : scheme.primary,
                     ),
                     const SizedBox(width: 2),
-                    InkWell(
-                      borderRadius: BorderRadius.circular(8),
-                      onTap: () => setState(() => _crossPost = !_crossPost),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
-                        child: Row(
-                          children: [
-                            Icon(
-                              _crossPost ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
-                              size: 16,
-                              color: _crossPost ? scheme.primary : scheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '同时转发',
-                              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                    color: _crossPost ? scheme.primary : scheme.onSurfaceVariant,
-                                  ),
-                            ),
-                          ],
+                    // 同时转发 is only offered where it can be honoured: the repost endpoint is the
+                    // one that takes both, and it takes no picture, so a picture attached to the
+                    // comment turns the switch off rather than sending a comment that quietly did
+                    // not repost (which is what the ticked box used to do: nothing at all).
+                    if (!_isReply && _picture == null)
+                      InkWell(
+                        borderRadius: BorderRadius.circular(8),
+                        onTap: () => setState(() => _crossPost = !_crossPost),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
+                          child: Row(
+                            children: [
+                              Icon(
+                                _crossPost ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+                                size: 16,
+                                color: _crossPost ? scheme.primary : scheme.onSurfaceVariant,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '同时转发',
+                                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                      color: _crossPost ? scheme.primary : scheme.onSurfaceVariant,
+                                    ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
                     const Spacer(),
                     IconButton(
                       onPressed: () => Navigator.of(context).maybePop(),
@@ -408,11 +426,10 @@ class _CommentSheetState extends State<CommentSheet> {
     if (_isReply) {
       final name = widget.replyToName;
       final text = widget.replyToText;
-      if (text == null || text.isEmpty) return name == null ? null : '@${name}';
-      return (name == null ? text : '${name}：${text}').replaceAll('\n', ' ');
+      if (text == null || text.isEmpty) return name == null ? null : '@$name';
+      return (name == null ? text : '$name：$text').replaceAll('\n', ' ');
     }
-    final target = widget.target;
-    if (target == null) return null;
+    final target = widget.status;
     return '@${target.author.screenName}：${target.text}'.replaceAll('\n', ' ');
   }
 }

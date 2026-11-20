@@ -68,6 +68,10 @@ jobs:
 
       - run: flutter test
 
+      # CODE_MAP.md states a file count and lists every file; this fails when a refactor left it
+      # describing a tree that no longer exists.
+      - run: python3 tools/doc_facts.py --check
+
       - run: flutter build apk --release --target-platform android-arm64
 
       - name: Name the APK

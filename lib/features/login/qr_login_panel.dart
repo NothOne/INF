@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/api.dart';
+import '../../core/error_text.dart';
 import '../../core/haptics.dart';
 import '../../core/links.dart';
 import '../../core/look.dart';
@@ -83,7 +84,7 @@ class _QrLoginPanelState extends State<QrLoginPanel> with WidgetsBindingObserver
       setState(() => _qr = qr);
       _schedule();
     } catch (error) {
-      if (mounted) setState(() => _error = error is ApiException ? error.message : '二维码获取失败');
+      if (mounted) setState(() => _error = friendlyError(error));
     } finally {
       if (mounted) setState(() => _loading = false);
     }

@@ -170,7 +170,17 @@ class WeiboLink {
   final String url;
   final String label;
   final LinkKind kind;
-  const WeiboLink({required this.url, this.label = '', this.kind = LinkKind.web});
+
+  /// Pictures attached to a 「查看图片」 anchor when Weibo bundles more than one under a single link
+  /// (common in repost chains, where m.weibo.cn only leaves the first picture's address in `href`).
+  final List<Media> images;
+
+  const WeiboLink({
+    required this.url,
+    this.label = '',
+    this.kind = LinkKind.web,
+    this.images = const [],
+  });
 }
 
 /// The card under a post for anything that is not a picture, a video or an article: a vote, a web
@@ -258,6 +268,8 @@ class Status {
 
   Status copyWith({
     String? text,
+    List<Media>? media,
+    Status? repostOf,
     bool? liked,
     bool? favorited,
     int? likesCount,
@@ -273,8 +285,8 @@ class Status {
         text: text ?? this.text,
         createdAt: createdAt,
         source: source ?? this.source,
-        media: media,
-        repostOf: repostOf,
+        media: media ?? this.media,
+        repostOf: repostOf ?? this.repostOf,
         repostsCount: repostsCount ?? this.repostsCount,
         commentsCount: commentsCount ?? this.commentsCount,
         likesCount: likesCount ?? this.likesCount,
@@ -988,7 +1000,10 @@ String relationContainer(RelationKind kind, String uid, {bool self = false}) => 
 
 String likedContainer(String uid) => '230869${uid}_-_mix';
 
-enum DraftType { original, repost, comment, reply }
+/// What a draft is. Comments are not drafted: they are written in the panel and sent at once, and
+/// the two modes that used to exist here produced a second way to post a comment — one with its own
+/// word limit, no picture and no reply target — that nothing ever created.
+enum DraftType { original, repost }
 enum DraftState { editing, queued, sending, failed }
 
 class Draft {
@@ -996,8 +1011,6 @@ class Draft {
   final DraftType type;
   final String text;
   final String? statusId;
-  final String? commentId;
-  final String? replyToName;
   final List<String> images;
   final bool crossPost;
   final DraftState state;
@@ -1009,8 +1022,6 @@ class Draft {
     required this.type,
     this.text = '',
     this.statusId,
-    this.commentId,
-    this.replyToName,
     this.images = const [],
     this.crossPost = false,
     this.state = DraftState.editing,
@@ -1032,8 +1043,6 @@ class Draft {
         type: type,
         text: text ?? this.text,
         statusId: statusId,
-        commentId: commentId,
-        replyToName: replyToName,
         images: images ?? this.images,
         crossPost: crossPost ?? this.crossPost,
         state: state ?? this.state,
@@ -1048,8 +1057,6 @@ class Draft {
         'type': type.name,
         'text': text,
         'statusId': statusId,
-        'commentId': commentId,
-        'replyToName': replyToName,
         'images': images,
         'crossPost': crossPost,
         'state': state.name,
@@ -1062,8 +1069,6 @@ class Draft {
         type: DraftType.values.where((t) => t.name == json['type']).firstOrNull ?? DraftType.original,
         text: json['text'] as String? ?? '',
         statusId: json['statusId'] as String?,
-        commentId: json['commentId'] as String?,
-        replyToName: json['replyToName'] as String?,
         images: (json['images'] as List?)?.map((e) => e.toString()).toList() ?? const [],
         crossPost: json['crossPost'] == true,
         state: DraftState.values.where((s) => s.name == json['state']).firstOrNull ?? DraftState.editing,

@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:dio/dio.dart';
+import 'package:dio/dio.dart' show CancelToken;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/api.dart';
+import '../../core/error_text.dart';
 import '../../core/haptics.dart';
 import '../../core/image_url.dart';
 import '../../core/layout.dart';
@@ -55,6 +56,7 @@ class _VideoPageState extends State<VideoPage> with WidgetsBindingObserver {
   bool _pip = false;
   bool _pipAvailable = false;
   bool _downloading = false;
+  CancelToken? _downloadCancel;
   double _downloadProgress = 0;
   double _speed = 1;
   bool _boosting = false;
@@ -107,6 +109,7 @@ class _VideoPageState extends State<VideoPage> with WidgetsBindingObserver {
     _saveTimer?.cancel();
     _skipTimer?.cancel();
     _resumeTimer?.cancel();
+    _downloadCancel?.cancel();
     _controller.removeListener(_onTick);
     _controller.dispose();
     Native.keepScreenOn(false);
@@ -287,20 +290,15 @@ class _VideoPageState extends State<VideoPage> with WidgetsBindingObserver {
       _downloadProgress = 0;
     });
     File? file;
+    final cancel = CancelToken();
+    _downloadCancel = cancel;
     try {
       final name = 'INF-video-${DateTime.now().millisecondsSinceEpoch}.mp4';
       file = await TempFiles.file(name);
-      final headers = <String, String>{
-        'Referer': 'https://m.weibo.cn/',
-        'User-Agent': Session.instance.userAgent,
-      };
-      if (Session.instance.cookieHeader.isNotEmpty) {
-        headers['Cookie'] = Session.instance.cookieHeader;
-      }
-      await Dio().download(
+      await WeiboApi.instance.downloadMedia(
         _url,
         file.path,
-        options: Options(headers: headers, followRedirects: true),
+        cancelToken: cancel,
         onReceiveProgress: (received, total) {
           if (total > 0 && mounted) {
             setState(() => _downloadProgress = received / total);
@@ -315,10 +313,12 @@ class _VideoPageState extends State<VideoPage> with WidgetsBindingObserver {
       } else {
         await shareFile(file.path, mime: 'video/mp4');
       }
-    } catch (_) {
+    } catch (error) {
+      if (cancel.isCancelled) return;
       Haptic.error.play();
-      if (mounted) showMessage(context, '下载失败，请稍后重试');
+      if (mounted) showMessage(context, friendlyError(error));
     } finally {
+      if (identical(_downloadCancel, cancel)) _downloadCancel = null;
       // The download exists for the gallery or the share sheet: tens of megabytes, and the cache
       // is for pictures.
       if (file != null) await TempFiles.delete(file.path);
@@ -732,14 +732,14 @@ class _VideoPageState extends State<VideoPage> with WidgetsBindingObserver {
                                       PopupMenuItem(
                                         value: speed,
                                         child: Text(
-                                          '${speed}×',
+                                          '$speed×',
                                           style: TextStyle(color: speed == _speed ? Colors.amber : Colors.white),
                                         ),
                                       ),
                                   ],
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                                    child: Text('${_speed}×', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                                    child: Text('$_speed×', style: const TextStyle(color: Colors.white, fontSize: 12)),
                                   ),
                                 ),
                                 IconButton(

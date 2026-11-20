@@ -30,6 +30,42 @@
             "actions": [
               "action.system.home"
             ]
+          },
+          {
+            "entities": [
+              "entity.system.browsable"
+            ],
+            "actions": [
+              "ohos.want.action.viewData"
+            ],
+            "uris": [
+              {
+                "scheme": "inf",
+                "host": "open"
+              }
+            ]
+          },
+          {
+            "entities": [
+              "entity.system.browsable"
+            ],
+            "actions": [
+              "ohos.want.action.viewData"
+            ],
+            "uris": [
+              { "scheme": "https", "host": "m.weibo.cn" },
+              { "scheme": "http", "host": "m.weibo.cn" },
+              { "scheme": "https", "host": "weibo.cn" },
+              { "scheme": "http", "host": "weibo.cn" },
+              { "scheme": "https", "host": "weibo.com" },
+              { "scheme": "http", "host": "weibo.com" },
+              { "scheme": "https", "host": "www.weibo.com" },
+              { "scheme": "http", "host": "www.weibo.com" },
+              { "scheme": "https", "host": "m.weibo.com" },
+              { "scheme": "http", "host": "m.weibo.com" },
+              { "scheme": "https", "host": "t.cn" },
+              { "scheme": "http", "host": "t.cn" }
+            ]
           }
         ]
       }

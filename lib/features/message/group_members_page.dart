@@ -2,9 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../core/api.dart';
+import '../../core/error_text.dart';
 import '../../core/layout.dart';
 import '../../core/look.dart';
+import '../../core/group_chat_api.dart';
 import '../../core/models.dart';
 import '../../core/navigation.dart';
 import '../../core/widgets/avatar.dart';
@@ -44,7 +45,7 @@ class _GroupMembersPageState extends State<GroupMembersPage> {
   bool _loading = true;
   bool _loadingMore = false;
   bool _hasMore = true;
-  String? _error;
+  Object? _error;
 
   @override
   void initState() {
@@ -75,7 +76,7 @@ class _GroupMembersPageState extends State<GroupMembersPage> {
       setState(() => _loadingMore = true);
     }
     try {
-      final page = await WeiboApi.instance.groupMembers(widget.gid, offset: _members.length, count: _pageSize);
+      final page = await GroupChatApi.instance.groupMembers(widget.gid, offset: _members.length, count: _pageSize);
       if (!mounted) return;
       setState(() {
         final seen = {for (final member in _members) member.uid};
@@ -90,7 +91,7 @@ class _GroupMembersPageState extends State<GroupMembersPage> {
       setState(() {
         _loading = false;
         _loadingMore = false;
-        if (_members.isEmpty) _error = error is ApiException ? error.message : '成员加载失败';
+        if (_members.isEmpty) _error = error;
       });
     }
   }
@@ -182,7 +183,7 @@ class _GroupMembersPageState extends State<GroupMembersPage> {
   Widget _body(BuildContext context, List<GroupMember> shown, bool searching) {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) {
-      return ErrorRetry(message: _error!, onRetry: () => _load(reset: true));
+      return Center(child: ErrorView(error: _error, onRetry: () => _load(reset: true)));
     }
     if (shown.isEmpty) {
       return EmptyHint(text: searching ? '没有匹配的成员' : '这个群还没有成员');

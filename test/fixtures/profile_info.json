@@ -1,0 +1,85 @@
+{
+ "ok": 1,
+ "data": {
+  "user": {
+   "id": 1727858283,
+   "idstr": "1727858283",
+   "pc_new": 7,
+   "screen_name": "宝玉xp",
+   "profile_image_url": "https://tva3.sinaimg.cn/crop.0.0.180.180.50/66fd066bjw1e8qgp5bmzyj2050050aa8.jpg?KID=imgbed,tva&Expires=1795078523&ssig=%2BywoVqggcN",
+   "profile_url": "/u/1727858283",
+   "verified": true,
+   "verified_type": 0,
+   "domain": "dotey",
+   "weihao": "",
+   "verified_type_ext": 1,
+   "status_total_counter": {
+    "total_cnt_format": "420.5万",
+    "comment_cnt": "241,872",
+    "repost_cnt": "2,001,162",
+    "like_cnt": "1,962,158",
+    "total_cnt": "4,205,192"
+   },
+   "avatar_large": "https://tva3.sinaimg.cn/crop.0.0.180.180.180/66fd066bjw1e8qgp5bmzyj2050050aa8.jpg?KID=imgbed,tva&Expires=1795078523&ssig=s%2FynlUHvH2",
+   "avatar_hd": "https://tva3.sinaimg.cn/crop.0.0.180.180.1024/66fd066bjw1e8qgp5bmzyj2050050aa8.jpg?KID=imgbed,tva&Expires=1795078523&ssig=xjk9jLaTv2",
+   "follow_me": false,
+   "following": false,
+   "mbrank": 2,
+   "mbtype": 12,
+   "v_plus": 0,
+   "user_ability": 11799048,
+   "planet_video": false,
+   "verified_reason": "前微软Asp.Net最有价值专家  2025微博年度新知博主 科技博主",
+   "description": "传播技术。不争论，只拉黑。个人网站：https://baoyu.io",
+   "location": "海外 美国",
+   "gender": "m",
+   "followers_count": 1155932,
+   "followers_count_str": "115.6万",
+   "friends_count": 563,
+   "statuses_count": 61063,
+   "url": "http://www.openlab.net.cn",
+   "svip": 1,
+   "vvip": 1,
+   "cover_image_phone": "https://ww1.sinaimg.cn/crop.0.0.640.640.640/549d0121tw1egm1kjly3jj20hs0hsq4f.jpg",
+   "icon_list": [
+    {
+     "type": "vip",
+     "data": {
+      "mbrank": 2,
+      "mbtype": 12,
+      "svip": 1,
+      "vvip": 1
+     }
+    }
+   ],
+   "top_user": 1,
+   "user_type": 0,
+   "is_star": "0",
+   "is_muteuser": false,
+   "special_follow": false
+  },
+  "tabList": [
+   {
+    "name": "feed",
+    "tabName": "微博"
+   },
+   {
+    "name": "newVideo",
+    "tabName": "视频"
+   },
+   {
+    "name": "audio",
+    "tabName": "音频"
+   },
+   {
+    "name": "album",
+    "tabName": "相册"
+   },
+   {
+    "name": "article",
+    "tabName": "文章"
+   }
+  ],
+  "blockText": ""
+ }
+}

@@ -1,0 +1,8 @@
+{
+ "retcode": 20000000,
+ "msg": "succ",
+ "data": {
+  "qrid": "3MGFq_o8RABXdCQeBQC8FNFubBNSI73zoBnFyY29kZQ..",
+  "image": "https://v2.qr.weibo.cn/inf/gen?api_key=0123456789abcdef0123456789abcdef&data=https%3A%2F%2Fpassport.weibo.cn%2Fsignin%2Fqrcode%2Fscan%3Fqr%3D3MGFq_o8RABXdCQeBQC8FNFubBNSI73zoBnFyY29kZQ.."
+ }
+}

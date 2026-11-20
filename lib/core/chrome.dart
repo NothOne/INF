@@ -3,10 +3,6 @@ import 'package:flutter/material.dart';
 import 'look.dart';
 import 'prefs.dart' show VisualStyle;
 
-import 'chrome_classic.dart';
-import 'chrome_glass.dart';
-import 'chrome_liquid.dart';
-
 export 'chrome_classic.dart' show ClassicChrome;
 export 'chrome_glass.dart' show GlassChrome;
 export 'chrome_liquid.dart' show LiquidChrome;

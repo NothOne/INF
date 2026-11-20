@@ -24,7 +24,7 @@ String userLink(String uid) => 'https://m.weibo.cn/u/$uid';
 
 String userShareText(User user) {
   final name = user.screenName.isEmpty ? user.id : user.screenName;
-  return '@$name ' + userLink(user.id);
+  return '@$name ${userLink(user.id)}';
 }
 
 /// share_plus has no HarmonyOS implementation; there the system share panel is opened natively.

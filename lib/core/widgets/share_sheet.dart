@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../api.dart';
+import '../error_text.dart';
 import '../haptics.dart';
+import '../message_sender.dart';
 import '../models.dart';
 import '../motion.dart';
 import '../session.dart';
@@ -113,7 +115,7 @@ class _ContactsState extends State<_Contacts> {
       final page = await WeiboApi.instance.conversations(false, null);
       if (mounted) setState(() => _items = page.items);
     } catch (error) {
-      if (mounted && _items == null) setState(() => _error = error is ApiException ? error.message : '加载失败');
+      if (mounted && _items == null) setState(() => _error = friendlyError(error));
     }
   }
 
@@ -123,21 +125,14 @@ class _ContactsState extends State<_Contacts> {
     final key = _key(conversation);
     if (_sending.contains(key) || _sent.contains(key)) return;
     setState(() => _sending.add(key));
-    try {
-      final content = statusLink(widget.status.id);
-      if (conversation.isGroup) {
-        await WeiboApi.instance.sendGroupMessage(conversation.groupId!, content);
-      } else {
-        await WeiboApi.instance.sendMessage(conversation.user.id, content);
-      }
-      Haptic.success.play();
-      if (mounted) setState(() => _sent.add(key));
-    } catch (error) {
-      Haptic.error.play();
-      if (mounted) showMessage(context, error is ApiException ? error.message : '发送失败');
-    } finally {
-      if (mounted) setState(() => _sending.remove(key));
-    }
+    final target = ChatTarget(conversation.groupId ?? conversation.user.id, conversation.isGroup);
+    final failure = await MessageSender.text(target, statusLink(widget.status.id));
+    if (!mounted) return;
+    setState(() {
+      _sending.remove(key);
+      if (failure == null) _sent.add(key);
+    });
+    showMessage(context, failure);
   }
 
   @override

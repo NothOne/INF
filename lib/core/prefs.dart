@@ -102,14 +102,37 @@ enum PageMotion {
 
 /// One store for the few settings the app has. It is a ChangeNotifier so the shell can rebuild the
 /// theme when the user changes it, instead of restarting the activity like the Compose version did.
+///
+/// **Every read goes through [_prefs], which asserts that [init] has run.** Most of these reads have
+/// a natural default (`getString(...) ?? fallback`), so before this guard a missing `init()` looked
+/// exactly like "the user never set this" — a test that forgot to initialise read an empty block
+/// list and passed, and the bug surfaced later as a wrong screen rather than a stack trace. In
+/// release the assert is compiled out, so this costs nothing.
 class Prefs extends ChangeNotifier {
   Prefs._();
   static final Prefs instance = Prefs._();
 
-  late SharedPreferences _prefs;
+  SharedPreferences? _store;
+  bool _ready = false;
+  Set<String>? _blockedIdsCache;
+
+  /// Scoped notifiers for list-level slices so writing viewed history, drafts or search history
+  /// never rebuilds unrelated status lists or top bars.
+  final ValueNotifier<int> blockedNotifier = ValueNotifier(0);
+  final ValueNotifier<int> hotBoardsNotifier = ValueNotifier(0);
+  final ValueNotifier<int> draftsNotifier = ValueNotifier(0);
+  final ValueNotifier<int> viewedNotifier = ValueNotifier(0);
+
+  SharedPreferences get _prefs {
+    assert(_ready, 'Prefs used before Prefs.instance.init(). main() awaits it; a test must '
+        '`await Prefs.instance.init()` in setUp.');
+    return _store!;
+  }
 
   Future<void> init() async {
-    _prefs = await SharedPreferences.getInstance();
+    _store = await SharedPreferences.getInstance();
+    _blockedIdsCache = null;
+    _ready = true;
   }
 
   ThemeMode get themeMode {
@@ -314,7 +337,7 @@ class Prefs extends ChangeNotifier {
   Future<void> setHotBoards(List<HotBoard> boards) async {
     if (boards.isEmpty) return;
     await _prefs.setStringList('hot_boards', [for (final board in boards) board.name]);
-    notifyListeners();
+    hotBoardsNotifier.value++;
   }
 
   /// People whose posts lists leave out. Weibo's web API has no block call, so this stays on the
@@ -332,9 +355,15 @@ class Prefs extends ChangeNotifier {
     }
   }
 
-  late Set<String> _blockedIds = {for (final user in blockedUsers) user.id};
+  /// The ids of [blockedUsers], cached after the first read so hot list-build loops do an O(1)
+  /// set lookup instead of decoding JSON on every row. Still goes through [_prefs] first so the
+  /// debug init guard fires if called before [init].
+  Set<String> get blockedIds {
+    _prefs;
+    return _blockedIdsCache ??= Set.unmodifiable({for (final user in blockedUsers) user.id});
+  }
 
-  bool isBlocked(String uid) => _blockedIds.contains(uid);
+  bool isBlocked(String uid) => blockedIds.contains(uid);
 
   Future<void> setBlocked(User user, bool blocked) async {
     final next = [
@@ -345,7 +374,8 @@ class Prefs extends ChangeNotifier {
       'blocked_users',
       jsonEncode([for (final u in next) {'id': u.id, 'name': u.screenName, 'avatar': u.avatarUrl}]),
     );
-    _blockedIds = {for (final u in next) u.id};
+    _blockedIdsCache = Set.unmodifiable({for (final u in next) u.id});
+    blockedNotifier.value++;
     notifyListeners();
   }
 
@@ -449,18 +479,15 @@ class Prefs extends ChangeNotifier {
     if (entry.isEmpty) return;
     final next = [entry, ...searchHistory.where((e) => e != entry)].take(20).toList();
     await _prefs.setString('search_history', jsonEncode(next));
-    notifyListeners();
   }
 
   Future<void> removeSearch(String query) async {
     final next = searchHistory.where((e) => e != query).toList();
     await _prefs.setString('search_history', jsonEncode(next));
-    notifyListeners();
   }
 
   Future<void> clearSearchHistory() async {
     await _prefs.remove('search_history');
-    notifyListeners();
   }
 
   Map<String, String> get emojis {
@@ -493,7 +520,7 @@ class Prefs extends ChangeNotifier {
 
   Future<void> saveDrafts(List<Draft> drafts) async {
     await _prefs.setString('drafts', jsonEncode(drafts.map((d) => d.toJson()).toList()));
-    notifyListeners();
+    draftsNotifier.value++;
   }
 
   int get nextDraftId {
@@ -516,7 +543,7 @@ class Prefs extends ChangeNotifier {
 
   Future<void> saveViewed(List<ViewedStatus> entries) async {
     await _prefs.setString('viewed', jsonEncode(entries.map((e) => e.toJson()).toList()));
-    notifyListeners();
+    viewedNotifier.value++;
   }
 
   bool get didShowWelcome => _prefs.getBool('welcome') ?? false;

@@ -1,16 +1,15 @@
 import 'package:flutter/material.dart';
 
+import '../error_text.dart';
 import '../../core/layout.dart';
 import '../../core/models.dart';
-import '../../core/navigation.dart';
 import '../../core/paging.dart';
 import '../../core/pane.dart';
 import '../../core/prefs.dart';
-import '../../core/status_store.dart';
-import 'comment_sheet.dart';
 import 'common.dart';
+import 'pager_tail.dart';
 import 'refresh.dart';
-import 'status_card.dart';
+import 'status_card_host.dart';
 import 'transitions.dart';
 
 /// A paged list of posts, used by search, topics, profiles and the liked feed. The feed itself has
@@ -24,6 +23,7 @@ class PagedStatusList extends StatelessWidget {
     this.bottomInset = 24,
     this.underAppBar = true,
     this.controller,
+    this.refreshKey,
     this.nested = false,
     this.refreshable = true,
     this.hideBlocked = true,
@@ -39,6 +39,7 @@ class PagedStatusList extends StatelessWidget {
   final bool underAppBar;
 
   final ScrollController? controller;
+  final GlobalKey<InfRefreshIndicatorState>? refreshKey;
 
   /// The list is the body of a [NestedScrollView] whose pinned header sits in a
   /// [SliverOverlapAbsorber]; it starts below that header instead of under it.
@@ -53,7 +54,7 @@ class PagedStatusList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge([pager, StatusStore.instance, Prefs.instance]),
+      animation: Listenable.merge([pager, Prefs.instance.blockedNotifier]),
       // Cross-fading two copies of the same header would dim it halfway through.
       builder: (context, _) => header == null ? StateSwitcher(child: _body(context)) : _body(context),
     );
@@ -62,9 +63,9 @@ class PagedStatusList extends StatelessWidget {
   Widget _refresh({Key? key, required Widget child}) =>
       refreshable ? InfRefreshIndicator(key: key, onRefresh: pager.refresh, child: child) : KeyedSubtree(key: key, child: child);
 
-  Widget _scrollView(BuildContext context, List<Widget> slivers) {
+  Widget _scrollView(BuildContext context, List<Widget> slivers, {bool attachController = true}) {
     return CustomScrollView(
-      controller: controller,
+      controller: attachController ? controller : null,
       physics: const AlwaysScrollableScrollPhysics(),
       slivers: [
         if (nested) SliverOverlapInjector(handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context)),
@@ -82,7 +83,7 @@ class PagedStatusList extends StatelessWidget {
       if (pager.error != null) {
         state = Padding(
           padding: const EdgeInsets.only(top: 80),
-          child: Center(child: ErrorRetry(message: pager.error.toString(), onRetry: pager.refresh)),
+          child: Center(child: ErrorView(error: pager.error, onRetry: pager.refresh)),
         );
       } else if (pager.loading || pager.refreshedAt == null) {
         state = SizedBox(
@@ -96,19 +97,25 @@ class PagedStatusList extends StatelessWidget {
         );
       }
       // The header (a profile, say) stays put above whichever state the posts are in.
+      // Do not attach `controller` or `refreshKey` here: during StateSwitcher's cross-fade to the
+      // list both views are mounted at once, and a ScrollController / GlobalKey may only belong to one.
       return _refresh(
         key: ValueKey(pager.error != null ? 'error' : (pager.loading || pager.refreshedAt == null ? 'loading' : 'empty')),
-        child: _scrollView(context, [
-          SliverPadding(
-            padding: EdgeInsets.only(top: top, left: gutter, right: gutter),
-            sliver: SliverList.list(
-              children: [
-                if (header != null) header!,
-                state,
-              ],
+        child: _scrollView(
+          context,
+          [
+            SliverPadding(
+              padding: EdgeInsets.only(top: top, left: gutter, right: gutter),
+              sliver: SliverList.list(
+                children: [
+                  ?header,
+                  state,
+                ],
+              ),
             ),
-          ),
-        ]),
+          ],
+          attachController: false,
+        ),
       );
     }
     return NotificationListener<ScrollNotification>(
@@ -118,6 +125,7 @@ class PagedStatusList extends StatelessWidget {
         return false;
       },
       child: _refresh(
+        key: refreshKey,
         child: _scrollView(context, [
           SliverPadding(
             padding: EdgeInsets.only(
@@ -134,20 +142,10 @@ class PagedStatusList extends StatelessWidget {
                   if (headerCount == 1 && index == 0) return header!;
                   final itemIndex = index - headerCount;
                   if (itemIndex == pager.items.length) {
-                    if (pager.loadingMore) return const LoadingFooter();
-                    if (pager.moreError != null) {
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        child: Center(
-                          child: TextButton(onPressed: pager.loadMore, child: const Text('加载失败，点此重试')),
-                        ),
-                      );
-                    }
-                    if (!pager.hasMore) return const LoadingFooter(text: '没有更多了');
-                    return const SizedBox(height: 24);
+                    return PagerTail(pager, gap: 24);
                   }
                   final status = pager.items[itemIndex];
-                  if (hideBlocked && Prefs.instance.isBlocked(status.author.id)) {
+                  if (hideBlocked && hiddenByBlock(status)) {
                     return SizedBox.shrink(key: ValueKey(status.id));
                   }
                   return AppearIn(
@@ -157,32 +155,7 @@ class PagedStatusList extends StatelessWidget {
                       children: [
                         PaneSelected(
                           ids: ['status:${status.id}', if (status.repostOf != null) 'status:${status.repostOf!.id}'],
-                          child: StatusCard(
-                          status: status,
-                          heroScope: '${status.id}-$itemIndex',
-                          onOpenStatus: (id) => openStatus(
-                            context,
-                            statusId: id,
-                            seed: status,
-                          ),
-                          onOpenUser: (uid) => openUser(context, uid),
-                          onOpenTopic: (name) => openTopic(context, name),
-                          onOpenUrl: (url) => openLink(context, url),
-                          onOpenMedia: (media, mediaIndex, heroTag) {
-                            if (media[mediaIndex].kind == MediaKind.video) {
-                              openVideo(
-                                context,
-                                media[mediaIndex].url,
-                                coverUrl: media[mediaIndex].previewUrl,
-                                statusId: status.id,
-                              );
-                            } else {
-                              openImage(context, media: media, index: mediaIndex, heroTag: heroTag);
-                            }
-                          },
-                          onRepost: (_) => openCompose(context, type: DraftType.repost, statusId: status.id),
-                          onComment: (anchor) => showCommentSheet(context, anchor: anchor, statusId: status.id, target: status),
-                        ),
+                          child: buildStatusCard(context, status, heroScope: '${status.id}-$itemIndex'),
                         ),
                         const Divider(),
                       ],

@@ -2,9 +2,11 @@
 
 这份文档讲代码结构：模块怎么分层、各文件管什么、依赖往哪个方向走、新功能应该放在哪里。
 
-规模：`lib/` 共 101 个 Dart 文件。支持 Android 和鸿蒙 NEXT，原生代码各一个文件：`MainActivity.kt` 和 `NativePlugin.ets`。
+规模：`lib/` 共 137 个 Dart 文件。支持 Android 和鸿蒙 NEXT，原生代码各一个文件：`MainActivity.kt` 和 `NativePlugin.ets`。
 
-**文档与代码冲突时以代码为准**：这里的描述会滞后，看到与实际不符先读代码。
+文档与代码冲突时以代码为准**：这里的描述会滞后，看到与实际不符先读代码。
+
+下一步的改动计划、这套架构的取舍、以及"为什么不做某些事"见 [`NEXT.md`](NEXT.md)。
 
 ## 1. 分层总览
 
@@ -71,10 +73,9 @@ flowchart TD
 main()
  ├─ Touches.ensureInitialized()           全局指针路由，统计手指数（长按只认单指）
  ├─ PerfLog.start()                       仅 --dart-define=PERF_LOG=true 时生效
- ├─ await Prefs.init() + PageCache.init() 偏好与首屏缓存全部读入内存
+ ├─ await Prefs.init() + PageCache.init() 偏好与首屏常驻缓存读入内存（comments-* 懒读 + LRU 淘汰）
  ├─ EmojiStore.init()
- ├─ CachedNetworkImageProvider.defaultCacheManager = InfImageCache.manager
- ├─ 后台（不 await）：图片缓存按上限回收、临时文件与草稿图片清孤儿
+ ├─ 后台（不 await）：图片缓存按上限回收、临时文件与草稿图片清孤儿（SmartImage 显式走 InfImageCache.manager）
  └─ runApp(InfApp)
       └─ 首帧后：Native.requestPeakRefreshRate()
                  → Session.init() → Session.refresh() → UnreadMonitor.start()
@@ -98,13 +99,23 @@ main()
 | 文件 | 主要符号 | 职责 |
 |---|---|---|
 | `models.dart` | `User` `Status` `Media` `Comment` `NotificationItem` `Conversation` `DirectMessage` `UserProfile` `FeedSource` `Draft` `ViewedStatus` `Place` `PageResult<T>` 等 | 纯数据模型和枚举，不依赖任何其他文件 |
-| `parse.dart` | `parseWeiboResult` `toStatus` `toUser` `toComment` `parseXxx` `weiboHtmlToText` `parseWeiboTime` `relativeTime` `compactCount` `textOf/idOf/intOf` | 把微博 JSON 转成模型，外加时间、计数、HTML 文本工具。**所有 JSON 字段解析都放这里**。`toUser` 经 `defaultAvatarFixed` 把 m.weibo.cn 评论里默认头像的死地址（`ss1.sinaimg.cn/orj480/default_avatar_male_180&690`，404）换成 `tvax1.sinaimg.cn/default/images/default_avatar_<性别>_180.gif`。`page_info` 为 `bigPic`（m.weibo.cn）或 `card_info.card_type == '107'`（weibo.com）时是生日祝福、运动会奖牌这类图片横幅，解析成 `LinkCard(banner: true)`，前景透明图叠在背景图上，地址可能为空。`blog_audio`（weibo.com 的语音，时长毫秒；m.weibo.cn 不给，只在正文开头写 `[语音10"]请用最新版手机微博app收听原声<br />`，这行从正文里去掉，解析成没有地址的语音 `AudioClip`）和 `object_type` 含 audio / `type` 44 的 `page_info`（播客，时长秒）解析成 `Status.audio`（`AudioClip`）。其余认不出的卡片（无流的视频、故事、全景……）兜底成 `LinkCard`，地址依次取 `page_url` → `media_info.h5_url` → `card_info.scheme`，只要标题、地址、图片有一样就显示 |
-| `api.dart` | `WeiboApi.instance` `ApiException` `LoginRequiredException` | 所有 m.weibo.cn 请求（Dio）。按注释分节：feeds / statuses / notifications and messages / relationships and people / comments / writes / plumbing。拦截器统一注入 UA、XSRF，Cookie 只发给 m.weibo.cn。另有几个免登录的公开接口走 `_getPublic`：热搜榜 `weibo.com/ajax/statuses/hot_band`、文娱/社会/科技/生活/体育/ACG 榜 `weibo.com/ajax/statuses/{entertainment,social,technology,life,sport,acg}`、推荐频道 `weibo.com/ajax/feed/allGroups`（type 1 分组）与频道流 `weibo.com/ajax/feed/hottimeline`（每次随机一批，`max_id` 只当页码）（这些要带 passport `genvisitor2` 换来的游客 SUB/SUBP，统一走 `_asVisitor`，失效时重取一次）、搜索提示 `weibo.com/ajax/side/search`、话题卡片与阅读趋势 `m.s.weibo.com/ajax_topic/detail|trend`（必须带对应 vtopic 页面作 Referer）、`cardUrl` 用 `weibo.com/ajax/statuses/show` 补出横幅卡片的完整地址（m.weibo.cn 给的生日页缺 `mid`，打开是空白）、扫码登录 `passport.weibo.com/sso/v2/qrcode/image|check`（`qrLogin` / `qrLoginStatus`，返回 `retcode` 而不是 `ok`，`_getPublic` 两种都认）、主页分栏（游客：`profile/info` 的 `tabList` 与 `status_total_counter`（转评赞）加 `profile/detail`（IP 属地、星座、注册时间、阳光信用、标签）→ `profileExtras`；`profile/feature?containerid=` 代理 m.weibo.cn 容器，按 `page` 翻页，精选 `231002<uid>_-_HOTMBLOG`、筛选流 `230413<uid>_-_WEIBO_SECOND_PROFILE_WEIBO[_ORI|_PIC|_VIDEO|_ARTICAL]`；视频 `profile/getWaterFallContent`、音频 `profile/getAudioList`（`next_cursor` 0/-1 结束）、相册 `profile/getImageWall`（`since_id` 0 结束））、`audioClip` 用 `statuses/show` 换签名的语音/音频地址和语音转文字。以登录账号访问 weibo.com 的接口走 `_getWeiboCom` / `_postWeiboCom`：Cookie 取 WebView 里 weibo.com 的那份（passport 登录时一起种下），写操作是 JSON，`X-XSRF-TOKEN` 要和 Cookie 里的 `XSRF-TOKEN` 一致（WebView 没打开过 weibo.com 就没有，随手造一个同时放进两处）；目前有「搜他的微博」`profile/searchblog`（`searchUserStatuses`，游客只返回空列表）和拉黑 `statuses/filterUser`（`blacklist`，三项全选即加入黑名单；m.weibo.cn 没有拉黑接口）。搜索走 m.weibo.cn `100103type=<n>&q=` 容器（`searchStatuses` 第一页顺带返回频道列表，`searchEntries` 取话题类条目）。群聊分两套域名：消息走 m.weibo.cn 的 `api/groupchat/list|send` 与 `api/chat/upload`（`groupChatPage` 顺带从 `title` 取群名和人数），**群资料/成员/公告/免打扰全在 `https://api.weibo.com/webim/*`**（`groupchat/query.json?id=`、`query_group.json?id=&source=209678993&query_member=1`、`2/notice_center/discussion_group/push_settings.json?dgid=`、`send_bulletin.json`），用 WebView 里 weibo.com 的 Cookie，详见 `DEVLOG.md` 的「群聊接口」一节 |
-| `session.dart` | `Session.instance` `SessionState` `WeiboConfig` | 登录态：从原生 CookieManager 读 m.weibo.cn 的 Cookie，判断 SUB 是否为访客，维护 `uid`、`st`、`xsrf`、`cacheScope` |
-| `page_cache.dart` | `PageCache.instance` | 磁盘缓存若干列表的第一页原始 JSON（按账号隔离），启动时全部读入内存 |
+| `parse.dart` | `parseWeiboResult` `toStatus` `toUser` `toComment` `parseXxx` `textOf/idOf/intOf` | 把微博 JSON 转成模型。标量宽容处理、时间与计数、HTML 转文本分别在 `weibo_json.dart` / `weibo_time.dart` / `weibo_html.dart`，这里重新导出，所以引用方仍然只需要 import `parse.dart`。**所有 JSON 字段解析都放这里**。`toUser` 经 `defaultAvatarFixed` 把 m.weibo.cn 评论里默认头像的死地址（`ss1.sinaimg.cn/orj480/default_avatar_male_180&690`，404）换成 `tvax1.sinaimg.cn/default/images/default_avatar_<性别>_180.gif`。`page_info` 为 `bigPic`（m.weibo.cn）或 `card_info.card_type == '107'`（weibo.com）时是生日祝福、运动会奖牌这类图片横幅，解析成 `LinkCard(banner: true)`，前景透明图叠在背景图上，地址可能为空。`blog_audio`（weibo.com 的语音，时长毫秒；m.weibo.cn 不给，只在正文开头写 `[语音10"]请用最新版手机微博app收听原声<br />`，这行从正文里去掉，解析成没有地址的语音 `AudioClip`）和 `object_type` 含 audio / `type` 44 的 `page_info`（播客，时长秒）解析成 `Status.audio`（`AudioClip`）。其余认不出的卡片（无流的视频、故事、全景……）兜底成 `LinkCard`，地址依次取 `page_url` → `media_info.h5_url` → `card_info.scheme`，只要标题、地址、图片有一样就显示 |
+| `endpoints.dart` | `Endpoint` `EndpointHost` `EndpointAuth` | **每个请求的「哪个域名、哪套凭据、会不会要验证码」**，一处写清。纯数据，不参与调用（传输层照旧收路径字符串），测试用 `test/endpoint_matrix_test.dart` 把它和 `api_*.dart` 里真实的传输调用对齐：API 层问到的每条路径都要有行，每行也都得真的有地方在问。`captchaRisk` 是运行时唯一被读的字段——发微博页据此提前告诉读者「可能要过一次安全验证」，而不是等写完才发现没发出去。`cached` 标出第一页进 `PageCache` 的那些 |
+| `api.dart` | `WeiboApi.instance` `ApiException` `LoginRequiredException` `dioError` | m.weibo.cn 的接口，按域名分在 8 个 part 文件里（见下面几行）。这个文件只留**所有域名都要用的东西**：异常类型、共享的 `dioError`、`WeiboApi` 的构造与拦截器（m.weibo.cn 走 `_dio` 注入 UA / XSRF / Cookie；weibo.com / passport / m.s.weibo.com 走独立的 `_publicDio`，不带 m.weibo.cn 拦截器与专属头）、`session`，以及传输层 `_get` / `_post` / `_postOnce` / `_postMultipart` / `_getPublic` / `_publicEnvelope` / `_decodeEnvelope` / `_token` / `_dioError` / `_numberedPage` 和游客身份 `_asVisitor` / `_visitorCookie`。**传输层必须留在类里**：extension 之间不能互相调私有成员，搬走就会解析失败（这是拆分的唯一硬约束，`DEVLOG.md` 里有记录）。拦截器把 `set-cookie` 吸回 `Session`；`captchaSolver` 由 `app.dart` 注入，写接口遇到 `error_type: captcha` 时弹验证框再重发一次 |
+| `api_feeds.dart` | `feedGroups` `feedSources` `feed` `cachedFeed` | 首页关注流、分组、好友圈、悄悄关注、赞过、收藏；`FeedKind.card` 走推荐容器。第一页写 `PageCache` 的 `feed` 键 |
+| `api_statuses.dart` | `status` `longText` `userTimeline` `profile*` `cardUrl` `audioClip` | 单条微博、长微博全文、某人的时间线、主页各分栏（精选 / 筛选流 / 视频 / 音频 / 相册）、横幅卡片的地址补齐、语音换签名地址 |
+| `api_weibo_com.dart` | `hotSearch` `hotBoard` `recommendChannels` `recommendFeed` `qrLogin` `qrLoginStatus` | 需要 weibo.com Cookie 或游客身份的东西：热搜榜与文娱/社会/科技/生活/体育/ACG 榜、推荐频道与频道流（游客 `genvisitor2` 换 SUB/SUBP，失效重取一次）、扫码登录（返回 `retcode` 而不是 `ok`） |
+| `api_search_topic.dart` | `searchStatuses` `searchEntries` `searchSuggestions` `topic*` `hotTopicPage` | 搜索（m.weibo.cn `100103type=<n>&q=` 容器，第一页顺带给频道列表）、搜索提示、话题卡片与阅读趋势（`m.s.weibo.com`，必须带对应 vtopic 页作 Referer） |
+| `api_notify_message.dart` | `unread` `notifications` `conversations` `chat` `groupChat*` `sendMessage*` | 通知四类与私信。消息走 m.weibo.cn 的 `api/chat/*` 与 `api/groupchat/*`；**群资料/成员/公告/免打扰不在这个文件**，它们在 `group_chat_api.dart` |
+| `api_relations.dart` | `setFollowing` `blacklist` `resolveUid` `searchUsers` `relationUsers` `superTopics` | 关注、拉黑（`statuses/filterUser`，m.weibo.cn 没有拉黑接口）、按昵称找 uid、搜用户、关注/粉丝列表、超话 |
+| `api_comments.dart` | `reposts` `comments` `cachedComments` `replies` `replyThread` | 评论与转发。`comments(statusId, cursor, byTime:)` 走 `comments/hotflow`，第一页写 `PageCache` 的 `comments-<statusId>-<0\|1>` 供详情页秒开；`replyThread` 一次返回「一页回复 + 线程主评论」 |
+| `api_writes.dart` | `setLiked` `setFavorited` `uploadImage` `postStatus` `repost` `comment` `reply` | 所有写操作，全部经过 `_post`（验证码重试在那里）。`reply(statusId, content, rootId:, replyToId:)` —— **`cid` 和 `reply` 是两个不同的 id**，前者是线程主评论、后者是被回复的那条，写成同一个会让「回复回复」挂到错的层级 |
+| `session.dart` | `Session.instance` `SessionState` `WeiboConfig` | 登录态：从原生 CookieManager 读 m.weibo.cn 的 Cookie，判断 SUB 是否为访客，维护 `uid`、`st`、`xsrf`、`cacheScope`；提供 `registerAccountReset` 钩子，退出或切换账号时通知各上层 Store 与会话缓存统一清空（不引入反向依赖） |
+| `cached_page.dart` | `CachedPage<T>` `CachedValue<T>` `CachePolicy` `readRawCached` `decodeStored` | **全部磁盘页面/对象缓存的唯一落点**（`feed`、`comments-*`、`profile`、`notify-*`、`conversations-*` 均走这里，`api_*.dart` 不再直接读写 `PageCache`）。读写统一走 `Session.cacheScope`；`read()` 把「存的东西解析不出来」当成没有缓存——让页面显示骨架屏再问一次，而不是在还没发请求时就显示「加载失败」。键里**不含账号**，`PageCache` 会自己加在前面 |
+| `page_cache.dart` | `PageCache.instance` | 磁盘缓存若干列表的第一页原始 JSON（按账号隔离）：首屏常驻键（`feed`/`profile`/`notify-*`/`conversations-*`）启动时预加载入内存；高基数动态键（`comments-*`）按需懒读并按 LRU 限制内存与磁盘最多保留 40 份，避免冷启动和存储随浏览量无限膨胀 |
 | `image_cache.dart` | `InfImageCache.instance` `InfImageCache.manager` `CachedPicture` `doomed` | 唯一的图片磁盘缓存（`cache/libCachedImageData/`，沿用旧版本的目录名所以升级不丢文件）。用 `Config` 把 `flutter_cache_manager` 自带的「按条数 + 只删一天前的」回收架空（它对当天下载的文件永远不生效，缓存因此无上限），改由 `sweep()` 按字节从最久没看过的开始删到上限的 90%：启动、回到前台、预取队列跑空时各一次，5 分钟内不重复；未超额时不碰数据库。上限是 `Prefs.imageCacheLimit`。**表情图片（`EmojiStore.urls`）永不回收**，见 `doomed` 的 `keep` 参数。`size()` 给设置页读数，`clear()` 只清微博图片、留下表情。`doomed` 是纯函数，有测试 |
 | `temp_files.dart` | `TempFiles` `DraftFiles` | 用完就该消失的文件。`TempFiles`：存图/分享/视频下载/长图/私信发图的副本都写在 `cache/inf-temp/`，用完当场 `delete`，`sweep()` 在启动时删掉超过 24 小时的，并清理旧版本直接丢在 cache 根目录的 `INF-*` / `inf-long-*` / `chat-*`。`DraftFiles`：草稿图片在 `documents/drafts/`（草稿要活过系统清缓存），发送、删稿、从微博里移除图片时删对应文件，`sweep()` 按草稿列表删孤儿 |
-| `prefs.dart` | `Prefs.instance` `AccentTheme` `VisualStyle` `LiquidTier` `HapticLevel` `ImagePreload` `ImageCacheLimit` `PageMotion` | SharedPreferences 封装：外观、液态玻璃档位（`liquidTier`：标准 / 极致，默认标准）、页面动效（`pageMotion`：展开 / 推入，默认推入）、触感档位、搜索历史、草稿、浏览记录、首页来源、推荐频道、热搜榜单顺序（`hotBoards`）、本机屏蔽名单（`blockedUsers`/`isBlocked`，信息流和 `PagedStatusList` 跳过，用户主页不跳过）、表情、图片缓存上限（`imageCacheLimit`：200 MB / 500 MB / 1 GB / 2 GB / 不清理，默认 500 MB） |
+| `prefs.dart` | `Prefs.instance` `AccentTheme` `VisualStyle` `LiquidTier` `HapticLevel` `ImagePreload` `ImageCacheLimit` `PageMotion` | SharedPreferences 封装：外观、液态玻璃档位（`liquidTier`：标准 / 极致，默认标准）、页面动效（`pageMotion`：展开 / 推入，默认推入）、触感档位、搜索历史、草稿、浏览记录、首页来源、推荐频道、热搜榜单顺序（`hotBoards`）、本机屏蔽名单（`blockedUsers`/`isBlocked`，内存缓存 `blockedIds` 避免列表热路径反复 JSON 解码；信息流和 `PagedStatusList` 跳过，用户主页不跳过）、表情、图片缓存上限（`imageCacheLimit`：200 MB / 500 MB / 1 GB / 2 GB / 不清理，默认 500 MB）。局部列表主题拆出独立 `blockedNotifier` / `hotBoardsNotifier` / `draftsNotifier` / `viewedNotifier`，浏览记录/草稿/搜索历史写入不再触发全局重建 |
 | `emoji.dart` | `EmojiStore.instance` `urls` | 表情短码 → 图片 URL，从接口返回中学习并持久化到 `Prefs.emojis`。**映射存在 SharedPreferences 里，不是缓存文件**，`init()` 是替换而不是累加；`urls` 给 `InfImageCache` 用来把这批图片排除在字节回收之外 |
 | `image_url.dart` | `sanitizeImageUrl` `secureUrl` `signedUrlExpired` `sinaimgSized` `avatarLarge` `weiboImageHeaders` | `avatarLarge` 把头像 `crop.x.y.w.h.<尺寸>` 的尺寸换成 1024（签名不覆盖这一段）、`orj480` 之类换成 `large`，主页点头像看大图用；`signedUrlExpired` 判断视频 CDN 地址的 `Expires` 是否已过；图片 URL 规范化、http→https、sinaimg 尺寸替换、防盗链请求头（Referer 只发给微博自己的域名，B 站等图床带了会 403）。不含 Widget，状态层也可以用 |
 | `links.dart` | `linkTargetOf` `LinkTarget` `linkKindOf` `linkKindLabel` `expandShortLink` `unwrapWeiboRedirect` `weiboAppBrowserUrl` `appNameOf` `siteNameOf` `linkInText` | 链接归类：任意 http(s) / `sinaweibo://` 地址 → 微博、用户、话题、超话、t.cn 短链、网页、仅客户端可开（`ClientPageTarget`：m.weibo.cn 的 wbox 小程序页、文章专栏 `a/hot/<cid>_1.html` / `p/232718<cid>`，网页版只显示「打开微博客户端体验」，兜底页经 `sinaweibo://browser?url=` 交给微博客户端）；`appNameOf` / `siteNameOf` 给网页想唤起的 App 和卡片站点起名；`linkInText` 从一段粘贴文字里找出链接；`linkKindOf` 按地址和 `timeline_card_small_*` 图标判断位置/超话/投票/抽奖/群聊/音频（网易云、QQ 音乐、喜马拉雅、小宇宙等）等。纯逻辑，有测试 |
@@ -113,9 +124,20 @@ main()
 
 | 文件 | 主要符号 | 职责 |
 |---|---|---|
-| `paging.dart` | `PagingController<T>` | 通用游标分页：首屏 `seed`（缓存）、`refresh`（返回是否成功）、`loadMore`、去重、`fresh` 新增项标记、`onScroll` 触底加载 |
-| `status_store.dart` | `StatusStore.instance` | 微博点赞、收藏和评论点赞状态的唯一来源（乐观更新 + 失败回滚；评论点赞走 `api/likes/update|destroy` `type=comment`，和网页版一致），长微博全文缓存（`longText` 同一 id 只请求一次、记最近 50 条、失败不记；`longTextNow` 同步取已到的，供详情页首帧直接用），浏览记录写入，`feedRevision` |
-| `unread_monitor.dart` | `UnreadMonitor.instance` | 未读数，每 2 分钟轮询一次，切到通知/私信 Tab 时强制刷新，跟随 `Session` 状态 |
+| `paging.dart` | `PagingController<T>` | 通用游标分页：首屏 `seed`（缓存）、`refresh`（返回是否成功）、`loadMore`、`retryMore`（底部的「加载失败，点此重试」调这个）、去重、`fresh` 新增项标记、`onScroll` 触底加载。**一页失败后滚动不会再自动重试**：`onScroll` 每帧都会来，留在底部的列表会一直重复同一个请求，微博那边的回应是「操作频繁」 |
+| `message_sender.dart` | `MessageSender.text` `MessageSender.image` | 发私信的唯一入口：单聊/群聊的选择、图片的上传+发送、失败文案、临时文件删除都在这里。聊天页和分享面板原本各调一套 `sendMessage`/`sendGroupMessage`/`uploadChatImage`/`sendChatImage` |
+| `status_store.dart` | `StatusStore.instance` | 微博点赞、收藏和评论点赞状态的唯一来源（乐观更新 + 失败回滚；评论点赞走 `api/likes/update\|destroy` `type=comment`，和网页版一致——注意 `DEVLOG.md` 记着这个接口对该账号会返回 errno 20000，网页版自己也失败，那是账号侧的限制不是代码问题）。**评论数和转发数也走这里**：`addComment` / `addRepost` 记的是「服务器给的基线 + 本机增量」，同一篇微博在信息流、详情、搜索结果里的每一份副本读 `apply` 都是同一个数，服务器那份已经算进去时也不会重复加。点赞计数同样记基线+增量，所以详情页取回来的新计数不会被本机按下时记下的绝对数盖回去。长微博全文缓存（`longText` 同一 id 只请求一次、记最近 50 条、失败不记；`longTextNow` 同步取已到的，供详情页首帧直接用），浏览记录写入，`feedRevision`。**`apply` 的底稿从 `Entities` 取**，`remember(..., notify:)` 写入并在异步更新时按 id 唤醒订阅卡片；`of([ids])` 用无泄漏 `_ScopedListenable` 直接挂接回调并在组件卸载时自动摘除；退出/换号时经 `Session.registerAccountReset` 清空本账号状态 |
+| `entities.dart` | `Entities.instance` | **同一条微博只有一份**：列表解析出的旧副本和详情页取回的新副本不会再各画各的。`put` 是**合并**语义——带更少字段的回答不会抹掉已经存下的东西（更短的正文不会替换全文，没有图片不会清空图片），计数则永远取最新那份；同一个回答重复 `put` 返回同一个对象，调用方可以据此跳过重建。LRU 保留最近 200 条，重复 `put` 会把该条移到队尾。**只做 `Status`**：`User`（关注状态）和 `Comment`（评论点赞）等真遇到同一类问题再加，见 `NEXT.md` 的分阶段 |
+| `comment_store.dart` | `CommentStore.instance` `send` | 评论和回复的**唯一发送入口**，以及「刚发出、服务器还没返回」的那几条评论。`send()` 负责上传图片、按 `rootId` / `replyToId` 调接口（`cid` 是所在线程、`reply` 是被回复的那条，两者只在回复「回复」时不同）、失败文案（含「发图片评论需要权限」的说明），成功后才动 Store。发出去的评论进 `pendingFor(statusId)`，详情页把它画在列表顶部标「发送中…」；`settle(statusId, loaded: …)` 只清掉刷新结果里**确实出现**的那条（热度序第一页常常不含刚发的评论，清空会让读者刚写的字消失），超过 10 分钟的陈旧副本也清 |
+| `error_text.dart` | `friendlyError` `ErrorView` | 所有列表和详情的失败表现。文案和「要不要给重试」都由 `failure.dart` 的 `Failure` 决定：网络断了给重试，未登录给「去登录」，风控/拒绝/解析漂移就只说原因——给一个按下必然同样失败的按钮比不给更糟。别处不要再拼 `error.toString()` |
+| `failure.dart` | `Failure` `NetworkFailure` `AuthFailure` `RiskControlFailure` `ParseDriftFailure` `BusinessFailure` | **一次请求失败意味着什么，只在这里判定**。`Failure.from(error)` 把任何东西分成五类，`retryable` 回答「再发一次有没有用」。之前这个问题被回答了三次：`error_text.dart` 和 `api_writes.dart` 各判一次 `code == 20000`，`comment_store.dart` 判一次 `message.contains('图片上传失败')`。`ApiException` 保留（五十多个抛出点），`kind` 字段让传输层把「没连上」「答案读不懂」直接标出来，不必再从文案倒推 |
+| `relation_store.dart` | `RelationStore.instance` | 关注与屏蔽的唯一来源。关注状态记「本会话改过什么」，没改过就用服务器答案，所以搜索结果和用户主页里同一个人看到的是同一个状态（以前各存一份，互相不知道）。屏蔽是 INF 本机的、不告诉微博；一键拉黑是微博那边的，两者放一起因为用户页同时提供 |
+| `weibo_json.dart` | `asMap` `textOf` `intOf` `countOf` `parseWeiboResult` … | 从微博 JSON 里取一个标量的全部宽容处理：同一个字段一次是数字一次是字符串、`"1"` 当布尔、`"12.3万"` 当计数。**只有这一处**做这种宽容，解析器只拿 `String?` 或 0，不做 cast |
+| `weibo_time.dart` | `parseWeiboTime` `relativeTime` `compactCount` | 时间的解析与显示。微博至少给五种形状（epoch、ISO、`3分钟前`、`今天 10:05`、`Thu Nov 19 10:00:00 +0800 2026`），只在这里认；格式化也放旁边，因为看列表出问题时两个是一起读的 |
+| `weibo_html.dart` | `weiboHtmlToRichText` `weiboHtmlToText` `decodeHtmlEntities` `voiceStub` | 正文 HTML 进、纯文字加链接出。每个 `<a>` 是人、话题、地名、超话还是视频在这里判定一次，顺带给出占位的地址 |
+| `group_chat_api.dart` | `GroupChatApi.instance` | 群聊后端 `api.weibo.com/webim/*`。另一个域名、另一份 Cookie（weibo.com 的）、另一种错误形状（`result: false` 而不是 `ok: 0`），所以是**独立的类**而不是 `WeiboApi` 的一节——混在一起就会让某个请求带上错的 Cookie，这已经发生过一次 |
+| `weibo_com_session.dart` | `WeiboComSession.instance` | weibo.com 的 Cookie、XSRF 配对、JSON 信封和错误文案。它有**自己的 Dio**（不带 m.weibo.cn 的拦截器），所以这个域名下的请求不可能顺手带上 m.weibo.cn 的 Cookie |
+| `unread_monitor.dart` | `UnreadMonitor.instance` | 未读数。两分钟一次轮询，页面要说「读者正要看」用 `refresh(immediately: true)`。**刷新的节流在它内部**：普通请求至少间隔 30 秒，`immediately` 至少间隔 5 秒（同一次点击里 shell 和 tab 都会来，不该发两个请求）；`shouldAsk` / `sameCounts` 是公开的纯函数，有测试。`force` 参数以前根本没被读，弹跳标签页会一次一下 |
 | `image_prefetch.dart` | `ImagePrefetcher.instance` | 列表图片预取，按 `ImagePreload` 偏好和计费网络判断。取的是列表实际绘制的 `thumbnailUrl`（不是原图——原图每张几 MB，九宫格每屏就是十几 MB，这也是缓存涨得最快的来源）；原图在点开时才下。每预取完一张调一次 `InfImageCache.sweep`（内部限流），预取期间是缓存涨得最快的时段 |
 | `haptics.dart` | `Haptic` 枚举 `HapticThreshold` | 触感反馈词汇表，所有震动都走这里 |
 | `shell_tabs.dart` | `currentShellTab` `ShellTabAware` `shellBarsVisible` `showShellBars` | 底栏当前 Tab；Tab 页用 mixin 的 `onTabShown` 代替生命周期；`shellBarsVisible` 由 `RootShell` 按滚动写入，底栏和各 Tab 顶栏一起跟随，页面只能 `showShellBars()` 叫回、不能隐藏 |
@@ -126,10 +148,10 @@ main()
 | 文件 | 主要符号 | 职责 |
 |---|---|---|
 | `theme.dart` | `infTheme` `accentColor` | 构造 `ThemeData`，包括 `PageTransitionsTheme`（安卓和鸿蒙都是 fade-forwards，不用预测性返回：下层页面也读 navigator 级的手势标志，会换成手势自己的变换、裁圆角，结束时跳回） |
-| `chrome.dart` `chrome_classic.dart` `chrome_glass.dart` `chrome_liquid.dart` | `InfChrome` `ClassicChrome` `GlassChrome` `LiquidChrome` | 三种风格分开实现的界面外壳：顶栏背景、页面底色、底部输入栏 `edgePanel`、悬浮控件 `floatingPanel`、输入面板 `typingSheet`、操作面板、小块底色 `fill`、圆形悬浮按钮 `floatingButton`（发微博）、悬浮胶囊 `floatingCapsule`（信息流「N 条新微博」）、提示条 `snackBar`、顶栏返回键 `actionIconTheme`（进 `theme.dart`）、顶栏右侧按钮组 `barActions`、顶栏下的分区标签 `barTabs`（通知、私信）。页面只调 `InfChrome.of(context)`，不自己判断风格；经典实现全部不透明，模糊和半透明只出现在 `GlassChrome` / `LiquidChrome`。`LiquidChrome` 的悬浮控件用 `liquid_glass_widgets`：悬浮面板是 `GlassContainer`，操作面板是 `GlassSheet`，发微博是玻璃 + **主色图标**的 56 `GlassButton`（底色 `floatingButtonTint` 随「通透度」在 0.32–0.10 之间变），「N 条新微博」胶囊是玻璃 + 主色文字（`floatingCapsuleInk`），提示条是深色 0.78 的 `GlassContainer`；顶栏背景、底部输入栏 `edgePanel` 和页面底色都是纯页面色（不加光晕、不渐隐、不模糊），**极致档例外**：顶栏在内容滚上来时显出磨砂（`_LiquidBarFrost`，走 `GlassSurface` 而不是包里的 `ProgressiveBlur`，因为后者无着色器时退化成裸 `BackdropFilter`，会在 tab / 页面淡入里变灰）；顶栏上的玻璃只有三处：40 的圆形返回 / 关闭键、右侧按钮收进一个玻璃胶囊、通知和私信的分区标签是 38 高的玻璃胶囊，输入面板 `typingSheet` 沿用毛玻璃的实心面板。微博菜单的面板材质由 `InfChrome.statusMenuSurface` 给（`GlassContainer` 按档位；**不用 `backerColor`**——它是裁到 shape 的不透明垫层，过渡时每帧重裁会露黑底） |
+| `chrome.dart` | `InfChrome` `ClassicChrome` `GlassChrome` `LiquidChrome` | 三种风格分开实现的界面外壳：顶栏背景、页面底色、底部输入栏 `edgePanel`、悬浮控件 `floatingPanel`、输入面板 `typingSheet`、操作面板、小块底色 `fill`、圆形悬浮按钮 `floatingButton`（发微博）、悬浮胶囊 `floatingCapsule`（信息流「N 条新微博」）、提示条 `snackBar`、顶栏返回键 `actionIconTheme`（进 `theme.dart`）、顶栏右侧按钮组 `barActions`、顶栏下的分区标签 `barTabs`（通知、私信）。页面只调 `InfChrome.of(context)`，不自己判断风格；经典实现全部不透明，模糊和半透明只出现在 `GlassChrome` / `LiquidChrome`。`LiquidChrome` 的悬浮控件用 `liquid_glass_widgets`：悬浮面板是 `GlassContainer`，操作面板是 `GlassSheet`，发微博是玻璃 + **主色图标**的 56 `GlassButton`（底色 `floatingButtonTint` 随「通透度」在 0.32–0.10 之间变），「N 条新微博」胶囊是玻璃 + 主色文字（`floatingCapsuleInk`），提示条是深色 0.78 的 `GlassContainer`；顶栏背景、底部输入栏 `edgePanel` 和页面底色都是纯页面色（不加光晕、不渐隐、不模糊），**极致档例外**：顶栏在内容滚上来时显出磨砂（`_LiquidBarFrost`，走 `GlassSurface` 而不是包里的 `ProgressiveBlur`，因为后者无着色器时退化成裸 `BackdropFilter`，会在 tab / 页面淡入里变灰）；顶栏上的玻璃只有三处：40 的圆形返回 / 关闭键、右侧按钮收进一个玻璃胶囊、通知和私信的分区标签是 38 高的玻璃胶囊，输入面板 `typingSheet` 沿用毛玻璃的实心面板。微博菜单的面板材质由 `InfChrome.statusMenuSurface` 给（`GlassContainer` 按档位；**不用 `backerColor`**——它是裁到 shape 的不透明垫层，过渡时每帧重裁会露黑底） |
 | `look.dart` | `InfLook`（ThemeExtension） `GlassSurface` `GlassBarBackground` `GlassSheet` `lookBarBackground` | 经典 / 毛玻璃风格。控件用 `InfLook.of(context)` 读取，不直接读 `Prefs`。玻璃分三档：静止的顶栏是浅乳白薄霜加细线，内容滑入下方后全霜；悬浮控件（底栏、热搜榜切换胶囊）全霜并用 `lifted` 投影；输入用的面板（评论框）不用玻璃。模糊一律走 `FadeSafeBackdrop`。液态玻璃在这里存三个滑块值 `refraction` / `liquidClarity` / `liquidShine`（默认都是 0.5）和档位 `liquidTier`，换算成玻璃参数在 `liquid_glass.dart`；`liquidUltra` 是「液态玻璃 + 极致档」的合取，控件问它或下面的 `glassQualityOf` / `glassIsPremium`，不自己判档 |
 | `liquid_glass.dart` | `liquidGlassTheme` `LiquidGlassTheme` `InfGlassQuality` `GlassMerge` `glassQualityOf` `glassIsPremium` | 液态玻璃用 pub 包 `liquid_glass_widgets`（iOS 26 风格的现成控件，不自己写着色器；vendored 在 `third_party/`，本地改动见那里的 `PATCHES.md`）。`main.dart` 里 `LiquidGlassWidgets.initialize()` 预载着色器，`wrap(brightnessResolver: Theme.maybeBrightnessOf)` 让玻璃跟随应用的深浅色。**两档**（`LiquidTier`）：标准走轻量 shader，极致走完整 3D bevel、相邻玻璃融合、顶栏磨砂。分档靠 `InfGlassQuality` 给 `GlassAdaptiveScope` 的 ceiling，而不是逐个传 `quality:`——`resolveQuality` 的最后一步按 ceiling 裁剪，所以一处改全应用生效；但 ceiling 只能压低不能抬高（`GlassButton` 的 fallback 是 `standard`），所以需要 bevel 的表面显式用 `glassQualityOf`。极致档用 `onDiagnostic` 而非 `onQualityChanged` 判断降档，只对 `warmupComplete` / `thermalDegradation` 提示（`staticProbe` 是引擎不支持，提示无用）；**降档是询问不是自动写偏好**：`InfGlassQuality` 是 `StatefulWidget`，`GlassAdaptiveScope` 自己仍会降档（拦不住），降档后弹一次确认框，拒绝则 `_generation++` 换 key 重建 scope 让新适配器重新从 `premium` 起步。开关切换时用 `GlassDuring(active:)` 把范围内玻璃压到 `standard`。`GlassMerge` 包 `AdaptiveLiquidGlassLayer(blendAmount: 14)`，成员 `useOwnLayer: false`，静止分开、按住长出脖子；`glassIsPremium` 同时问自适应 ceiling 和 `ImageFilter.isShaderFilterSupported`，与建层判断保持一致。`liquidGlassTheme` 把三个滑块换算成 `GlassThemeSettings`，三者都在 0.5 时正好是包里的 `ios27Light` / `ios27Dark`：折射 → 厚度 12–52、折射率 1.1–1.38；通透度 → 玻璃底色透明度（浅 0.85→0.21、深 0.22→0.02）和磨砂 28→0；高光 → 边缘亮线 0–2 倍（极致档 2.4 倍）。用到包里控件的地方：`RootShell` 底栏 `GlassTabBar.bottom`（58 高；按下就把光斑移到手指下的那项，松手才真正切换页面）、横屏/平板侧边栏是同一个 `GlassTabBar.bottom` 套 `GlassVerticalBar` 变成竖向、详情页「转发 / 评论」和评论排序 `GlassSegmentedControl`、详情页底部写评论栏（极致档下三个玻璃件由 `GlassMerge` 合成一个面，按住会长出脖子）、`LiquidChrome` 各处、设置页预览。玻璃每帧都要重新折射下方内容，页面转场时下面的页面由 `CoveredSnapshot` 画成一张快照 |
-| `link_preview.dart` | `LinkPreviews` `LinkPreview` | 链接预览：解开跳转和 t.cn，微博/用户/话题走接口或直接起名，普通网页读前 192 KB HTML 的 og:title / description / image；微博自家网页不抓（未登录只会拿到登录页），登录墙标题丢掉；按地址缓存 |
+| `link_preview.dart` | `LinkPreviews` `LinkPreview` | 链接预览：解开跳转和 t.cn，微博/用户/话题走接口或直接起名，普通网页复用单个 `HttpClient` 读前 192 KB HTML 的 og:title / description / image；微博自家网页不抓（未登录只会拿到登录页），登录墙标题丢掉；按地址 LRU 缓存（上限 100），临时网络失败不缓存 |
 | `fade_safe_backdrop.dart` | `FadeSafeBackdrop` `insideFade` | 合成时发现自己处在半透明的 `OpacityLayer` 或任何 `ImageFilterLayer` 里（切换底部标签、页面展开/推入的淡入淡出）就跳过模糊：否则背景模糊采样的是淡入层里的空白，整块玻璃变灰闪一下。`GlassSurface` 用它（液态玻璃的控件自带折射，不经过这里）；新加的模糊不要直接用 `BackdropFilter` |
 | `motion.dart` | `InfMotion` `showInfSheet` `showActionSheet` `afterFrame` | 所有时长和曲线常量；底部面板和操作菜单 |
 | `container_route.dart` | `ContainerOrigin` `ContainerTransformRoute` | 「展开」动效：页面从点到的控件放大展开（卡片 → 详情对齐正文、楼中楼回复框 → 评论详情、按钮 → 编辑页），没有控件时从手指按下处（`ContainerOrigin.atTouch`）展开；含返回手势驱动。手机上卡片用对齐版（卡片内容和详情正文对齐着放大），`containerAlignProfile(t)` 给出那一刻的透明度 / 模糊 / 位移：整页和下面的真卡片交叉淡入淡出（路由没有遮挡层，半透明的页面露出的就是原卡片，所以收尾时不会出现「详情内容缩在卡片框里、再跳成卡片」），淡出用的 `t` 段贴近卡片一端，淡变期间页面停在卡片上方不动，模糊只在页面不可见和已稳定处为零、交叉过半时已 4σ 以上；平板/侧栏布局信息流列和全屏详情宽度不一样，对不齐，所以只做形状缩放 + 页面淡入并叠一层随透明度减弱的动态模糊（`ImageFiltered`）。对齐只用于打开：页面稳定过之后的返回（按键或手势）一律按不对齐的方式缩回卡片并淡出，本条和转发原博返回一致；返回用 400ms `easeInOutCubic`（打开曲线翻转后几乎全部位移挤在开头 100ms，页面像是瞬间消失） |
@@ -142,7 +164,8 @@ main()
 
 | 文件 | 主要符号 | 用途 |
 |---|---|---|
-| `status_card.dart` | `StatusCard` | 信息流微博卡片（头部、正文、转发块、文章卡、操作栏；头部 IP 不被来源挤掉；正文里「…的微博视频」链接直接播放本条视频）。卡片是页面展开的共享元素；长按/点 `⋯` 弹菜单见下面三个 `status_*` 文件。（卡片点击走 `_openCard`：横幅或无地址的卡片先 `cardUrl` 补地址，再不行打开兜底页）正文下显示 `AudioCard`；`saveAllButton`（详情页开）在多图下方放「保存全部 N 张」 |
+| `status_card.dart` | `StatusCard` | 信息流微博卡片的本体（头部、正文、操作栏；头部 IP 不被来源挤掉；正文里「…的微博视频」链接直接播放本条视频）。卡片是页面展开的共享元素；长按/点 `⋯` 弹菜单见下面三个 `status_*` 文件。正文下显示 `AudioCard`；`saveAllButton`（详情页开）在多图下方放「保存全部 N 张」。**卡片自带的东西不在这个文件里了**：文章卡、链接卡（含生日/奖牌横幅）、转发引用块在 `status_card_blocks.dart`，接线由 `status_card_host.dart` 一次给全 |
+| `status_card_blocks.dart` | `ArticleCard` `LinkCardView` `StatusRepostBlock` `openStatusCard` | 卡片正文下面可能出现的三样东西。原来都在 `status_card.dart` 里，770 行混着四种东西；`openStatusCard` 是「点卡片」的补地址逻辑（横幅或无地址先问 `cardUrl`，再不行打开兜底页） |
 | `status_actions.dart` | `StatusAction` `statusActions` `saveAllImages` `confirmBlockUser` | 一条微博能做什么：纯数据（`icon` / `label` / `detail` / `run` / `returns` / `destructive` / `startsGroup`）+ `statusActions()`。**顺序、分组、文案、危险项判定只在这里决定一次**，三种风格共用同一份。`saveAllImages` 存全部图（卡片和菜单共用），`confirmBlockUser` 是 INF 本机的屏蔽确认框（用户主页菜单也用） |
 | `image_actions.dart` | `imageActions` | 大图页长按能做什么，和 `statusActions` 一样是纯数据（`save` / `saveAll` / `onShare` / `original`）。**不可用的行仍然保留**（如「查看原图」在已是原图时），只是 `run` 为 null 并显示原因——删掉它会让上面的行位置变化，而手指还停在上面 |
 | `status_menu_geometry.dart` | `StatusMenuGeometry` `presence` | 菜单的落点与行程，纯几何。两个工厂：`centred`（长按卡片，落屏幕中间，`Rect.lerp` 从卡片张开）/ `anchored`（`⋯`，挂按钮下方 6dp、远边对齐，放不下翻上方，两端留 8dp）。曲线 `easeInOutCubicEmphasized`，和页面展开同一条 |
@@ -158,10 +181,22 @@ main()
 | `viewer_hero.dart` | `ViewerHero` `viewerHeroTags` | 所有能点开大图的图片（九宫格、正文/评论里的图和「查看图片」）都用它当 Hero：原图位置不再被 Hero 一直藏到关闭，只隐藏查看器当前所在那张（`ViewerHero.showing`，`openImage` 设、翻页时改、关闭动画结束时清），左右滑过再拖回不会错位；`viewerHeroTags` 从点开的那个 tag 推出每页的 tag（按在全部媒体里的序号，视频不算页但占号） |
 | `audio_card.dart` | `AudioCard` | 语音微博和播客/音频卡片的播放条（`video_player` 播音频）：同一时间只播一条；进度条一直显示，播放前拖动就从那里开始；m.weibo.cn 的语音没有地址或地址没签名会被 CDN 拒绝，用 `audioClip` 从 weibo.com 换签名地址和语音转文字（没有地址的语音卡片一出现就去取），起播失败再换一次；语音转文字默认收两行 |
 | `smart_image.dart` | `SmartImage` `weiboImageProvider` `isImageInMemory` | 带防盗链 Referer 的网络图片；带签名（`Expires`/`ssig`）的地址去掉查询串作 `cacheKey`，同一头像换了签名仍命中内存和磁盘缓存，显示过就不再淡入；`Avatar` 64 以下统一按 192 解码，各页面共用一份 |
-| `comment_sheet.dart` | `showCommentSheet` `CommentSheet` | 评论 / 回复面板，首页、详情、通知和 `PagedStatusList` 共用；用 `showSurfaceCard` 从被点的按钮长出来（不再从底部升起），两种风格下都是实心面板（`InfChrome.typingSheet`）。没有拖拽条——它不是可下滑的 sheet。可带**一张图**（微博自己的评论框也只给一张，接口只收一个 `picId`）：图在发送时才上传，取消就删掉临时文件；发图是微博的账号权限，没有权限的账号会在上传这一步被拒，`_failure` 把这种情况说明白而不是甩一个"图片上传失败" |
+| `comment_sheet.dart` | `showCommentSheet` `CommentSheet` | 评论 / 回复面板的 UI，首页、详情、通知和 `PagedStatusList` 共用；用 `showSurfaceCard` 从被点的按钮长出来（不再从底部升起），两种风格下都是实心面板（`InfChrome.typingSheet`）。没有拖拽条——它不是可下滑的 sheet。**面板自己不发请求**：文字、图片和两个 id 都交给 `CommentStore.send`，失败文案也在那里。可带**一张图**（微博自己的评论框也只给一张，接口只收一个 `picId`）：图在发送时才上传，取消就删掉临时文件。「同时转发」只在能兑现的地方显示——它走转发接口，接口不接收图片，所以带图时不显示，也不会出现勾了却什么都没发生的情况。`rootId`（线程）与 `commentId`（被回复的那条）分开传，只有回复「回复」时不同。`countOnPost: false` 给只拿到微博 id、没有真实计数的页面（通知）用 |
+| `comment_tile.dart` | `CommentTile` `showCommentActions` `unlinkedPictures` | 一条评论，列表、楼中楼、通知共用。只认回调，不知道自己被哪个列表画着。`awaitable: true` 是「本机刚发出、服务器还没返回」的那条：显示「发送中…」，不提供回复和点赞（那两个动作要一个服务器 id） |
+| `repost_tile.dart` | `RepostTile` | 转发列表里的一行：谁转的、什么时候、说了什么。刻意不是 `StatusCard`——转发里的图和卡片已经在上面那条微博里了 |
+| `detail_bottom_bar.dart` | `DetailBottomBar` `DiscussionSwitch` `CommentSortBar` | 详情页底部的「写评论 / 转发 / 赞」三件套（液态玻璃极致档合成一个面，标准档三个独立玻璃）、转发/评论切换条、按热度/按时间条。从详情页里搬出来，因为它们是三个各自带玻璃分支的控件 |
+| `pager_tail.dart` | `PagerTail` | 分页列表的尾部：加载中转圈、失败给按钮、结束说「没有更多了」。以前六个列表各写一遍，其中一个的重试还调 `loadMore`（会被滚动再次触发）；现在只有这一个，重试走 `PagingController.retryMore` |
+| `status_card_host.dart` | `buildStatusCard` `hiddenByBlock` | 一条微博卡片的**接线工厂**。四张列表（信息流、`PagedStatusList`、详情头、长图）原本各写十几行同样的回调，卡片加一个回调就要改四处。`interactive: false` 给长图用（那是在渲染，不该可点） |
 | `surface_card_route.dart` | `showSurfaceCard` `SurfaceCardRoute` | 会打字的卡片（评论框、回复框）：从被点的控件长到屏幕上，返回缩回同一处。面板贴着**可用高度的底部**，所以键盘上来是抬起面板而不是盖住它；高度在布局里量出来再定位，表情键盘改变高度也落得准。落点每次都重新读被点的控件，因为评论栏会随键盘上下移动——收面板时得折回它**现在**的位置。测试见 `test/surface_card_test.dart` 和 `test/comment_panel_layout_test.dart` |
 | `mention_picker.dart` | `showMentionPicker` `EmojiKeyboard` `EmojiKeyboardSlot` `EmojiPanel` | @ 用户选择器和表情面板，评论面板、编辑页、私信共用。`EmojiKeyboard` 管键盘与表情板的交接：`boardHeight` 是面板要占的高度（键盘让出多少，表情板就多高，逐帧跟着走，所以输入框一行不动），`insetFor` 给钉在屏幕底部的输入栏用（键盘高度 + 表情板高度，交接时总数不变），`boardVisible` 让表情板在交接回键盘的过程中继续画着 |
-| `avatar.dart` / `user_row.dart` | `Avatar` `UserListRow` | 头像、用户行 |
+| `avatar.dart` | `Avatar` | 头像，统一按 192 解码，带 V 标 |
+| `user_row.dart` | `UserListRow` | 用户行：头像、昵称、简介/粉丝数、右侧关注按钮。关注状态由调用方传 `following`（现在来自 `RelationStore`），行本身不监听任何 Store |
+| `chrome_classic.dart` | `ClassicChrome` | 风格之一的实现：全部不透明（`extendsBehindBars` 为 false，`fill` 把半透明色直接压到页面色上），经典纸张观感 |
+| `chrome_glass.dart` | `GlassChrome` | 毛玻璃实现：顶栏与悬浮件用 `GlassSurface` 磨砂，输入面板仍是实心，模糊一律走 `FadeSafeBackdrop` |
+| `chrome_liquid.dart` | `LiquidChrome` | 液态玻璃实现：悬浮控件用 `liquid_glass_widgets` 的 `GlassContainer` / `GlassButton`；极致档顶栏在内容滚上来时显出磨砂（`_LiquidBarFrost`） |
+| `app.dart` | `InfApp` | 主题、`InfLook`、本地化、系统栏样式、字号缩放；只在外观类偏好变化时重建 `MaterialApp`，其他偏好写入不触发全局重建 |
+| `main.dart` | — | 初始化单例（`Prefs` / `PageCache` / `EmojiStore` / 图片缓存管理器），`runApp` |
+| `topic_timeline.dart` | `TopicEvent` `buildTopicTimeline` | 话题的时间线：微博没有公开的事件接口，这条线从「起始微博、上榜记录、阅读趋势、参与讨论的微博」拼出来。纯逻辑，不依赖单例，有测试 |
 | `refresh.dart` | `InfRefreshIndicator` `nestedScrollRefreshPredicate` | 下拉刷新（触发点触感、失败提示）；`NestedScrollView` 里顶部下拉由内层列表（depth 1）上报，要传 `nestedScrollRefreshPredicate` |
 | `shell_top_bar.dart` | `ShellTopBar` `ShellBarBand` | 四个 Tab 页的顶栏：随 `shellBarsVisible` 上滑收起，占位高度不变（页面 `extendBodyBehindAppBar: true`，列表不跳），状态栏那一条始终被背景盖住；`ShellBarBand` 给吸在顶栏下的控件（首页热搜榜单条）跟着走 |
 | `transitions.dart` | `StateSwitcher` `RefreshingBar` `AppearIn` `RowListSkeleton` | 状态切换、后台刷新条、入场动画、骨架 |
@@ -181,24 +216,24 @@ main()
 | `version.dart` | `appVersion`，设置页和「我的」显示用；须与 `pubspec.yaml`、`ohos/AppScope/app.json5` 一致，`test/version_test.dart` 检查 |
 | `cast.dart` | 纯 Dart 的 SSDP 发现 + DLNA AVTransport 投屏 |
 
-原生方法一览（`Native` ↔ `MainActivity`）：`getCookies` `setCookie` `clearCookies` `clearAuthCookies` `userAgent` `openUrl`（可指定包名，`sinaweibo://` 指定 `com.sina.weibo`，避免被其他声明了该 scheme 的 App 截走；支持 `intent:` 地址）`takeLink`（取外部传入的链接：`inf://open?url=<编码后的地址>`、系统交来的 m.weibo.cn / weibo.cn / weibo.com / t.cn 网页地址（清单里的 http(s) intent-filter，未做 autoVerify，安卓 12 起要在系统「默认打开」里勾上这些域名）、别的 App 分享过来的文字（`ACTION_SEND`）；`RootShell` 启动和回到前台时读取，经 `linkInText` 找出链接再 `openLink`。鸿蒙端还没有实现）`sdkInt`（启动时 `Native.init()` 读入 `Native.sdkInt`，鸿蒙为 null）`isMetered` `isPipAvailable` `enterPip` `saveImage` `saveVideo` `peakRefreshRate` `haptic`。新增原生能力时两边同时改，Dart 侧只通过 `Native` 调用。
+原生方法一览（`Native` ↔ `MainActivity` / `NativePlugin.ets`）：`getCookies` `setCookie` `clearCookies` `clearAuthCookies` `userAgent` `openUrl`（可指定包名，`sinaweibo://` 指定 `com.sina.weibo`，避免被其他声明了该 scheme 的 App 截走；支持 `intent:` 地址）`takeLink`（取外部传入的链接：`inf://open?url=<编码后的地址>`、系统交来的 m.weibo.cn / weibo.cn / weibo.com / t.cn 网页地址；Android 还支持别的 App 通过 `ACTION_SEND` 分享过来的文字；`RootShell` 启动和回到前台时读取，经 `linkInText` 找出链接再 `openLink`）`sdkInt`（启动时 `Native.init()` 读入 `Native.sdkInt`，鸿蒙为 null）`isMetered` `isPipAvailable` `enterPip` `saveImage` `saveMotionPhoto` `saveVideo` `peakRefreshRate` `brightness` `setBrightness` `volume` `setVolume` `keepScreenOn` `haptic`。新增原生能力时两边同时改，Dart 侧只通过 `Native` 调用（`test/arch_guard_test.dart` 自动检查三端方法对齐）。
 
-鸿蒙端（`NativePlugin.ets`）实现同一组方法，另加 `share`（share_plus 没有鸿蒙实现，`share.dart` 在鸿蒙上走它）。差异：画中画、`setVolume` 返回 false，`peakRefreshRate` 返回 null；存图存视频走系统保存弹窗，每次需用户确认；实况照片只存静态图。
+鸿蒙端（`NativePlugin.ets`）实现同一组方法，另加 `share`（share_plus 没有鸿蒙实现，`share.dart` 在鸿蒙上走它）。差异：画中画、`setVolume` 返回 false，`peakRefreshRate` 返回 null；存图存视频走系统保存弹窗，每次需用户确认；实况照片只存静态图；`takeLink` 由 `EntryAbility.ets` 的 `onCreate` / `onNewWant` 捕获并暂存。
 
-鸿蒙相关的其余部分：`ohos/` 是鸿蒙工程（`EntryAbility.ets` 注册 `NativePlugin` 并允许第三方 Cookie）；`pubspec.yaml` 里的 `*_ohos` 依赖是各插件的鸿蒙实现；`third_party/material_ui` 与 `third_party/cupertino_ui` 是覆盖 pub.dev 同名包的转发包，因为那两个包对 `TargetPlatform` 做穷举 switch，在多了 `ohos` 的鸿蒙版 Flutter 上编不过。`third_party/liquid_glass_widgets` 是 pub.dev **1.17.3** 的副本，本地改动只有两处（`_lensSize` 竖向胶囊；`_recordGeometryPicture` 的 matte 余量随降采样比例放大），见那里的 `PATCHES.md`；升级时重新复制再按它补。主题里鸿蒙的页面转场按名字匹配 `TargetPlatform.ohos`，所以官方 Flutter 也能编译。
+鸿蒙相关的其余部分：`ohos/` 是鸿蒙工程（`EntryAbility.ets` 注册 `NativePlugin`、允许第三方 Cookie 并捕获外部链接；`module.json5` 声明 `inf://open` 与微博域名 skills）；`third_party/` 收纳了所有 vendored 鸿蒙插件、转发包和带本地补丁的 `liquid_glass_widgets`，各包上游来源、commit ref 与本地改动见 [`third_party/README.md`](third_party/README.md) 及 `third_party/liquid_glass_widgets/PATCHES.md`。主题里鸿蒙的页面转场按名字匹配 `TargetPlatform.ohos`，所以官方 Flutter 也能编译。
 
 ### 3.7 `lib/features/` —— 功能页（L5）
 
 | 目录 | 入口 | 说明 | 打开方式 |
 |---|---|---|---|
 | `shell/` | `RootShell` | 底栏 4 Tab、**新页面滑入覆盖 + 旧页面缩小退后**（新页全程不透明，靠位移表达动感；`test/shell_tab_fade_test.dart` 钉住四条不变量，数值取自源码）、底栏随滚动收起、发微博按钮；**每个 tab 自带一层 `PaperBackground`**（只有外壳一层时两页同时存在会让透明区互相露出内容）；切 tab 期间 `GlassDuring(active:)` 把玻璃压到 standard（premium 的独立合成层在半透明淡入里会闪），结束时靠 `_tabFade` 的状态监听而不是 `whenComplete`；宽窗口或手机横屏下换成左侧 `_SideRail`（Tab 区域用 GlobalKey 保留，切换布局不重建；Tab 区域的 `MediaQuery` 要在 `Scaffold` 下面读，否则键盘高度会被各 Tab 的 `Scaffold` 再扣一次，平板分屏左半边整个缩没） | `InfApp.home` |
-| `feed/` | `FeedPage` + `FeedController` | 首页顶栏三个等宽标签、推荐居中，三页可左右滑动，每页再点一次标题打开选择器：关注（全部关注流，切分组）、推荐（默认「热门」= 登录账号的 m.weibo.cn 102803 个性化流；「推荐」及其余频道 = weibo.com 游客推荐频道；`recommend_channels_sheet.dart` 选频道）、热搜（`HotBoardChips` 切榜单，标题处打开榜单管理）；底栏「首页」单击作用于当前页（回顶/刷新） | Tab 0 |
+| `feed/` | `FeedPage` + `FeedController` + `FeedReadingPosition` | 首页顶栏三个等宽标签、推荐居中，三页可左右滑动，每页再点一次标题打开选择器：关注（全部关注流，切分组）、推荐（默认「热门」= 登录账号的 m.weibo.cn 102803 个性化流；「推荐」及其余频道 = weibo.com 游客推荐频道；`recommend_channels_sheet.dart` 选频道）、热搜（`HotBoardChips` 切榜单，标题处打开榜单管理）；底栏「首页」单击作用于当前页（回顶/刷新）。**读到哪、来了几条新的、要不要给「上次读到」**这一套决定在 `feed_reading_position.dart`：它只吃「帖子 id 列表 + 某行的 y 位移」，不碰渲染，所以有 10 条测试直接钉它（`test/feed_reading_position_test.dart`）；页面只负责按它的要求滚动、按它算出的数字画胶囊 | Tab 0 |
 | `notify/` | `NotifyPage` | 通知四个子 Tab | Tab 1 |
 | `captcha/` | `showCaptchaDialog` | 微博安全验证：写接口返回 `error_type: captcha` 时，用 m.weibo.cn 自己的 `validate-loader` + 网易易盾弹出拼图，完成后把返回字段并进原请求重发一次；关闭则操作不执行 | `solveCaptcha`（`WeiboApi.captchaSolver`，经 `rootNavigatorKey` 弹在当前页面上） |
 | `place/` | `showPlaceSheet` | 地点面板：图、名称、到访统计、地址（可复制），地点详情网页、用地图导航（`geo:` 交给地图 App，没有就开高德网页） | `openPlace`（正文里的位置链接、卡片位置行） |
 | `message/` | `MessagePage` `ChatPage` `GroupInfoPage` `GroupMembersPage` `ChatSearchPage` `chat_link_sheet` | 私信列表、单聊/群聊、私信链接面板；顶栏 ⋯ 打开 `GroupInfoPage`（群名/人数/群主/管理员/群公告/消息免打扰/分享群/复制群号/退出；群主和管理员可改公告）；成员条点进去是 `GroupMembersPage`（分页加载 + 按昵称搜索 + 群主/管理员标记 + 等级）；顶栏放大镜是 `ChatSearchPage`（在已加载的聊天记录里搜、高亮命中、可以「继续往前找」）。**群资料全部来自 api.weibo.com 的 webim**（`groupchat/query.json?id=` 一次给出名字、人数、群主、管理员和 `bulletin` 公告；`query_group.json?id=&source=209678993&query_member=1` 给成员；`push_settings.json?dgid=` 给免打扰）——m.weibo.cn 没有任何群资料接口，只有消息页 `title` 里的 `群名(828)`。参数名的坑见 `DEVLOG.md`。消息里的链接在气泡下显示预览卡（`LinkPreviews`）；消息列表倒序（offset 0 是最新），首帧就停在底部；按会话在内存里记住最近消息，再次进入直接显示；对方头像用列表传进来的那张（`openChat(avatar:)`） | Tab 2 / `openChat` |
 | `profile/` | `ProfilePage` | 「我」、菜单入口（我的微博 → 自己的 `UserPage`、草稿箱、浏览记录、赞过……）、退出 | Tab 3 |
-| `detail/` | `StatusDetailPage` `CommentTile` `showCommentActions` `CommentFloorPage` | 微博详情、评论/转发切换（点标签或左右滑）、评论按热度/按时间（`comments/hotflow` 的 `max_id_type` 0/1）、楼中楼（顶部显示主评论，取自 `hotFlowChild` 的 `rootComment`）；评论下的回复预览和转发列表里，图片显示为「查看图片」，点开直接看图。点一条评论弹「评论 / 复制」卡：`showCommentActions` 走 `showGlassActions`，从**被点的那条评论**展开、退回那条评论（`CommentTile.onTap` 接 `BuildContext` 当锚点） | `openStatus` |
+| `detail/` | `StatusDetailPage`（壳）`DiscussionLists` `CommentFloorPage` | 分四个文件：`status_detail_page.dart` 是页面壳（加载微博、两个 pager、底栏和分享菜单、NestedScrollView 的页头），`discussion_lists.dart` 是评论与转发两个列表加交叉淡化和左右滑切换，`comment_floor_page.dart` 是楼中楼，评论行在 `core/widgets/comment_tile.dart`。评论按热度/按时间（`comments/hotflow` 的 `max_id_type` 0/1；接口不回 `max_id_type` 时沿用请求的那个，否则「按时间」翻页会串回热度序）。**评论首屏有磁盘缓存**（`PageCache` 的 `comments-<statusId>-<0|1>`），所以详情页打开就是上次的讨论而不是骨架屏。下拉刷新同时重取微博本体并**采用**它的结果。发评论和回复不整表刷新：刚发出的那条由 `CommentStore` 叠在列表顶部标「发送中…」，评论数在 `StatusStore` 里加。楼中楼收的是整条微博（`openCommentFloor(context, status:, root:)`），回复按这条微博发，`rootId` 与 `replyToId` 分开 | `openStatus` |
 | `compose/` | `ComposePage` | 发博/转发、多图、草稿 | `openCompose` |
 | `user/` | `UserPage` `UserSearchPage` | 他人主页（「我」页的「我的微博」也进这里）：整个资料头放在 `SliverAppBar` 里，封面顶到状态栏下，分栏是它的 `bottom`；资料头高度量出来再定展开高度。上滑收起后 `_HeaderLockPhysics` 锁住外层滚动，微博列表滑回顶部也不再展开（余量交给内层作下拉刷新），点顶栏才展开。资料头显示获赞、转评赞和 `ProfileExtras.facts`；封面优先用 weibo.com `profile/info` 的 `cover_image_phone`（`profileCover`：取 `;` 前第一张、640 裁切换 `mw2000`、两张默认封面换成网页版自己显示的那张），没有再用 m.weibo.cn 的；用户名旁是性别、按 `verified_type(_ext)` 上色的 V（`VerifiedBadge`）和会员图标（`VipIcon`，VIP 最高 7、SVIP 10、VVIP 5 级有图）；点头像用 `avatarLarge` 看大图。右上角 ⋯ 是 `showGlassActions`：分享用户、搜索微博（`UserSearchPage`，`openUserSearch`）、一键拉黑（`blacklist`）、举报用户（`userReportLink`）、屏蔽此人 / 取消屏蔽（本机）——菜单贴在按钮下方（`StatusMenuPlacement.anchored`），`Builder` 取按钮自己的 context 当锚点。分栏按 `ProfileTab`（`profileExtras` 返回的 `tabList`）增减。微博（全部 / 原创 / 图片 / 视频筛选，`ProfilePostFilter`）、精选、音频、文章用 `PagedStatusList`；视频是封面网格（点按播放，长按开微博）；相册是图片墙（点按进查看器，长按开原微博）。各分栏第一次显示时才加载 | `openUser` `openUserSearch` |
 | `topic/` | `HotTopicPage` `TopicPage` `SuperTopicsPage` | 热搜/话题详情：头部只留排名与标签、两行导语、主持人、一行热度摘要（点开「热点数据」面板看热度/阅读/讨论、24 小时阅读趋势、上榜记录、贡献者/媒体）、单行相关搜索、相关用户和「参与讨论/全站搜索」，下方吸顶「综合/实时/热门/视频」；`TopicPage` 用于赞过、container 流和话题内关键词搜索 | `openTopic` `openHotTopic` `openLiked` `openTopicFeed` `openSuperTopics` |
@@ -223,7 +258,8 @@ main()
 
 项目**没有使用 Provider / Riverpod / Bloc**。如果以后要引入，需要整体迁移，不要和单例模式混用。约定如下：
 
-- **全局状态 = 单例 + `ChangeNotifier`**：`Session` `Prefs` `StatusStore` `UnreadMonitor` `EmojiStore` 都是 `Xxx.instance`；`WeiboApi` `PageCache` `ImagePrefetcher` 也是单例，但不通知监听者。
+- **全局状态 = 单例 + `ChangeNotifier`**：`Session` `Prefs` `StatusStore` `UnreadMonitor` `EmojiStore` `RelationStore` `CommentStore` 都是 `Xxx.instance`；`WeiboApi` `PageCache` `ImagePrefetcher` 也是单例，但不通知监听者。
+- **只显示一条微博或一条评论的控件，不要监听整个 Store**：用 `StatusStore.instance.of([id])` 拿到只对该 id 醒来的 `Listenable`。监听整个 Store 会让列表里的每一行在任何一条被点赞时重建；`test/status_store_scope_test.dart` 数的是重建次数，钉住这件事。
 - **页面状态 = `StatefulWidget` + `setState`**；页面逻辑较复杂时拆出页面级 `ChangeNotifier` 控制器（目前只有 `FeedController`）。
 - **列表 = `PagingController<T>`**，由页面 `State` 创建和 `dispose`，用 `AnimatedBuilder` / `ListenableBuilder` 监听。
 - **跨页面共享的可变实体状态放进 Store**：例如点赞状态只存在 `StatusStore`，列表渲染时用 `StatusStore.instance.apply(status)` 取当前值。
@@ -249,11 +285,13 @@ Widget  ──创建──▶ PagingController<T>(fetch: (cursor) => WeiboApi.in
 
 | 要做的事 | 放在哪里 / 怎么做 |
 |---|---|
-| 新接口 | 在 `WeiboApi` 对应分节里加方法，只能用 `_get` / `_post` / `_postMultipart` / `_numberedPage`；JSON 解析写到 `parse.dart`；需要新模型就加到 `models.dart` |
+| 新接口 | 在对应的 `api_<域名>.dart` part 文件里加方法（`extension WeiboApiXxx on WeiboApi`），只能用类里的 `_get` / `_post` / `_postMultipart` / `_numberedPage`；**不要把这些传输方法搬进 extension**，extension 调不到另一个 extension 的私有成员。JSON 解析写到 `parse.dart`；需要新模型就加到 `models.dart` |
+| 发私信 | 用 `MessageSender.text` / `MessageSender.image`，不要在页面里直接调 `sendMessage` / `sendChatImage` |
+| 未读数 | 用 `UnreadMonitor.instance.refresh(immediately: true)` 表示"读者正要看"；不要自己加定时器或直接调 `unread()` |
 | 列表首屏秒开 | 在 API 方法里 `cursor == null` 时 `PageCache.instance.write(session.uid, key, data)`，再提供 `cachedXxx()`，页面里 `pager.seed(...)` |
 | 新页面 | `features/<模块>/<名字>_page.dart`；在 `navigation.dart` 里加 `openXxx(context, …)`，**其他地方只调 `openXxx`，不要直接 `Navigator.push`** |
 | 新底栏 Tab 的子页面 | 混入 `ShellTabAware`，在 `onTabShown` 里加载 |
-| 微博列表 | 直接用 `PagedStatusList(pager: …)`；用户列表用 `PeoplePagerList` |
+| 微博列表 | 直接用 `PagedStatusList(pager: …)`；用户列表用 `PeoplePagerList`；列表尾部 `PagerTail(pager)`；要自己画一行的用 `buildStatusCard(context, status, heroScope:)`，不要把十几行回调再抄一遍 |
 | 页面顶栏 | `Scaffold(extendBodyBehindAppBar: InfLook.of(context).glass, appBar: AppBar(flexibleSpace: lookBarBackground(context), …))`，列表顶部留 `MediaQuery.paddingOf(context).top`，与现有页面保持一致 |
 | 底部面板 / 长按菜单 | 底部面板用 `showInfSheet` / `showActionSheet`（`motion.dart`）；**一条微博或一条评论的操作菜单**用 `showStatusMenu` / `showGlassActions`（`core/widgets/status_menu_route.dart`），它从被点的位置长到落点、松手不执行、三种风格共用同一份行；**大图页长按**走同一个 `showGlassActions` + `imageActions()`，起点是手指落点（`menuOriginAt`）；**要打字的卡片**（评论框、回复框）用 `showSurfaceCard`（`core/widgets/surface_card_route.dart`），同样从被点的控件长出来并缩回去 |
 | 动画时长、曲线 | 用 `InfMotion` 的常量，不要在页面里写魔法数字 |
@@ -269,14 +307,15 @@ Widget  ──创建──▶ PagingController<T>(fetch: (cursor) => WeiboApi.in
 | WebView | `InfWebView` |
 | 跨页面同步的状态（如收藏、关注） | 仿照 `StatusStore` 建 Store：乐观更新、失败回滚、触感 |
 | 原生能力 | `MainActivity.kt` 的 `when` 分支 + `NativePlugin.ets` 的 `switch` 分支 + `Native` 静态方法 |
-| 测试 | `test/`：`widget_test.dart` 测解析，`paging_test.dart` 测分页，`layout_test.dart` 测宽度分档与内容留白，`image_cache_test.dart` 测缓存回收与缩略图档位，`temp_files_test.dart` 测临时文件与草稿图片的生命周期。不依赖单例的纯逻辑都应该补测试；碰文件系统的测试用 `PathProviderPlatform` 的假实现指到临时目录 |
+| 测试 | `test/`：`widget_test.dart` 测解析，`fixture_parse_test.dart` 用 `test/fixtures/` 里的真实回包测每个解析器（**改 `parse.dart` 的字段名会让它红**），`endpoint_matrix_test.dart` 把 `core/endpoints.dart` 和 `api_*.dart` 里真实的传输调用对齐，`arch_guard_test.dart` 守住分层依赖、`PagerTail` 重试、缓存统一落点、细粒度监听和双端 MethodChannel 契约，`paging_test.dart` 测分页，`layout_test.dart` 测宽度分档与内容留白，`image_cache_test.dart` 测缓存回收与缩略图档位，`temp_files_test.dart` 测临时文件与草稿图片的生命周期。不依赖单例的纯逻辑都应该补测试；碰文件系统的测试用 `PathProviderPlatform` 的假实现指到临时目录 |
+| 新增接口的 fixture | 在 `test/fixtures/` 放一份真实回包（按那里的 `README.md` 裁列表长度、抹掉 `user_token`），在 `fixture_parse_test.dart` 加断言，再在 `core/endpoints.dart` 补一行 |
 
 ## 7. 持久化一览
 
 | 存储 | 位置 | 内容 |
 |---|---|---|
 | SharedPreferences | `Prefs` | 外观、触感、首页来源、搜索历史、草稿、浏览记录（最多 60 条）、表情、上次 uid、欢迎页、图片缓存上限 |
-| 文件 `app_support/page_cache/*.json` | `PageCache` | `feed` `profile` `notify-<kind>` `conversations-<strangers>` 的第一页原始 JSON，按 `Session.cacheScope` 隔离 |
+| 文件 `app_support/page_cache/*.json` | `PageCache` | `feed` `profile` `notify-<kind>` `conversations-<strangers>` `comments-<statusId>-<0\|1>` 的第一页原始 JSON，按 `Session.cacheScope` 隔离。详情页的评论首屏靠它秒开 |
 | 图片缓存 `cache/libCachedImageData/` | `InfImageCache` | 唯一的图片磁盘缓存：`SmartImage`、预取、看图页、存图共用。上限在设置里选（200 MB / 500 MB / 1 GB / 2 GB / 不清理，默认 500 MB），按字节从最久没看过的开始删，降到上限的 90%（`doomed`）。启动、回到前台、预取队列跑空时各检查一次，5 分钟内不重复。表情图片（`EmojiStore.urls`）不参与回收，清空缓存时也留下 |
 | 暂存文件 `cache/inf-temp/` | `TempFiles` | 存图、分享、视频下载、长图、私信发图写出的副本。用完当场删，`sweep` 在启动时删掉留下超过 24 小时的，顺带清理旧版本直接写在 cache 根目录的 `INF-*` / `inf-long-*` / `chat-*` |
 | 草稿图片 `documents/drafts/` | `DraftFiles` | 发微博选的图，从 picker 复制进来（草稿要活过系统清缓存）。发送、删稿、从微博里移除时删对应文件，`sweep` 拿草稿列表比对、删掉没人引用的孤儿 |
@@ -284,7 +323,19 @@ Widget  ──创建──▶ PagingController<T>(fetch: (cursor) => WeiboApi.in
 
 ## 8. 体量较大的文件（改动前先通读相关部分）
 
-行数会变，这里按体量排序、不写死数字（`wc -l` 随时可查）：`core/parse.dart`（近 2000 行，所有解析）、`features/detail/status_detail_page.dart`（近 1900 行，详情 + 评论/转发两个列表 + 交叉淡化）、`core/api.dart`（1100 余行，所有接口）、`features/media/image_viewer_page.dart`（1100 行，手势状态机）、`core/widgets/status_card.dart`（750 余行）、`features/compose/compose_page.dart`（近 600 行）。
+**这一节的数字由脚本生成，不要手改。** 运行：
+
+```bash
+python3 tools/doc_facts.py            # 打印当前文件数、总行数和超过 700 行的文件
+python3 tools/doc_facts.py --check    # 与本文档第 8 节对比，不一致就失败
+python3 tools/doc_facts.py --update   # 把本文档里的数字改对
+```
+
+`--check` 同时检查**第 3 节是否漏了文件**：每个 `lib/**.dart` 要么有自己的表格行，要么它的目录（`| `detail/` |`）有行。改了模块职责或新增文件后跑一次，比人肉核对可靠。
+
+判断标准不是行数，而是**一个文件里装了几个概念**。已经拆过的：详情页 1900 → 424 行（壳），其余在 `discussion_lists.dart` / `comment_floor_page.dart` / `comment_tile.dart` / `detail_bottom_bar.dart`；`api.dart` 的群聊后端（`group_chat_api.dart`）和 weibo.com 的 Cookie（`weibo_com_session.dart`）已独立；`parse.dart` 的时间、计数、HTML 在各自文件里；`status_card.dart` 的文章/链接/转发块在 `status_card_blocks.dart`。
+
+`user_page.dart` 是剩下最大的一块，但它是自洽的：资料头吸顶、分栏懒加载、封面展开高度是同一套状态。要动时按「资料头 / 分栏列表 / 分栏各自的墙」切，不要为了行数把它拆散。
 
 ## 9. 有意保留的结构
 

@@ -9,6 +9,7 @@ import '../core/widgets/covered_snapshot.dart';
 import '../core/widgets/viewer_hero.dart';
 import '../features/captcha/captcha_dialog.dart';
 import '../features/compose/compose_page.dart';
+import '../features/detail/comment_floor_page.dart';
 import '../features/detail/status_detail_page.dart';
 import '../features/friends/friends_page.dart';
 import '../features/history/drafts_page.dart';
@@ -101,9 +102,9 @@ Future<void> openStatus(
 }
 
 /// The replies under one comment of a post.
-Future<void> openCommentFloor(BuildContext context, {required String statusId, required Comment root}) => pushInf(
+Future<void> openCommentFloor(BuildContext context, {required Status status, required Comment root}) => pushInf(
       context,
-      CommentFloorPage(statusId: statusId, commentId: root.id, root: root),
+      CommentFloorPage(status: status, commentId: root.id, root: root),
       pane: 'floor:${root.id}',
     );
 
@@ -148,8 +149,6 @@ Future<void> openCompose(
   BuildContext context, {
   DraftType type = DraftType.original,
   String? statusId,
-  String? commentId,
-  String? replyToName,
   int? draftId,
   String? initialText,
 }) =>
@@ -158,8 +157,6 @@ Future<void> openCompose(
       ComposePage(
         type: type,
         statusId: statusId,
-        commentId: commentId,
-        replyToName: replyToName,
         draftId: draftId,
         initialText: initialText,
       ),
@@ -274,6 +271,7 @@ Future<void> openImage(
   required List<Media> media,
   int index = 0,
   String? heroTag,
+  Future<List<Media>>? moreImages,
 }) {
   final images = media.where((m) => m.kind == MediaKind.image).toList();
   final initial = images.indexOf(media[index]);
@@ -291,6 +289,7 @@ Future<void> openImage(
         images: images,
         initialIndex: initial,
         heroTags: heroTags,
+        moreImages: moreImages,
       ),
       transitionsBuilder: (context, animation, secondaryAnimation, child) => child,
     ),

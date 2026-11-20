@@ -2,7 +2,7 @@
 
 INF：用 Flutter 写的微博第三方客户端，走 m.weibo.cn / weibo.com 网页版接口。支持 Android 和鸿蒙 NEXT（手机与平板）。
 
-动手前先读 [`CODE_MAP.md`](CODE_MAP.md)：分层、每个文件管什么、新功能放哪里都在里面。本文件只列必须遵守的规则和常用命令。
+动手前先读 [`CODE_MAP.md`](CODE_MAP.md)：分层、每个文件管什么、新功能放哪里都在里面。`NEXT.md` 讲这套架构的取舍、下一步该做什么、以及**为什么不做某些看起来该做的事**——动手改结构之前先看它。本文件只列必须遵守的规则和常用命令。
 
 ## 文档和代码冲突时，以代码为准
 
@@ -24,7 +24,7 @@ export PUB_CACHE=$PWD/.tools/pub-cache HOME=$PWD/.tools/home \
 FLUTTER=../.tools/flutter/bin/flutter
 
 $FLUTTER analyze
-$FLUTTER test
+$FLUTTER test --concurrency=1                                 # 并发跑会因内存不足崩，dart 直接 dump 栈
 $FLUTTER build apk --debug --target-platform android-arm64   # 调试包
 $FLUTTER build apk --release --target-platform android-arm64 # 正式包
 $SDK/platform-tools/adb install -r build/app/outputs/flutter-apk/app-debug.apk
@@ -34,14 +34,16 @@ Flutter SDK 在工作区外（`../.tools/flutter`），运行时要写它的 `bi
 
 鸿蒙用 OpenHarmony 版 Flutter 执行 `flutter build hap --release`，见 `README.md`。
 
-改完代码至少跑 `flutter analyze` 和 `flutter test`，两者都要干净。
+改完代码至少跑 `flutter analyze` 和 `flutter test`，两者都要干净。改了 `lib/` 的文件数或新增/删除文件后，再跑 `python3 tools/doc_facts.py --check`：它核对 `CODE_MAP.md` 里写的文件数，并检查第 3 节是否漏了文件。CI 也会跑这一步。
 
 ## 架构规则
 
 - 只允许上层依赖下层：`features/*` → `core/navigation.dart` → `core/widgets/*` 与 UI 基础 → 状态单例 → `api`/`parse`/`models` → `native`。`core/` 里只有 `navigation.dart` 可以 import `features/*`。
 - 功能页之间不互相 import；两个以上页面要用的控件放进 `core/widgets/`。
 - 不引入 Provider / Riverpod / Bloc。全局状态是 `Xxx.instance` 单例 + `ChangeNotifier`，页面状态用 `setState`，列表用 `PagingController<T>`。
-- 跨页面共享的可变状态（点赞、收藏、关注）放进 Store，乐观更新、失败回滚，参照 `StatusStore`。
+- 跨页面共享的可变状态（点赞、收藏、关注、屏蔽）放进 Store，乐观更新、失败回滚：`StatusStore`（点赞/收藏/计数）、`CommentStore`（评论发送与待确认）、`RelationStore`（关注/屏蔽）。页面里不要再各自存一份。
+- 一条微博卡片不要在新页面里重新接线：用 `buildStatusCard(context, status, heroScope:)`（`core/widgets/status_card_host.dart`）。列表尾部用 `PagerTail(pager)`，重试交给它。
+- 只有 m.weibo.cn 的接口加在 `api.dart` 及它的 `part` 文件（`api_<域名>.dart`，每个是一个 `extension ... on WeiboApi`）；群聊（`api.weibo.com`）在 `GroupChatApi`，weibo.com 的凭据在 `WeiboComSession`。**凭据不同的接口不要放进同一个类**。传输层（`_get` / `_post` / `_asVisitor`）必须留在 `WeiboApi` 类里，extension 调不到另一个 extension 的私有成员。
 
 ## 写代码时的约定
 
@@ -58,6 +60,8 @@ Flutter SDK 在工作区外（`../.tools/flutter`），运行时要写它的 `bi
 | 动画时长、曲线 | 用 `InfMotion` 常量 |
 | 按宽度调整布局 | 只用 `WindowClass.of(context)` 和 `contentGutter` / `ContentColumn` / `ContentBar` |
 | 底部面板、长按菜单 | `showInfSheet` / `showActionSheet`；微博/评论的操作菜单用 `showStatusMenu` / `showGlassActions`（`core/widgets/status_menu_route.dart`） |
+| 评论 / 回复 | 一律 `showCommentSheet` → `CommentStore.send`（`core/widgets/comment_sheet.dart` / `core/comment_store.dart`）；不要在页面里直接调 `WeiboApi.comment` / `reply`，也不要发完自己 `refresh()` 整个列表 |
+| 失败提示 | 列表和详情的错误态用 `ErrorView`（`core/error_text.dart`，未登录时带「去登录」），不要拼 `error.toString()` |
 | Tab 页加载数据 | 混入 `ShellTabAware`，在 `onTabShown` 里加载，不在 `initState` 里发请求 |
 | 原生能力 | 同时改 `MainActivity.kt` 的 `when`、`NativePlugin.ets` 的 `switch` 和 `Native` 静态方法 |
 | 新偏好 | `Prefs` 里加字段和 `setXxx()`；影响外观的同步进 `app.dart` 的 `_Appearance` |
@@ -77,7 +81,14 @@ Flutter SDK 在工作区外（`../.tools/flutter`），运行时要写它的 `bi
 ## Git
 
 - 在 `dev` 上开发，发布合到 `main`。提交信息用英文，一句话说清这次改了什么（参照 `git log`）。
-- 只推 `main` 和标签，不推 `dev`：`dev` 只在本地，远端只保留发布历史。`main` 是 `dev` 的祖先（`dev` 上有一个把 `main` 合进来的 merge 提交），要同步时在 `main` 上做快照提交，保持 `main` 一条直线：`git checkout main && git merge --squash dev && git commit`。不要 rebase `dev` 到 `main`，两条历史的内容早已一致，重放 60 多个提交只会撞出一堆冲突。
+- 只推 `main` 和标签，不推 `dev`：`dev` 只在本地，远端只保留发布历史。
+- **发版是三步，第二步不能漏。** 漏掉第二步，`main` 就不再是 `dev` 的祖先：下一次 `git merge --squash dev` 的 merge-base 会退到很早的提交，同一批文件被当成两边都改过，整片冲突；而且标签会打在一个 `dev` 里根本不存在的提交上。
+  1. `git checkout main && git merge --squash dev && git commit` —— 快照，保持 `main` 一条直线。
+  2. `git checkout dev && git merge main` —— **把 main 收回 dev**，让 `main` 重新成为 `dev` 的祖先（`-s ours` 也可以，内容本来就一致）。
+  3. 打标签、推标签。
+  自检：`git merge-base --is-ancestor main dev && echo ok`，以及每个标签 `git merge-base --is-ancestor <tag>^{} dev`。
+- 不要 rebase `dev` 到 `main`，两条历史的内容早已一致，重放 60 多个提交只会撞出一堆冲突。
+- `dev` 与 `main` 的树本来就该一致（发版后 `dev` 可能只多几个还没发的东西）；**树一致不代表拓扑正确**，`--squash` 每次都造新提交，必须靠第 2 步缝合。
 - 发版：在 `main` 上打与版本号同名的附注标签（`git tag -a 1.5.0 -m "标题" -m "正文"`）再推标签，`release.yml` 会自动编译 APK 和 HAP 并发 Release。标签名与版本号不一致会直接失败。标签正文原样成为 Release 说明，所以正文要写这个项目整体有什么功能，而不只是本次改了什么。细节见 `README.md`「打标签发版」。
 - 不提交：`.tools/`、`build/`、APK、`android/local.properties`、`android/app/debug.keystore`、日志、截图录屏、Cookie 文件。
 - 不要推送或改动远端，除非用户明确要求。

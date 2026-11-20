@@ -13,11 +13,20 @@ class PagingController<T> extends ChangeNotifier {
     required this.id,
     this.pageSize = 20,
     this.keepTailOnRefresh = false,
+    this.remember,
   });
 
   final Future<PageResult<T>> Function(String? cursor) fetch;
   final String Function(T item) id;
   final int pageSize;
+
+  /// Called for every item that arrives, including the ones a cache seeded the list with.
+  ///
+  /// This is the ingestion point for posts: [Entities] needs to see each answer once, and a list is
+  /// where answers land. Filing from a widget's `build` instead would re-file whatever copy that
+  /// row happens to hold — including an older one — and putting an old count back over a fresher
+  /// one is exactly the drift this is meant to stop.
+  final void Function(T item)? remember;
 
   /// For newest-first lists: a refresh the reader did not pull keeps what was already loaded below
   /// the fresh first page instead of throwing it away, so the post being read survives — the feed
@@ -41,8 +50,15 @@ class PagingController<T> extends ChangeNotifier {
   Object? error;
   Object? moreError;
   bool _inFlight = false;
+  bool _refreshing = false;
+  int _generation = 0;
   bool _disposed = false;
   bool _background = false;
+
+  /// A failed append is not retried by scrolling. [onScroll] is called on every frame of a fling,
+  /// so a list left at the bottom kept sending the same request — and Weibo answers that with
+  /// 「操作频繁」 rather than a page. Only [retryMore], which the footer's button calls, tries again.
+  bool _moreBlocked = false;
 
   /// The items shown came from the on-disk cache and have not been refreshed yet.
   bool stale = false;
@@ -75,8 +91,19 @@ class PagingController<T> extends ChangeNotifier {
   /// Completes with whether the first page arrived. [background] marks a refresh the user did
   /// not start by pulling, so the list can show its own quiet progress instead of the spinner.
   Future<bool> refresh({bool quiet = false, bool background = false}) async {
-    if (_inFlight) return true;
+    final foreground = !background && !quiet;
+    if (_refreshing) {
+      // A user-pulled refresh preempts an in-flight background refresh (such as startup bridging);
+      // otherwise a duplicate or lower-priority refresh steps aside without faking success.
+      if (!foreground || !_background) return false;
+    } else if (_inFlight) {
+      // A user-pulled refresh preempts an in-flight loadMore; a background refresh leaves it alone.
+      if (!foreground) return false;
+      loadingMore = false;
+    }
+    final gen = ++_generation;
     _inFlight = true;
+    _refreshing = true;
     _background = background;
     if (!quiet) {
       loading = true;
@@ -88,6 +115,7 @@ class PagingController<T> extends ChangeNotifier {
       // this is what makes pull-to-refresh and the home double-tap feel like
       // a refresh instead of a jump back to the skeleton.
       final page = await fetch(null);
+      if (_disposed || gen != _generation) return false;
       final before = items.isEmpty ? const <String>{} : _seen.toSet();
       final headIds = {for (final item in page.items) id(item)};
       // A refresh the reader pulled starts from the top on purpose, so when the fresh page does not
@@ -107,7 +135,14 @@ class PagingController<T> extends ChangeNotifier {
       var next = page.nextCursor;
       final walk = keptIds.isNotEmpty && (background || quiet);
       for (var walked = 0; walk && !reached && next != null && walked < _bridgePages; walked++) {
-        final more = await fetch(next);
+        final PageResult<T> more;
+        try {
+          more = await fetch(next);
+        } catch (_) {
+          // Keep the fresh first page even if bridging an older gap fails.
+          break;
+        }
+        if (_disposed || gen != _generation) return false;
         final after = more.nextCursor;
         if (more.items.isEmpty || after == next) break;
         for (final item in more.items) {
@@ -132,10 +167,15 @@ class PagingController<T> extends ChangeNotifier {
       }
       _markFresh(before, fresh: headIds);
       error = null;
+      // A later page that failed before is not reported again once the list has been reloaded: its
+      // footer said 「加载失败」 over content that has since been replaced.
+      moreError = null;
       stale = false;
+      _moreBlocked = false;
       refreshedAt = DateTime.now();
       return true;
     } catch (e) {
+      if (_disposed || gen != _generation) return false;
       if (items.isEmpty) {
         error = e;
         hasMore = false;
@@ -144,10 +184,13 @@ class PagingController<T> extends ChangeNotifier {
       }
       return false;
     } finally {
-      loading = false;
-      _inFlight = false;
-      _background = false;
-      _notify();
+      if (gen == _generation) {
+        loading = false;
+        _inFlight = false;
+        _refreshing = false;
+        _background = false;
+        _notify();
+      }
     }
   }
 
@@ -173,13 +216,15 @@ class PagingController<T> extends ChangeNotifier {
   }
 
   Future<void> loadMore() async {
-    if (_inFlight || loading || loadingMore || !hasMore) return;
+    if (_inFlight || loading || loadingMore || !hasMore || _moreBlocked) return;
+    final gen = _generation;
     _inFlight = true;
     loadingMore = true;
     moreError = null;
     _notify();
     try {
       final page = await fetch(cursor);
+      if (_disposed || gen != _generation) return;
       _append(page.items);
       final previous = cursor;
       cursor = page.nextCursor;
@@ -187,16 +232,28 @@ class PagingController<T> extends ChangeNotifier {
         hasMore = false;
       }
     } catch (e) {
+      if (_disposed || gen != _generation) return;
       moreError = e;
+      _moreBlocked = true;
     } finally {
-      loadingMore = false;
-      _inFlight = false;
-      _notify();
+      if (gen == _generation) {
+        loadingMore = false;
+        _inFlight = false;
+        _notify();
+      }
     }
+  }
+
+  /// Tries the failed page again; the footer's 「加载失败，点此重试」 calls this rather than
+  /// [loadMore], so a scroll can never be the thing that retries.
+  Future<void> retryMore() {
+    _moreBlocked = false;
+    return loadMore();
   }
 
   void _append(List<T> incoming) {
     for (final item in incoming) {
+      remember?.call(item);
       if (_seen.add(id(item))) items.add(item);
     }
   }
@@ -222,6 +279,19 @@ class PagingController<T> extends ChangeNotifier {
 
   void _notify() {
     if (!_disposed) notifyListeners();
+  }
+
+  /// Disposes after the current frame finishes so widgets listening to this controller can detach
+  /// during their rebuild instead of calling [removeListener] on a disposed [ChangeNotifier].
+  void disposeDeferred() {
+    if (_disposed) return;
+    if (!hasListeners) {
+      dispose();
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_disposed) dispose();
+    });
   }
 
   @override

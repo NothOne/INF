@@ -6,7 +6,7 @@ import '../media_save.dart';
 import '../models.dart';
 import '../native.dart';
 import '../navigation.dart' show openWeb;
-import '../prefs.dart';
+import '../relation_store.dart';
 import '../session.dart';
 import '../share.dart';
 import '../status_store.dart';
@@ -154,7 +154,7 @@ Future<void> confirmBlockUser(BuildContext context, User user) async {
     ),
   );
   if (ok != true) return;
-  await Prefs.instance.setBlocked(user, true);
+  await RelationStore.instance.setBlocked(user, true);
   Haptic.success.play();
   if (context.mounted) showMessage(context, '已屏蔽 @${user.screenName}');
 }

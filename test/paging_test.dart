@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:inf_flutter/core/models.dart';
 import 'package:inf_flutter/core/paging.dart';
@@ -84,6 +86,129 @@ void main() {
     expect(pager.items, isEmpty);
     expect(pager.error, isA<StateError>());
     expect(pager.hasMore, isFalse);
+    pager.dispose();
+  });
+
+  test('a failed append is not retried by scrolling, only by the footer button', () async {
+    // A list left at the bottom sends a scroll notification on every frame of the fling, so a
+    // failed page used to be asked for again and again — which Weibo answers with 「操作频繁」.
+    var attempts = 0;
+    final pager = PagingController<String>(
+      fetch: (cursor) async {
+        if (cursor == null) return const PageResult(['a'], '2');
+        attempts++;
+        throw StateError('offline');
+      },
+      id: (item) => item,
+    );
+    await pager.refresh();
+    await pager.loadMore();
+    expect(attempts, 1);
+    expect(pager.moreError, isA<StateError>());
+
+    await pager.loadMore();
+    expect(attempts, 1, reason: 'a scroll must not be the thing that retries');
+
+    await pager.retryMore();
+    expect(attempts, 2);
+    pager.dispose();
+  });
+
+  test('a successful refresh makes the next append possible again', () async {
+    var fail = true;
+    final pager = PagingController<String>(
+      fetch: (cursor) async {
+        if (cursor == null) return const PageResult(['a'], '2');
+        if (fail) throw StateError('offline');
+        return const PageResult(['b'], null);
+      },
+      id: (item) => item,
+    );
+    await pager.refresh();
+    await pager.loadMore();
+    expect(pager.moreError, isA<StateError>());
+
+    fail = false;
+    await pager.refresh();
+    expect(pager.moreError, isNull);
+    await pager.loadMore();
+    expect(pager.items, ['a', 'b']);
+    pager.dispose();
+  });
+
+  test('a user-pulled refresh preempts an in-flight loadMore and ignores its late result', () async {
+    final moreGate = Completer<PageResult<String>>();
+    var refreshes = 0;
+    final pager = PagingController<String>(
+      fetch: (cursor) async {
+        if (cursor == null) {
+          refreshes++;
+          return refreshes == 1
+              ? const PageResult(['a', 'b'], '2')
+              : const PageResult(['fresh', 'a'], '2');
+        }
+        return moreGate.future;
+      },
+      id: (item) => item,
+    );
+    await pager.refresh();
+    final loadingMore = pager.loadMore();
+    expect(pager.loadingMore, isTrue);
+
+    expect(await pager.refresh(), isTrue);
+    expect(pager.items, ['fresh', 'a']);
+
+    // The superseded loadMore finishes late and must not pollute the fresh list.
+    moreGate.complete(const PageResult(['stale-c'], '3'));
+    await loadingMore;
+    expect(pager.items, ['fresh', 'a']);
+    pager.dispose();
+  });
+
+  test('a user-pulled refresh preempts an in-flight background refresh', () async {
+    final bgGate = Completer<PageResult<String>>();
+    var call = 0;
+    final pager = PagingController<String>(
+      fetch: (cursor) async {
+        call++;
+        if (call == 1) return const PageResult(['a'], '2');
+        if (call == 2) return bgGate.future;
+        return const PageResult(['newest', 'a'], '2');
+      },
+      id: (item) => item,
+    );
+    await pager.refresh();
+    final bg = pager.refresh(background: true);
+
+    expect(await pager.refresh(), isTrue);
+    expect(pager.items, ['newest', 'a']);
+
+    bgGate.complete(const PageResult(['old-bg'], null));
+    expect(await bg, isFalse);
+    expect(pager.items, ['newest', 'a']);
+    pager.dispose();
+  });
+
+  test('a bridge failure during background refresh still keeps the fresh first page', () async {
+    var first = true;
+    final pager = PagingController<String>(
+      keepTailOnRefresh: true,
+      fetch: (cursor) async {
+        if (cursor == null) {
+          if (first) {
+            first = false;
+            return const PageResult(['old1', 'old2'], 'old-next');
+          }
+          return const PageResult(['new1', 'new2'], 'bridge-1');
+        }
+        throw StateError('bridge failed');
+      },
+      id: (item) => item,
+    );
+    await pager.refresh();
+    expect(await pager.refresh(background: true), isTrue);
+    expect(pager.items, ['new1', 'new2']);
+    expect(pager.cursor, 'bridge-1');
     pager.dispose();
   });
 }

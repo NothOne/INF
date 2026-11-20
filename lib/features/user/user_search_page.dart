@@ -4,6 +4,7 @@ import '../../core/api.dart';
 import '../../core/look.dart';
 import '../../core/models.dart';
 import '../../core/paging.dart';
+import '../../core/status_store.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/paged_status_list.dart';
 
@@ -38,6 +39,7 @@ class _UserSearchPageState extends State<UserSearchPage> {
       _pager = PagingController<Status>(
         fetch: (cursor) => WeiboApi.instance.searchUserStatuses(widget.uid, query, cursor),
         id: (status) => status.id,
+        remember: StatusStore.instance.remember,
       )..refresh();
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => old?.dispose());

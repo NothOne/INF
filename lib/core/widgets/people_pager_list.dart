@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 
-import '../../core/api.dart';
-import '../../core/haptics.dart';
+import '../error_text.dart';
 import '../../core/layout.dart';
 import '../../core/models.dart';
 import '../../core/navigation.dart';
 import '../../core/paging.dart';
+import '../../core/relation_store.dart';
 import '../../core/session.dart';
 import '../../core/widgets/common.dart';
+import '../../core/widgets/pager_tail.dart';
 import '../../core/widgets/refresh.dart';
 import '../../core/widgets/user_row.dart';
 
@@ -32,7 +33,6 @@ class _PeoplePagerListState extends State<PeoplePagerList> with AutomaticKeepAli
     fetch: widget.fetch,
     id: (user) => user.id,
   );
-  final Map<String, bool> _following = {};
   final Set<String> _busy = {};
 
   @override
@@ -50,35 +50,27 @@ class _PeoplePagerListState extends State<PeoplePagerList> with AutomaticKeepAli
     super.dispose();
   }
 
+  /// [RelationStore] owns the state; this list only keeps a busy mark per row.
   Future<void> _toggle(User user) async {
     if (_busy.contains(user.id)) return;
-    final next = !(_following[user.id] ?? user.following);
-    (next ? Haptic.toggleOn : Haptic.toggleOff).play();
-    setState(() {
-      _busy.add(user.id);
-      _following[user.id] = next;
-    });
-    try {
-      await WeiboApi.instance.setFollowing(user.id, next);
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _following[user.id] = !next);
-      Haptic.error.play();
-      showMessage(context, error is ApiException ? error.message : '操作失败');
-    } finally {
-      if (mounted) setState(() => _busy.remove(user.id));
-    }
+    setState(() => _busy.add(user.id));
+    final failure = await RelationStore.instance.toggleFollowing(user);
+    if (!mounted) return;
+    setState(() => _busy.remove(user.id));
+    showMessage(context, failure);
   }
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
     return AnimatedBuilder(
-      animation: _pager,
+      // The follow button reads RelationStore, so a tap on the same person elsewhere has to rebuild
+      // this row too.
+      animation: Listenable.merge([_pager, RelationStore.instance]),
       builder: (context, _) {
         if (_pager.loading && _pager.items.isEmpty) return const LoadingFooter();
         if (_pager.error != null && _pager.items.isEmpty) {
-          return Center(child: ErrorRetry(message: _pager.error.toString(), onRetry: _pager.refresh));
+          return Center(child: ErrorView(error: _pager.error, onRetry: _pager.refresh));
         }
         if (_pager.items.isEmpty) return EmptyHint(text: widget.emptyText, icon: Icons.people_outline_rounded);
         return NotificationListener<ScrollNotification>(
@@ -98,21 +90,13 @@ class _PeoplePagerListState extends State<PeoplePagerList> with AutomaticKeepAli
               itemCount: _pager.items.length + 1,
               itemBuilder: (context, index) {
                 if (index == _pager.items.length) {
-                  if (_pager.loadingMore) return const LoadingFooter();
-                  if (_pager.moreError != null) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      child: Center(child: TextButton(onPressed: _pager.loadMore, child: const Text('加载失败，点此重试'))),
-                    );
-                  }
-                  if (!_pager.hasMore) return const LoadingFooter(text: '没有更多了');
-                  return const SizedBox(height: 18);
+                  return PagerTail(_pager, gap: 18);
                 }
                 final user = _pager.items[index];
                 final isSelf = user.id == Session.instance.uid;
                 return UserListRow(
                   user: user,
-                  following: _following[user.id] ?? user.following,
+                  following: RelationStore.instance.following(user),
                   busy: _busy.contains(user.id),
                   onToggleFollow: isSelf ? null : () => _toggle(user),
                   onTap: () => openUser(context, user.id),

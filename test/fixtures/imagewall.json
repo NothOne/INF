@@ -1,0 +1,41 @@
+{
+ "data": {
+  "album_list": [
+   {
+    "pic_title": "地点",
+    "containerid": "2318261727858283_-_pc_profile_album_-_place_index",
+    "pic": "https://wx2.sinaimg.cn/webp720/66fd066bgy1h5ws5vvco8j23402c0hdu.jpg"
+   },
+   {
+    "pic_title": "原创",
+    "containerid": "2318261727858283_-_pc_profile_album_-_photo_-_camera_-_0_-_%E5%8E%9F%E5%88%9B",
+    "pic": "https://wx3.sinaimg.cn/webp720/66fd066bgy1hnls0z77zbj23402c0b2a.jpg"
+   }
+  ],
+  "album_since_id": 0,
+  "since_id": "5365117943939141_5365407271880331|1034:5365407134187531_20261119_-1",
+  "list": [
+   {
+    "pid": "66fd066bly1ij7edtbktij20z40mogpg",
+    "mid": "5366946537145448",
+    "is_paid": false,
+    "timeline_month": "11",
+    "timeline_year": "2026",
+    "object_id": "1042018:6855f203a0e39ea5e04aa4b65ca3b064",
+    "type": "pic"
+   },
+   {
+    "pid": "66fd066bly1ij7eelzuzzj20xe122tjs",
+    "mid": "5366946537145448",
+    "is_paid": false,
+    "timeline_month": "11",
+    "timeline_year": "2026",
+    "object_id": "1042018:95c9d85aea9bd2f8b57471b3b51e0eff",
+    "type": "pic"
+   }
+  ]
+ },
+ "bottom_tips_visible": false,
+ "bottom_tips_text": "",
+ "ok": 1
+}

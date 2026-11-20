@@ -1,0 +1,84 @@
+{
+ "data": {
+  "sunshine_credit": {
+   "level": "阳光信用极好"
+  },
+  "followers": {
+   "total_number": 0
+  },
+  "birthday": " ",
+  "created_at": "2010-04-10 10:23:10",
+  "description": "传播技术。不争论，只拉黑。个人网站：https://baoyu.io",
+  "gender": "m",
+  "ip_location": "",
+  "education": {
+   "school": "DePaul University"
+  },
+  "label_desc": [
+   {
+    "name": "年度最具影响力AI大V",
+    "normal_mode": {
+     "word_color": "#FF507DAF",
+     "background_color": "#1A578AC3"
+    },
+    "dark_mode": {
+     "word_color": "#FF5885B6",
+     "background_color": "#FF181818"
+    },
+    "scheme_url": "https://m.weibo.cn/z/recommend/aggregation?activity_id=104457&showmenu=0&luicode=10000198&ext=activity_theme:profile_cube"
+   },
+   {
+    "name": "V指数 AI 76.55分",
+    "normal_mode": {
+     "word_color": "#FFFF6200",
+     "background_color": "#59FFDDCB"
+    },
+    "dark_mode": {
+     "word_color": "#FFEA8011",
+     "background_color": "#FF181818"
+    },
+    "scheme_url": "https://v6.bang.weibo.com/newczv/1060?date=20261109&period_type=week&show_from=profile&uid=1727858283"
+   },
+   {
+    "name": "热门科技博主 数据飙升",
+    "normal_mode": {
+     "word_color": "#FFFF6200",
+     "background_color": "#59FFDDCB"
+    },
+    "dark_mode": {
+     "word_color": "#FFEA8011",
+     "background_color": "#FF181818"
+    },
+    "scheme_url": "sinaweibo://browser?url=https%3A%2F%2Frank.h5.weibo.cn%2Ffunny%2F1585813315411%2F1727858283%3Fshowmenu%3D0"
+   },
+   {
+    "name": "昨日发博6，阅读数100万+，互动数1191",
+    "normal_mode": {
+     "word_color": "#FFFF6200",
+     "background_color": "#59FFDDCB"
+    },
+    "dark_mode": {
+     "word_color": "#FFEA8011",
+     "background_color": "#FF181818"
+    },
+    "scheme_url": "sinaweibo://wbox?id=lnyjxza0e8&blogger_uid=1727858283"
+   },
+   {
+    "name": "视频累计播放量1.37亿",
+    "normal_mode": {
+     "word_color": "#FFFF6200",
+     "background_color": "#59FFDDCB"
+    },
+    "dark_mode": {
+     "word_color": "#FFEA8011",
+     "background_color": "#FF181818"
+    },
+    "scheme_url": ""
+   }
+  ],
+  "desc_text": "前微软Asp.Net最有价值专家  2025微博年度新知博主",
+  "verified_url": "https://verified.weibo.com/verify?fr=myverified?uid=1727858283",
+  "friend_info": "他有 <a>505</a> 个好友"
+ },
+ "ok": 1
+}

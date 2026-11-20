@@ -16,7 +16,7 @@ class ViewedPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return AnimatedBuilder(
-      animation: Prefs.instance,
+      animation: Prefs.instance.viewedNotifier,
       builder: (context, _) {
         final entries = Prefs.instance.viewed;
         return Scaffold(

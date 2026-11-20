@@ -32,7 +32,7 @@ void main() {
     // The bracket code becomes an image widget, not loose text.
     expect(find.textContaining('[心]'), findsNothing);
     expect(
-      tester.widgetList<Widget>(find.byType(Padding)).where((w) => w is Padding).length,
+      tester.widgetList<Widget>(find.byType(Padding)).whereType<Padding>().length,
       greaterThan(0),
     );
   });

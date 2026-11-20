@@ -20,7 +20,10 @@ class ErrorRetry extends StatelessWidget {
   const ErrorRetry({super.key, this.message, required this.onRetry});
 
   final String? message;
-  final VoidCallback onRetry;
+
+  /// Null when trying again cannot help, which leaves the message without a button rather than a
+  /// button that fails the same way.
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -40,8 +43,10 @@ class ErrorRetry extends StatelessWidget {
             ),
           ),
         ],
-        const SizedBox(height: 6),
-        TextButton(onPressed: onRetry, child: const Text('重试')),
+        if (onRetry != null) ...[
+          const SizedBox(height: 6),
+          TextButton(onPressed: onRetry, child: const Text('重试')),
+        ],
       ],
     );
   }
@@ -125,7 +130,7 @@ class SectionHeader extends StatelessWidget {
               style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
             ),
           ),
-          if (action != null) action!,
+          ?action,
         ],
       ),
     );

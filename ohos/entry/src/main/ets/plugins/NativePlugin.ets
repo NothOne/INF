@@ -1,4 +1,4 @@
-import { UIAbility, common } from '@kit.AbilityKit';
+import { UIAbility, Want, common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { audio } from '@kit.AudioKit';
 import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
@@ -41,8 +41,48 @@ export default class NativePlugin implements FlutterPlugin, AbilityAware, Method
   /** The engine the page asks for a high frame rate while a finger is on it; see [voteFrameRate]. */
   private static engine: FlutterPluginBinding | null = null;
 
+  /** The link a Want brought (`inf://open?url=…` or a Weibo URL), until Dart takes it. */
+  private static pendingLink: string | null = null;
+
   getUniqueClassName(): string {
     return TAG;
+  }
+
+  /** Captures an incoming link from EntryAbility's onCreate / onNewWant for `takeLink`. */
+  static captureWant(want: Want | undefined): void {
+    const link = NativePlugin.extractLink(want?.uri);
+    if (link != null) {
+      NativePlugin.pendingLink = link;
+    }
+  }
+
+  private static extractLink(rawUri: string | undefined): string | null {
+    if (rawUri == null || rawUri.length === 0) return null;
+    const uri = rawUri.trim();
+    const lower = uri.toLowerCase();
+    if (lower.startsWith('http://') || lower.startsWith('https://')) {
+      return uri;
+    }
+    if (lower.startsWith('inf://')) {
+      const rest = uri.substring(6);
+      const qIndex = rest.indexOf('?');
+      if (qIndex < 0) return null;
+      const hostAndPath = rest.substring(0, qIndex).toLowerCase();
+      if (hostAndPath !== 'open' && hostAndPath !== 'open/') return null;
+      const query = rest.substring(qIndex + 1);
+      for (const pair of query.split('&')) {
+        if (pair.startsWith('url=')) {
+          const encoded = pair.substring(4).replace(/\+/g, ' ');
+          if (encoded.length === 0) return null;
+          try {
+            return decodeURIComponent(encoded);
+          } catch (_) {
+            return encoded;
+          }
+        }
+      }
+    }
+    return null;
   }
 
   /**
@@ -114,6 +154,12 @@ export default class NativePlugin implements FlutterPlugin, AbilityAware, Method
       case 'userAgent':
         result.success(webview.WebviewController.getDefaultUserAgent());
         break;
+      case 'takeLink': {
+        const link = NativePlugin.pendingLink;
+        NativePlugin.pendingLink = null;
+        result.success(link);
+        break;
+      }
       case 'openUrl':
         result.success(await this.openUrl(this.str(call, 'url')));
         break;

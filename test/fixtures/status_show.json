@@ -1,0 +1,544 @@
+{
+ "ok": 1,
+ "data": {
+  "visible": {
+   "type": 0,
+   "list_id": 0
+  },
+  "created_at": "Tue Dec 23 10:53:09 +0800 2025",
+  "id": "5246969136287056",
+  "mid": "5246969136287056",
+  "edit_count": 16,
+  "can_edit": false,
+  "edit_at": "Thu Apr 09 07:33:59 +0800 2026",
+  "text": "整理个置顶贴，把一些我的常用提示词放在这里<br /><br />另外我很多提示词已经封装成了 Skills，比如文章插图、封面图、小红书、PPT、故事漫画等，可以直接使用：github.com/jimliu/baoyu-skills<br /><br />工具类<br /><br />1. 生成卡通信息图的提示词：<a  href=\"https://weibo.com/1727858283/QfCLYnJyZ\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br /><br />2. 生成 Slides 的提示词和工作流：<a  href=\"https://weibo.com/1727858283/Qjprx4Z4a?pagetype=profilefeed\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br /><br />3. 提取 YouTube 视频字幕为带发言人和时间戳格式化文本的提示词 <a  href=\"https://weibo.com/1727858283/Q6uOKv7KT\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a> <br /><br />4. 翻译提示词 <a  href=\"https://weibo.com/1727858283/Q9NIwyNgM\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br /><br />5. 提取讨论帖中的精华内容 <a  href=\"https://weibo.com/1727858283/QdtqTmODL\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br /><br />6. 用来帮助推荐文章的提示词 <a  href=\"https://weibo.com/1727858283/Q3hLEEQwV\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br /><br />7. 根据 YouTube 视频生成 Blog 文章的提示词 <a  href=\"https://weibo.com/1727858283/Q671Voz0X\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br /><br />8. 把学术论文变成科普文章的提示词 <a  href=\"https://www.weibo.com/1727858283/QanChBeih?pagetype=profilefeed\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br /><br />9. 把文章变成黑板报的提示词 <a  href=\"https://www.weibo.com/1727858283/Qft0fyfkl?pagetype=profilefeed\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br /><br />10. 根据文章生成公众号封面的提示词 <a  href=\"https://weibo.com/1727858283/QjSQqqbVh\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br /><br />11. 内容分析解读提示词 <a  href=\"https://weibo.com/1727858283/QkjRvn6qd\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br /><br />12. 将文章、故事变成漫画脚本提示词 <a  href=\"https://weibo.com/1727858283/Qks0H78Mh\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br /><br />13. AI 帮你做小红书配图提示词 <a  href=\"https://weibo.com/1727858283/QmJbPdxvL\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br /><br />14. 群聊精华提取专家 <a  href=\"https://weibo.com/1727858283/QvQsAC24F\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br /><br />（持续更新中） <br /><br />画图类<br /><br />1. 城市天气卡片提示词 <a  href=\"https://weibo.com/1727858283/QfH62kMuQ\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />2. 古今混搭幽默水墨插画之小黄人 <a  href=\"https://weibo.com/1727858283/Qf7xKjRSm\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />3. 赛博名片 <a  href=\"https://weibo.com/1727858283/QgGyi8r7m\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />4. 给孩子生成画涂色的画 <a  href=\"https://weibo.com/1727858283/QgFee8cvm\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />5. 3D等距视角的彩色插画 <a  href=\"https://weibo.com/1727858283/QgCC6EvdJ\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />6. 将你的 X 资料变成赛博卡片提示词 <a  href=\"https://weibo.com/1727858283/QguwkesiN\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />7. 把品牌变成一个充满奇趣的迷你概念店 <a  href=\"https://weibo.com/1727858283/QgiYWy4tG\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />8. 手绘风格的旅行手账插画 <a  href=\"https://weibo.com/1727858283/QgbElu8qG\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />9. Out the Window 漫画 <a  href=\"https://weibo.com/1727858283/QfVU9Dlz5\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />10. 可爱日历插画 <a  href=\"https://weibo.com/1727858283/QfHDlF8jD\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />11. 古今混搭幽默水墨插画之仙女骑扫地机器人 <a  href=\"https://weibo.com/1727858283/Qf9Hov5ru\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />12. 古今混搭幽默水墨插画之三英飙车战吕布 <a  href=\"https://weibo.com/1727858283/QeSvj9zET\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />13. 把动画人物变成现实世界人物 <a  href=\"https://weibo.com/1727858283/QgQvYfCSW\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />14. 手绘风格的信息图卡片 <a  href=\"https://weibo.com/1727858283/QeSpCyJDw\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />15. 输入公司名字或者股票代码以及日期，生成一张带有公司特色的实时股票价格图 <a  href=\"https://weibo.com/1727858283/QgN0huFA9\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />16. 用 AI 测一下你的运势如何 <a  href=\"https://weibo.com/1727858283/QgXLk7bE2\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />17. 利用上传的照片准确还原人物特征，生成一张充满少女感与时尚元素的拼贴肖像画，呈现清新明亮的韩系杂志风 <a  href=\"https://weibo.com/1727858283/Qh94lbJQh\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />18. 把城市漂浮在咖啡杯的奶泡之上 <a  href=\"https://weibo.com/1727858283/QhhbyDTv1\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />19. 生成裸眼 3D 大屏图片 <a  href=\"https://weibo.com/1727858283/Qhj3Y73C9\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />20. 在一张图中展示同一场景在一年四季的变化 <a  href=\"https://weibo.com/1727858283/QhoCc0Njm\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />21. 一张照片，两个时代的完美融合 <a  href=\"https://weibo.com/1727858283/QhwAD5NV3\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />22. 把照片变成证件照 <a  href=\"https://weibo.com/1727858283/Qhx68pz3d\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />23. 将场景化为霓虹与玻璃生物的超现实世界 <a  href=\"https://weibo.com/1727858283/QhFUb8edb\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />24. 让现实与内心力量相遇的魔镜提示词 <a  href=\"https://weibo.com/1727858283/QhHgjqfZq\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />25. 现实世界 × 异界传送门 × 动漫角色 <a  href=\"https://weibo.com/1727858283/QhOuducoL\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />26. 漂流瓶中的黑珍珠号 <a  href=\"https://weibo.com/1727858283/QhYFGcrXB\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />27. 咖啡杯中的史诗级海盗海战 <a  href=\"https://weibo.com/1727858283/Qi1E9ywJ1\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />28. 用 nano banana pro 做画本 <a  href=\"https://weibo.com/1727858283/Qict8qARe\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />29. 如果历史大咖们也有社交媒体账号 <a  href=\"https://weibo.com/1727858283/QikJgFfTU\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />30. 以树叶剪纸艺术呈现生动的场景 <a  href=\"https://weibo.com/1727858283/QivxyFnBN\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />31. 治愈系植物叶片艺术 <a  href=\"https://weibo.com/1727858283/QiAocqrQe\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />32. 超治愈的“扁平涂鸦”插画提示词 <a  href=\"https://weibo.com/1727858283/Qjzrmuffj\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />33. 在烟花秀中展示字母、符号 <a  href=\"https://weibo.com/1727858283/QjNK9cYDl\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a><br />34. 手绘风信息图提示词 <a  href=\"https://weibo.com/1727858283/QzXiDrbww\" data-hide=\"\"><span class='url-icon'><img style='width: 1rem;height: 1rem' src='https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png'></span><span class=\"surl-text\">网页链接</span></a>",
+  "textLength": 2813,
+  "source": "微博网页版",
+  "favorited": false,
+  "pic_ids": [
+   "66fd066bgy1i8kn5q55iwj21jk0v0u0x",
+   "66fd066bgy1i8kn5xl7w2j21jk0v0kjl",
+   "66fd066bgy1i8ks1i04otj21jk0v0kjl",
+   "66fd066bgy1i8lf1zcfygj21uo1ds7wj"
+  ],
+  "pic_focus_point": [
+   {
+    "focus_point": {
+     "left": 0.00828,
+     "top": 0.18826,
+     "width": 0.99172,
+     "height": 0.55363
+    },
+    "pic_id": "66fd066bgy1i8lf62ei6qj216o24ghdu"
+   },
+   {
+    "focus_point": {
+     "left": 0.02959,
+     "top": 0.34866,
+     "width": 0.97041,
+     "height": 0.65134
+    },
+    "pic_id": "66fd066bgy1i8lf5w2gjaj21b41y8x6p"
+   },
+   {
+    "focus_point": {
+     "left": 0.06759,
+     "top": 0.29273,
+     "width": 0.92392,
+     "height": 0.51578
+    },
+    "pic_id": "66fd066bgy1i8lf5o68klj216o24gb29"
+   },
+   {
+    "focus_point": {
+     "left": 0.27124,
+     "top": 0.03396,
+     "width": 0.52642,
+     "height": 0.96604
+    },
+    "pic_id": "66fd066bgy1i8lf4mkofqj226816ou0y"
+   }
+  ],
+  "thumbnail_pic": "https://wx3.sinaimg.cn/thumbnail/66fd066bgy1i8kn5q55iwj21jk0v0u0x.jpg",
+  "bmiddle_pic": "http://wx3.sinaimg.cn/bmiddle/66fd066bgy1i8kn5q55iwj21jk0v0u0x.jpg",
+  "original_pic": "https://wx3.sinaimg.cn/large/66fd066bgy1i8kn5q55iwj21jk0v0u0x.jpg",
+  "is_paid": false,
+  "mblog_vip_type": 0,
+  "user": {
+   "id": 1727858283,
+   "screen_name": "宝玉xp",
+   "profile_image_url": "https://tva3.sinaimg.cn/crop.0.0.180.180.180/66fd066bjw1e8qgp5bmzyj2050050aa8.jpg?KID=imgbed,tva&Expires=1795078534&ssig=rFaaEZW3S0",
+   "profile_url": "https://m.weibo.cn/u/1727858283?launchid=10000360-page_H5",
+   "close_blue_v": false,
+   "description": "传播技术。不争论，只拉黑。个人网站：https://baoyu.io",
+   "follow_me": false,
+   "following": false,
+   "follow_count": 563,
+   "followers_count": "115.6万",
+   "cover_image_phone": "https://tva1.sinaimg.cn/crop.0.0.640.640.640/549d0121tw1egm1kjly3jj20hs0hsq4f.jpg",
+   "avatar_hd": "https://ww3.sinaimg.cn/orj480/66fd066bjw1e8qgp5bmzyj2050050aa8.jpg",
+   "badge": {
+    "bind_taobao": 1,
+    "unread_pool": 1,
+    "vip_activity2": 4,
+    "unread_pool_ext": 1,
+    "dzwbqlx_2016": 1,
+    "follow_whitelist_video": 1,
+    "user_name_certificate": 1,
+    "suishoupai_2018": 1,
+    "wenchuan_10th": 1,
+    "super_star_2018": 1,
+    "worldcup_2018": 34,
+    "dailv_2018": 6,
+    "qixi_2018": 1,
+    "weibo_display_fans": 1,
+    "relation_display": 1,
+    "wbzy_2018": 1,
+    "hongbaofei_2019": 1,
+    "hongrenjie_2019": 1,
+    "china_2019": 1,
+    "hongbao_2020": 2,
+    "feiyan_2020": 1,
+    "graduation_2020": 1,
+    "pc_new": 7,
+    "hongrenjie_2020": 1,
+    "china_2020": 1,
+    "yuanlongping_2021": 1,
+    "ylpshuidao_2021": 1,
+    "gaokao_2021": 1,
+    "party_cardid_state": 2,
+    "aoyun_2021": 1,
+    "hongbaofei2022_2021": 2,
+    "video_visible": 1,
+    "gaokao_2022": 1,
+    "hongrenjie_2022": 1,
+    "gaokao_2023": 1,
+    "yayunhuiguoqi_2023": 1,
+    "user_identity_auth": 1,
+    "gaokao_2024": 1,
+    "biyeji_2024": 1,
+    "kaixueji_2024": 1,
+    "gaokao_2025": 1,
+    "kxj_2025": 1
+   },
+   "statuses_count": 61063,
+   "verified": true,
+   "verified_type": 0,
+   "gender": "m",
+   "mbtype": 12,
+   "svip": 1,
+   "urank": 46,
+   "mbrank": 2,
+   "followers_count_str": "115.6万",
+   "verified_type_ext": 1,
+   "verified_reason": "前微软Asp.Net最有价值专家  2025微博年度新知博主 科技博主",
+   "like": false,
+   "like_me": false,
+   "special_follow": false,
+   "user_token": "scrubbed"
+  },
+  "reposts_count": 1944,
+  "comments_count": 190,
+  "reprint_cmt_count": 0,
+  "attitudes_count": 2296,
+  "mixed_count": 0,
+  "favorites_count": 0,
+  "pending_approval_count": 0,
+  "isLongText": true,
+  "show_mlevel": 0,
+  "darwin_tags": [],
+  "ad_marked": false,
+  "mblogtype": 0,
+  "item_category": "status",
+  "rid": "0_0_0_2023796243510885739_0_0_0",
+  "number_display_strategy": {
+   "apply_scenario_flag": 51,
+   "display_text_min_number": 1000000,
+   "display_text": "100万+"
+  },
+  "comment_guide_ext": "guide_type:-1|source:1",
+  "content_auth": 3,
+  "content_auth_list": [
+   {
+    "content_auth": 3,
+    "show_type": 0,
+    "rank": 90
+   }
+  ],
+  "ask_zhisou": false,
+  "is_show_mixed": false,
+  "safe_tags": 281496451547200,
+  "comment_manage_info": {
+   "comment_permission_type": -1,
+   "approval_comment_type": 0,
+   "comment_sort_type": 0,
+   "comment_anon_type": 0
+  },
+  "pic_num": 18,
+  "author_type": 1,
+  "mlevel": 0,
+  "region_name": "发布于 美国",
+  "region_opt": 1,
+  "detail_bottom_bar": 0,
+  "style_config": {
+   "remove_blank_line_flag": 1
+  },
+  "pics": [
+   {
+    "pid": "66fd066bgy1i8kn5q55iwj21jk0v0u0x",
+    "url": "https://wx3.sinaimg.cn/orj360/66fd066bgy1i8kn5q55iwj21jk0v0u0x.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 483,
+     "height": 270,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx3.sinaimg.cn/mw2000/66fd066bgy1i8kn5q55iwj21jk0v0u0x.jpg",
+     "geo": {
+      "width": "2000",
+      "height": "1116",
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8kn5xl7w2j21jk0v0kjl",
+    "url": "https://wx4.sinaimg.cn/orj360/66fd066bgy1i8kn5xl7w2j21jk0v0kjl.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 483,
+     "height": 270,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx4.sinaimg.cn/mw2000/66fd066bgy1i8kn5xl7w2j21jk0v0kjl.jpg",
+     "geo": {
+      "width": "2000",
+      "height": "1116",
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8ks1i04otj21jk0v0kjl",
+    "url": "https://wx3.sinaimg.cn/orj360/66fd066bgy1i8ks1i04otj21jk0v0kjl.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 483,
+     "height": 270,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx3.sinaimg.cn/mw2000/66fd066bgy1i8ks1i04otj21jk0v0kjl.jpg",
+     "geo": {
+      "width": "2000",
+      "height": "1116",
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8lf1zcfygj21uo1ds7wj",
+    "url": "https://wx4.sinaimg.cn/orj360/66fd066bgy1i8lf1zcfygj21uo1ds7wj.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 361,
+     "height": 270,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx4.sinaimg.cn/mw2000/66fd066bgy1i8lf1zcfygj21uo1ds7wj.jpg",
+     "geo": {
+      "width": 2048,
+      "height": 1529,
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8lf34avbvj21uo1ds7wj",
+    "url": "https://wx3.sinaimg.cn/orj360/66fd066bgy1i8lf34avbvj21uo1ds7wj.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 361,
+     "height": 270,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx3.sinaimg.cn/mw2000/66fd066bgy1i8lf34avbvj21uo1ds7wj.jpg",
+     "geo": {
+      "width": 2048,
+      "height": 1529,
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8lf4mkofqj226816ou0y",
+    "url": "https://wx1.sinaimg.cn/orj360/66fd066bgy1i8lf4mkofqj226816ou0y.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 495,
+     "height": 270,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx1.sinaimg.cn/mw2000/66fd066bgy1i8lf4mkofqj226816ou0y.jpg",
+     "geo": {
+      "width": 2048,
+      "height": 1117,
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8lf5o68klj216o24gb29",
+    "url": "https://wx2.sinaimg.cn/orj360/66fd066bgy1i8lf5o68klj216o24gb29.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 360,
+     "height": 645,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx2.sinaimg.cn/mw2000/66fd066bgy1i8lf5o68klj216o24gb29.jpg",
+     "geo": {
+      "width": "1536",
+      "height": "2752",
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8lf5w2gjaj21b41y8x6p",
+    "url": "https://wx3.sinaimg.cn/orj360/66fd066bgy1i8lf5w2gjaj21b41y8x6p.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 360,
+     "height": 536,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx3.sinaimg.cn/mw2000/66fd066bgy1i8lf5w2gjaj21b41y8x6p.jpg",
+     "geo": {
+      "width": "1696",
+      "height": "2528",
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8lf62ei6qj216o24ghdu",
+    "url": "https://wx3.sinaimg.cn/orj360/66fd066bgy1i8lf62ei6qj216o24ghdu.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 360,
+     "height": 645,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx3.sinaimg.cn/mw2000/66fd066bgy1i8lf62ei6qj216o24ghdu.jpg",
+     "geo": {
+      "width": "1536",
+      "height": "2752",
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8lf6b83d0j216o24g1ky",
+    "url": "https://wx1.sinaimg.cn/orj360/66fd066bgy1i8lf6b83d0j216o24g1ky.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 360,
+     "height": 645,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx1.sinaimg.cn/mw2000/66fd066bgy1i8lf6b83d0j216o24g1ky.jpg",
+     "geo": {
+      "width": "1536",
+      "height": "2752",
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8lg10w3s8j224g16okjm",
+    "url": "https://wx2.sinaimg.cn/orj360/66fd066bgy1i8lg10w3s8j224g16okjm.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 483,
+     "height": 270,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx2.sinaimg.cn/mw2000/66fd066bgy1i8lg10w3s8j224g16okjm.jpg",
+     "geo": {
+      "width": 2048,
+      "height": 1143,
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8lf6x8gwyj226816ou0z",
+    "url": "https://wx2.sinaimg.cn/orj360/66fd066bgy1i8lf6x8gwyj226816ou0z.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 495,
+     "height": 270,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx2.sinaimg.cn/mw2000/66fd066bgy1i8lf6x8gwyj226816ou0z.jpg",
+     "geo": {
+      "width": 2048,
+      "height": 1117,
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8lf70sktfj21kw1kwnpd",
+    "url": "https://wx2.sinaimg.cn/orj360/66fd066bgy1i8lf70sktfj21kw1kwnpd.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 360,
+     "height": 360,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx2.sinaimg.cn/mw2000/66fd066bgy1i8lf70sktfj21kw1kwnpd.jpg",
+     "geo": {
+      "width": "2048",
+      "height": "2048",
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8lf77s4arj216o24g7wi",
+    "url": "https://wx2.sinaimg.cn/orj360/66fd066bgy1i8lf77s4arj216o24g7wi.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 360,
+     "height": 645,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx2.sinaimg.cn/mw2000/66fd066bgy1i8lf77s4arj216o24g7wi.jpg",
+     "geo": {
+      "width": "1536",
+      "height": "2752",
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8lf7dyn1tj226816ohdu",
+    "url": "https://wx4.sinaimg.cn/orj360/66fd066bgy1i8lf7dyn1tj226816ohdu.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 495,
+     "height": 270,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx4.sinaimg.cn/mw2000/66fd066bgy1i8lf7dyn1tj226816ohdu.jpg",
+     "geo": {
+      "width": 2048,
+      "height": 1117,
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8lfas2o9nj20j30sgna8",
+    "url": "https://wx1.sinaimg.cn/orj360/66fd066bgy1i8lfas2o9nj20j30sgna8.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 360,
+     "height": 536,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx1.sinaimg.cn/mw2000/66fd066bgy1i8lfas2o9nj20j30sgna8.jpg",
+     "geo": {
+      "width": "687",
+      "height": "1024",
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8lfcm8nyxj226816oe82",
+    "url": "https://wx2.sinaimg.cn/orj360/66fd066bgy1i8lfcm8nyxj226816oe82.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 495,
+     "height": 270,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx2.sinaimg.cn/mw2000/66fd066bgy1i8lfcm8nyxj226816oe82.jpg",
+     "geo": {
+      "width": 2048,
+      "height": 1117,
+      "croped": false
+     }
+    }
+   },
+   {
+    "pid": "66fd066bgy1i8lfeo83mxj21jk0ubx6p",
+    "url": "https://wx3.sinaimg.cn/orj360/66fd066bgy1i8lfeo83mxj21jk0ubx6p.jpg",
+    "size": "orj360",
+    "geo": {
+     "width": 494,
+     "height": 270,
+     "croped": false
+    },
+    "large": {
+     "size": "large",
+     "url": "https://wx3.sinaimg.cn/mw2000/66fd066bgy1i8lfeo83mxj21jk0ubx6p.jpg",
+     "geo": {
+      "width": "2000",
+      "height": "1091",
+      "croped": false
+     }
+    }
+   }
+  ],
+  "bid": "QjHSFqny8",
+  "buttons": [
+   {
+    "type": "follow",
+    "name": "关注",
+    "sub_type": 0,
+    "params": {
+     "uid": 1727858283
+    }
+   }
+  ],
+  "status_title": "整理个置顶贴，把一些我的常用提示...",
+  "ok": 1
+ }
+}

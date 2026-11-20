@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../core/api.dart';
+import '../../core/endpoints.dart';
+import '../../core/error_text.dart';
 import '../../core/haptics.dart';
 import '../../core/look.dart';
 import '../../core/models.dart';
@@ -19,16 +21,12 @@ class ComposePage extends StatefulWidget {
     super.key,
     this.type = DraftType.original,
     this.statusId,
-    this.commentId,
-    this.replyToName,
     this.draftId,
     this.initialText,
   });
 
   final DraftType type;
   final String? statusId;
-  final String? commentId;
-  final String? replyToName;
   final int? draftId;
 
   /// Prefilled text for a new post, e.g. the hashtag of the topic it was started from.
@@ -55,7 +53,14 @@ class _ComposePageState extends State<ComposePage> {
   DraftType get _type => widget.type;
   bool get _isOriginal => _type == DraftType.original;
   bool get _isRepost => _type == DraftType.repost;
-  bool get _isComment => _type == DraftType.comment || _type == DraftType.reply;
+
+  /// Whether the request this page is about to send can be answered with a captcha.
+  ///
+  /// Read from `endpoints.dart` rather than decided here: whether Weibo can ask for a captcha is a
+  /// property of the endpoint, and this page is the one place the reader is about to lose a draft
+  /// to one, so it says so up front.
+  bool get _mayNeedCaptcha =>
+      (_isRepost ? Endpoint.repost : Endpoint.postStatus).captchaRisk;
   int get _length => _text.text.characters.length;
   bool get _canSend {
     if (_loading || _busy || _length > 2000) return false;
@@ -117,7 +122,7 @@ class _ComposePageState extends State<ComposePage> {
     if (!mounted) return;
     setState(() => _loading = false);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && !_isComment) _focus.requestFocus();
+      if (mounted) _focus.requestFocus();
     });
   }
 
@@ -163,8 +168,6 @@ class _ComposePageState extends State<ComposePage> {
       type: _type,
       text: text,
       statusId: widget.statusId,
-      commentId: widget.commentId,
-      replyToName: widget.replyToName,
       images: _images.toList(),
       crossPost: _crossPost,
       state: DraftState.editing,
@@ -195,12 +198,8 @@ class _ComposePageState extends State<ComposePage> {
     try {
       if (_isRepost) {
         await WeiboApi.instance.repost(widget.statusId ?? '', _text.text.trim(), _crossPost);
-      } else if (_isComment) {
-        if (_type == DraftType.reply && widget.commentId != null) {
-          await WeiboApi.instance.reply(widget.statusId ?? '', widget.commentId!, _text.text.trim());
-        } else {
-          await WeiboApi.instance.comment(widget.statusId ?? '', _text.text.trim());
-        }
+        final target = _target;
+        if (target != null) StatusStore.instance.addRepost(target);
       } else {
         final ids = <String>[];
         for (final path in _images) {
@@ -219,7 +218,7 @@ class _ComposePageState extends State<ComposePage> {
     } catch (error) {
       if (!mounted) return;
       Haptic.error.play();
-      setState(() => _error = error is ApiException ? error.message : '发送失败');
+      setState(() => _error = friendlyError(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -251,15 +250,11 @@ class _ComposePageState extends State<ComposePage> {
   String get _title => switch (_type) {
         DraftType.original => '发微博',
         DraftType.repost => '转发微博',
-        DraftType.comment => '发评论',
-        DraftType.reply => widget.replyToName == null ? '回复评论' : '回复 ${widget.replyToName}',
       };
 
   String get _placeholder => switch (_type) {
         DraftType.original => '分享新鲜事…',
         DraftType.repost => '说说分享心得…',
-        DraftType.comment => '写评论…',
-        DraftType.reply => widget.replyToName == null ? '回复评论…' : '回复 ${widget.replyToName}…',
       };
 
   @override
@@ -333,6 +328,30 @@ class _ComposePageState extends State<ComposePage> {
                                   style: Theme.of(context).textTheme.bodySmall?.copyWith(color: scheme.error),
                                 ),
                               ),
+                            // 发微博 and 转发 are the writes `Endpoint.captchaRisk` marks: Weibo may
+                            // answer them with a captcha instead of posting. Saying so while the
+                            // reader still has the words on screen is the point — finding out
+                            // afterwards means having written something that did not go out.
+                            if (_canSend && _mayNeedCaptcha)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(Icons.verified_user_outlined, size: 14, color: scheme.onSurfaceVariant),
+                                    const SizedBox(width: 5),
+                                    Expanded(
+                                      child: Text(
+                                        '微博有时会要求先完成一次安全验证，完成后会自动继续发送',
+                                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                              fontSize: 12,
+                                              color: scheme.onSurfaceVariant,
+                                            ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             if (_isOriginal && _images.isNotEmpty) ...[
                               const SizedBox(height: 10),
                               _ComposeImageGrid(
@@ -340,7 +359,7 @@ class _ComposePageState extends State<ComposePage> {
                                 onRemove: (index) => setState(() => _images.removeAt(index)),
                               ),
                             ],
-                            if (!_isOriginal && !_isComment) ...[
+                            if (!_isOriginal) ...[
                               const SizedBox(height: 8),
                               _CrossPostRow(
                                 checked: _crossPost,

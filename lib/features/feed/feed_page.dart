@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/error_text.dart';
 import '../../core/api.dart';
 import '../../core/look.dart';
 import '../../core/haptics.dart';
@@ -16,16 +17,17 @@ import '../../core/parse.dart';
 import '../../core/prefs.dart';
 import '../../core/shell_tabs.dart';
 import '../../core/status_store.dart';
-import '../../core/widgets/comment_sheet.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/hot_board_bar.dart';
 import '../../core/widgets/hot_search_row.dart';
 import '../../core/widgets/paged_status_list.dart';
+import '../../core/widgets/pager_tail.dart';
 import '../../core/widgets/refresh.dart';
 import '../../core/widgets/shell_top_bar.dart';
-import '../../core/widgets/status_card.dart';
+import '../../core/widgets/status_card_host.dart';
 import '../../core/widgets/transitions.dart';
 import 'feed_controller.dart';
+import 'feed_reading_position.dart';
 import 'recommend_channels_sheet.dart';
 
 class FeedPage extends StatefulWidget {
@@ -49,6 +51,7 @@ class FeedPageState extends State<FeedPage> {
   PagingController<Status>? _hotPager;
   RecommendChannel _channel = Prefs.instance.recommendChannel;
   final ScrollController _hotScroll = ScrollController();
+  final GlobalKey<InfRefreshIndicatorState> _hotRefreshKey = GlobalKey<InfRefreshIndicatorState>();
   HotBoard _board = shownBoard(HotBoard.realtime);
   final ScrollController _boardScroll = ScrollController();
   final GlobalKey<InfRefreshIndicatorState> _boardRefreshKey = GlobalKey<InfRefreshIndicatorState>();
@@ -61,6 +64,11 @@ class FeedPageState extends State<FeedPage> {
         return _feedHomeTap();
       case _HomePage.recommend:
         if (await _toTop(_hotScroll)) return;
+        final indicator = _hotRefreshKey.currentState;
+        if (indicator != null) {
+          await indicator.show();
+          return;
+        }
         await _hotPager?.refresh();
       case _HomePage.board:
         if (await _toTop(_boardScroll)) return;
@@ -89,7 +97,7 @@ class FeedPageState extends State<FeedPage> {
     final pager = _controller.pager;
     if (pager != null) {
       await pager.refresh();
-    } else {
+    } else if (_controller.mode == FeedMode.unreachable) {
       await _controller.retrySession();
     }
   }
@@ -100,10 +108,12 @@ class FeedPageState extends State<FeedPage> {
     _controller.addListener(_onController);
     _controller.start();
     StatusStore.instance.feedRevision.addListener(_refreshFeed);
+    Prefs.instance.hotBoardsNotifier.addListener(_onBoardsChanged);
   }
 
   @override
   void dispose() {
+    Prefs.instance.hotBoardsNotifier.removeListener(_onBoardsChanged);
     StatusStore.instance.feedRevision.removeListener(_refreshFeed);
     _controller.removeListener(_onController);
     _controller.dispose();
@@ -113,6 +123,13 @@ class FeedPageState extends State<FeedPage> {
     _hotScroll.dispose();
     _boardScroll.dispose();
     super.dispose();
+  }
+
+  void _onBoardsChanged() {
+    final next = shownBoard(_board);
+    if (next == _board) return;
+    setState(() => _board = next);
+    if (_page == _HomePage.board) HotSearchStore.instance.load(board: next);
   }
 
   /// A tap on the page already shown opens its picker: groups, channels or boards.
@@ -146,11 +163,13 @@ class FeedPageState extends State<FeedPage> {
 
   void _startRecommend() {
     final channel = _channel;
-    _hotPager?.dispose();
+    final previous = _hotPager;
     _hotPager = PagingController<Status>(
       fetch: (cursor) => WeiboApi.instance.recommendFeed(channel, cursor),
       id: (status) => status.id,
+      remember: StatusStore.instance.remember,
     )..refresh();
+    previous?.disposeDeferred();
   }
 
   void _selectChannel(RecommendChannel channel) {
@@ -173,7 +192,7 @@ class FeedPageState extends State<FeedPage> {
 
   void _refreshFeed() {
     final pager = _controller.pager;
-    if (pager != null) pager.refresh(quiet: true, background: true);
+    if (pager != null) pager.refresh(background: true);
   }
 
   void _onController() {
@@ -215,7 +234,7 @@ class FeedPageState extends State<FeedPage> {
                   active: _page == _HomePage.recommend,
                 ),
                 boardLabel: AnimatedBuilder(
-                  animation: Prefs.instance,
+                  animation: Prefs.instance.hotBoardsNotifier,
                   builder: (context, _) {
                     final board = shownBoard(_board);
                     return _ArrowLabel(
@@ -260,7 +279,7 @@ class FeedPageState extends State<FeedPage> {
                   pages: _pages,
                   index: _HomePage.board.index,
                   child: AnimatedBuilder(
-                    animation: Prefs.instance,
+                    animation: Prefs.instance.hotBoardsNotifier,
                     builder: (context, _) => _HotBoard(
                       board: shownBoard(_board),
                       onSelect: _selectBoard,
@@ -284,6 +303,7 @@ class FeedPageState extends State<FeedPage> {
       key: PageStorageKey<String>('home-recommend-${_channel.key}'),
       pager: pager,
       controller: _hotScroll,
+      refreshKey: _hotRefreshKey,
       bottomInset: ShellLayout.clearance(context, 104),
       emptyText: '「${_channel.title}」暂时没有微博',
     );
@@ -431,7 +451,10 @@ class _SourcePicker extends StatelessWidget {
           }
           return entries;
         },
-        child: _ArrowLabel(title: title, active: enabled),
+        child: SizedBox(
+          width: _HomeTabs._slot,
+          child: Center(child: _ArrowLabel(title: title, active: enabled)),
+        ),
       ),
     );
   }
@@ -693,29 +716,13 @@ class _TimelineState extends State<_Timeline> {
 
   static const Key _belowKey = ValueKey<String>('feed-below');
 
-  /// The post scroll offsets are measured from: at −[_topInset] its top sits just under the bar.
-  /// New posts load into the sliver above it, so they never move what is on screen.
-  String? _centerId;
+  /// Where the reader is in this feed, and what arrived above them. The decision lives in
+  /// [FeedReadingPosition]; this page only scrolls to what it asks for and draws what it decides.
+  late final FeedReadingPosition _reading = FeedReadingPosition(_sourceKey);
 
-  /// Where reading is: the top-most visible post and how far its top sits above the bar's edge.
-  ({String id, double dy})? _position;
-
-  /// The newest post before the latest refresh; 上次看到这里 is drawn above it.
-  String? _markerId;
-
-  /// Posts above the top-most one seen since they arrived.
-  int _unread = 0;
-
-  /// The refresh brought more new posts than one page, so how many is unknown.
-  bool _unreadOpen = false;
-
-  /// The position saved last time lies beyond the loaded pages.
-  bool _canResume = false;
   bool _resuming = false;
 
   PagingController<Status>? _listening;
-  DateTime? _refreshedAt;
-  List<String> _ids = const [];
   final Map<String, BuildContext> _rows = {};
   DateTime _measuredAt = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _saveTimer;
@@ -736,79 +743,21 @@ class _TimelineState extends State<_Timeline> {
     if (identical(current, _listening)) return;
     _listening?.removeListener(_onPager);
     _listening = current;
-    _ids = const [];
-    _centerId = null;
-    _refreshedAt = current?.refreshedAt;
     current?.addListener(_onPager);
     _onPager();
   }
 
-  /// Keeps the reading place through refreshes and notes what they brought.
+  /// Hands the list to the reading position, which decides whether the centre has to move.
   void _onPager() {
     final current = _listening;
     if (current == null || !mounted) return;
-    final ids = [for (final status in current.items) status.id];
-    if (ids.isEmpty) {
-      _ids = ids;
-      return;
-    }
-    if (_ids.isEmpty) {
-      _start(ids);
-    } else if (current.refreshedAt != _refreshedAt) {
-      final previousTop = _ids.first;
-      final at = ids.indexOf(previousTop);
-      if (at > 0) {
-        _markerId = previousTop;
-        _unread = at;
-        _unreadOpen = false;
-      } else if (at < 0) {
-        _markerId = null;
-        _unread = ids.length;
-        _unreadOpen = true;
-      }
-      // The post the feed is laid out from is still there, so the reader has not moved: only the
-      // counting above is owed to the refresh. It can only be gone when the refresh found more new
-      // posts than the pager could join onto what was loaded.
-      if (_centerId == null || !ids.contains(_centerId)) {
-        final position = _position;
-        _recenter(ids.first, dy: 0);
-        if (position != null && !ids.contains(position.id)) _canResume = true;
-      }
-    }
-    _refreshedAt = current.refreshedAt;
-    _ids = ids;
+    final moved = _reading.update(current.items, current.refreshedAt, onRecenter: _recenter);
+    if (moved) setState(() {});
   }
 
-  /// The first page shown: from where reading stopped last time when that page holds it, with
-  /// what arrived since then counted against the newest post loaded last time.
-  void _start(List<String> ids) {
-    final saved = Prefs.instance.feedPosition(_sourceKey);
-    if (saved == null) {
-      _recenter(ids.first, dy: 0);
-      return;
-    }
-    _position = (id: saved.id, dy: saved.dy);
-    if (ids.contains(saved.id)) {
-      _recenter(saved.id, dy: saved.dy);
-    } else {
-      _recenter(ids.first, dy: 0);
-      _canResume = saved.id != ids.first;
-    }
-    final head = saved.head;
-    final at = head == null ? -1 : ids.indexOf(head);
-    if (at > 0) {
-      _markerId = head;
-      _unread = at;
-    } else if (at < 0 && saved.headAt != null) {
-      final items = _listening!.items;
-      final newer = items.where((status) => status.createdAt.isAfter(saved.headAt!)).length;
-      _unread = newer;
-      _unreadOpen = newer == items.length;
-    }
-  }
-
-  void _recenter(String id, {required double dy}) {
-    _centerId = id;
+  /// Scrolls so [id]'s top sits under the bar, then measures what is actually there.
+  void _recenter(String id, double dy) {
+    _reading.centerId = id;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final scroll = widget.scrollController;
       if (!mounted || !scroll.hasClients) return;
@@ -835,7 +784,7 @@ class _TimelineState extends State<_Timeline> {
       if (box is! RenderBox || !box.attached || !box.hasSize) return;
       final y = box.localToGlobal(Offset.zero, ancestor: viewport).dy;
       if (y + box.size.height <= top + 24 || y >= bottom) return;
-      final at = _ids.indexOf(rowId);
+      final at = _reading.ids.indexOf(rowId);
       if (at < 0 || at >= index) return;
       index = at;
       id = rowId;
@@ -843,43 +792,16 @@ class _TimelineState extends State<_Timeline> {
     });
     final found = id;
     if (found == null) return;
-    _position = (id: found, dy: dy);
-    if (found == _savedId) _canResume = false;
+    if (_reading.record(id: found, index: index, dy: dy)) setState(() {});
     _scheduleSave();
-    final unread = _unread > index ? index : _unread;
-    // Reading down through the posts that arrived means the reader has taken to the new list; the
-    // way back to where they were stops being what they want. A refresh that lost the place counts
-    // no new posts (`_unreadOpen` with nothing counted), and there the offer is the only way back,
-    // so it stays until it is used.
-    final dropResume = _canResume && _unread > 0 && index >= 3;
-    if (unread != _unread || dropResume) {
-      setState(() {
-        _unread = unread;
-        if (dropResume) _canResume = false;
-      });
-    }
   }
-
-  String? get _savedId => Prefs.instance.feedPosition(_sourceKey)?.id;
 
   void _scheduleSave() {
     _saveTimer?.cancel();
     _saveTimer = Timer(const Duration(milliseconds: 600), _savePosition);
   }
 
-  void _savePosition() {
-    final position = _position;
-    final items = _listening?.items ?? const <Status>[];
-    if (position == null || _canResume || items.isEmpty) return;
-    // The newest post actually seen: posts above it stay new for next time. When more arrived than
-    // one page, the newest ones were never shown, so nothing is claimed as read rather than counting
-    // the page's worth of them.
-    final head = _unreadOpen ? null : items[_unread.clamp(0, items.length - 1)];
-    Prefs.instance.setFeedPosition(
-      _sourceKey,
-      FeedPosition(id: position.id, dy: position.dy, head: head?.id, headAt: head?.createdAt),
-    );
-  }
+  void _savePosition() => _reading.save(_listening?.items ?? const []);
 
   Future<void> _toNewest() async {
     final scroll = widget.scrollController;
@@ -913,27 +835,35 @@ class _TimelineState extends State<_Timeline> {
     final found = current.items.any((s) => s.id == target.id);
     setState(() {
       _resuming = false;
-      _canResume = false;
-      if (found) _recenter(target.id, dy: target.dy);
+      if (found) {
+        _reading.resumeAt(target.id, target.dy);
+      } else {
+        _reading.canResume = false;
+      }
     });
-    if (!found) showMessage(context, '没有找到上次读到的微博');
+    if (found) {
+      _recenter(target.id, target.dy);
+    } else {
+      showMessage(context, '没有找到上次读到的微博');
+    }
   }
 
   /// A pull or a second tap on 首页 asks for the newest posts, so it lands on them.
-  Future<void> _pullRefresh(PagingController<Status> current) async {
-    await current.refresh();
-    if (!mounted || current.items.isEmpty) return;
-    setState(() {
-      _unread = 0;
-      _unreadOpen = false;
-      _recenter(current.items.first.id, dy: 0);
-    });
+  Future<bool> _pullRefresh(PagingController<Status> current) async {
+    final ok = await current.refresh();
+    if (!mounted) return ok;
+    if (ok && current.items.isNotEmpty) {
+      final topId = current.items.first.id;
+      setState(() => _reading.toTop(topId));
+      _recenter(topId, 0);
+    }
+    return ok;
   }
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge([widget.controller, pager, StatusStore.instance, Prefs.instance]),
+      animation: Listenable.merge([widget.controller, pager, Prefs.instance.blockedNotifier]),
       builder: (context, _) {
         final current = pager;
         _listen(current);
@@ -954,7 +884,7 @@ class _TimelineState extends State<_Timeline> {
     if (current.error != null && items.isEmpty) {
       return Center(
         key: const ValueKey('error'),
-        child: ErrorRetry(message: current.error.toString(), onRetry: current.refresh),
+        child: ErrorView(error: current.error, onRetry: current.refresh),
       );
     }
     if (items.isEmpty) {
@@ -977,7 +907,8 @@ class _TimelineState extends State<_Timeline> {
         ),
       );
     }
-    final found = _centerId == null ? -1 : items.indexWhere((status) => status.id == _centerId);
+    final centerId = _reading.centerId;
+    final found = centerId == null ? -1 : items.indexWhere((status) => status.id == centerId);
     final center = found < 0 ? 0 : found;
     final sides = EdgeInsets.symmetric(horizontal: contentGutter(context));
     int? above(Key key) {
@@ -994,13 +925,13 @@ class _TimelineState extends State<_Timeline> {
     // could not be kept through the refresh — the way back down to them. The second one used to
     // share the first one's place and was never reachable while new posts were counted.
     final pills = <Widget>[
-      if (_unread > 0)
+      if (_reading.unread > 0)
         _FeedPill(
           icon: Icons.arrow_upward_rounded,
-          label: _unreadOpen ? '$_unread+ 条新微博' : '$_unread 条新微博',
+          label: _reading.unreadOpen ? '${_reading.unread}+ 条新微博' : '${_reading.unread} 条新微博',
           onTap: _toNewest,
         ),
-      if (_canResume)
+      if (_reading.canResume)
         _FeedPill(
           icon: Icons.arrow_downward_rounded,
           label: _resuming ? '正在找…' : '上次读到',
@@ -1067,7 +998,7 @@ class _TimelineState extends State<_Timeline> {
                     ),
                   ),
                 ),
-                SliverPadding(padding: sides, sliver: SliverToBoxAdapter(child: _Footer(pager: current))),
+                SliverPadding(padding: sides, sliver: SliverToBoxAdapter(child: PagerTail(current, gap: 28))),
                 SliverToBoxAdapter(child: SizedBox(height: _bottomInset)),
               ],
             ),
@@ -1099,8 +1030,8 @@ class _TimelineState extends State<_Timeline> {
 
   Widget _row(BuildContext context, PagingController<Status> current, int index) {
     final status = current.items[index];
-    if (Prefs.instance.isBlocked(status.author.id)) {
-      return _Tracked(key: ValueKey(status.id), id: status.id, rows: _rows, child: const SizedBox.shrink());
+    if (hiddenByBlock(status)) {
+      return SizedBox.shrink(key: ValueKey(status.id));
     }
     return _Tracked(
       key: ValueKey(status.id),
@@ -1110,35 +1041,10 @@ class _TimelineState extends State<_Timeline> {
         animate: current.fresh.contains(status.id),
         child: Column(
           children: [
-            if (status.id == _markerId && index > 0) const _ReadMarker(),
+            if (status.id == _reading.markerId && index > 0) const _ReadMarker(),
             PaneSelected(
               ids: ['status:${status.id}', if (status.repostOf != null) 'status:${status.repostOf!.id}'],
-              child: StatusCard(
-              status: status,
-              heroScope: '${status.id}-$index',
-              onOpenStatus: (id) => openStatus(
-                context,
-                statusId: id,
-                seed: status,
-              ),
-              onOpenUser: (uid) => openUser(context, uid),
-              onOpenTopic: (name) => openTopic(context, name),
-              onOpenUrl: (url) => openLink(context, url),
-              onOpenMedia: (media, mediaIndex, heroTag) {
-                if (media[mediaIndex].kind == MediaKind.video) {
-                  openVideo(
-                    context,
-                    media[mediaIndex].url,
-                    coverUrl: media[mediaIndex].previewUrl,
-                    statusId: status.id,
-                  );
-                } else {
-                  openImage(context, media: media, index: mediaIndex, heroTag: heroTag);
-                }
-              },
-              onRepost: (_) => openCompose(context, type: DraftType.repost, statusId: status.id),
-              onComment: (anchor) => showCommentSheet(context, anchor: anchor, statusId: status.id, target: status),
-            ),
+              child: buildStatusCard(context, status, heroScope: '${status.id}-$index'),
             ),
             const Divider(),
           ],
@@ -1252,32 +1158,6 @@ class _FeedPill extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class _Footer extends StatelessWidget {
-  const _Footer({required this.pager});
-
-  final PagingController<Status> pager;
-
-  @override
-  Widget build(BuildContext context) {
-    if (pager.loadingMore) return const LoadingFooter();
-    if (pager.moreError != null) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        child: Center(
-          child: TextButton(
-            onPressed: pager.loadMore,
-            child: const Text('加载失败，点此重试'),
-          ),
-        ),
-      );
-    }
-    if (!pager.hasMore && pager.items.isNotEmpty) {
-      return const LoadingFooter(text: '没有更多了');
-    }
-    return const SizedBox(height: 28);
   }
 }
 

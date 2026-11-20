@@ -26,7 +26,7 @@ class HotBoardChips extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Prefs.instance,
+      animation: Prefs.instance.hotBoardsNotifier,
       builder: (context, _) {
         final boards = Prefs.instance.hotBoards;
         return SizedBox(
@@ -144,7 +144,7 @@ class _HotBoardEditor extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
     return AnimatedBuilder(
-      animation: Prefs.instance,
+      animation: Prefs.instance.hotBoardsNotifier,
       builder: (context, _) {
         final shown = Prefs.instance.hotBoards;
         final hidden = HotBoard.values.where((board) => !shown.contains(board)).toList();

@@ -1,5 +1,3 @@
-import 'dart:ui' show Offset;
-
 import 'package:flutter/gestures.dart';
 
 /// Counts fingers on screen across the whole app. Long presses check it so that a two-finger

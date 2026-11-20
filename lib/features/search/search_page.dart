@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../core/error_text.dart';
 import '../../core/layout.dart';
 import '../../core/look.dart';
 import '../../core/api.dart';
@@ -14,8 +15,10 @@ import '../../core/models.dart';
 import '../../core/motion.dart';
 import '../../core/navigation.dart';
 import '../../core/paging.dart';
+import '../../core/status_store.dart';
 import '../../core/parse.dart';
 import '../../core/prefs.dart';
+import '../../core/relation_store.dart';
 import '../../core/widgets/avatar.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/hot_board_bar.dart';
@@ -47,8 +50,7 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
   String? _submitted;
   List<User>? _users;
   bool _usersLoading = false;
-  String? _usersError;
-  final Map<String, bool> _following = {};
+  Object? _usersError;
   final Set<String> _followBusy = {};
   List<String> _history = [];
   bool _historyExpanded = false;
@@ -142,6 +144,7 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
             return page;
           },
           id: (status) => status.id,
+          remember: StatusStore.instance.remember,
         );
         pager.refresh();
         setState(() {});
@@ -201,7 +204,7 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
       final users = await WeiboApi.instance.searchUsers(query);
       if (mounted) setState(() => _users = users);
     } catch (error) {
-      if (mounted) setState(() => _usersError = error is ApiException ? error.message : '加载失败');
+      if (mounted) setState(() => _usersError = error);
     } finally {
       if (mounted) setState(() => _usersLoading = false);
     }
@@ -243,24 +246,15 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
     _loadHot();
   }
 
+  /// The store owns the state; the page only keeps a busy mark so a double tap cannot send two
+  /// opposite requests.
   Future<void> _toggleFollow(User user) async {
     if (_followBusy.contains(user.id)) return;
-    final next = !(_following[user.id] ?? user.following);
-    (next ? Haptic.toggleOn : Haptic.toggleOff).play();
-    setState(() {
-      _followBusy.add(user.id);
-      _following[user.id] = next;
-    });
-    try {
-      await WeiboApi.instance.setFollowing(user.id, next);
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _following[user.id] = !next);
-      Haptic.error.play();
-      showMessage(context, error is ApiException ? error.message : '操作失败');
-    } finally {
-      if (mounted) setState(() => _followBusy.remove(user.id));
-    }
+    setState(() => _followBusy.add(user.id));
+    final failure = await RelationStore.instance.toggleFollowing(user);
+    if (!mounted) return;
+    setState(() => _followBusy.remove(user.id));
+    showMessage(context, failure);
   }
 
   @override
@@ -386,7 +380,7 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
         ],
         const SectionHeader(title: '微博热搜'),
         AnimatedBuilder(
-          animation: Listenable.merge([HotSearchStore.instance, Prefs.instance]),
+          animation: Listenable.merge([HotSearchStore.instance, Prefs.instance.hotBoardsNotifier]),
           builder: (context, _) {
             final store = HotSearchStore.instance;
             final board = shownBoard(_board);
@@ -592,7 +586,7 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
   Widget _usersTab() {
     if (_usersLoading && _users == null) return const LoadingFooter();
     if (_users == null && _usersError != null) {
-      return Center(child: ErrorRetry(message: _usersError, onRetry: () => _loadUsers(_submitted ?? '')));
+      return Center(child: ErrorView(error: _usersError, onRetry: () => _loadUsers(_submitted ?? '')));
     }
     final users = _users;
     if (users == null) return const LoadingFooter();
@@ -608,7 +602,7 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
         final user = users[index];
         return UserListRow(
           user: user,
-          following: _following[user.id] ?? user.following,
+          following: RelationStore.instance.following(user),
           busy: _followBusy.contains(user.id),
           onToggleFollow: () => _toggleFollow(user),
           onTap: () => openUser(context, user.id),
@@ -646,10 +640,10 @@ class _EntryList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: pager,
+      animation: Listenable.merge([pager, RelationStore.instance]),
       builder: (context, _) {
         if (pager.items.isEmpty) {
-          if (pager.error != null) return Center(child: ErrorRetry(message: pager.error.toString(), onRetry: pager.refresh));
+          if (pager.error != null) return Center(child: ErrorView(error: pager.error, onRetry: pager.refresh));
           if (pager.loading || pager.refreshedAt == null) return const LoadingFooter();
           return EmptyHint(text: emptyText, icon: Icons.manage_search_rounded);
         }

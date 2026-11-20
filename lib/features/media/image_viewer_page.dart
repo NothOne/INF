@@ -30,6 +30,7 @@ class ImageViewerPage extends StatefulWidget {
     required this.images,
     this.initialIndex = 0,
     required this.heroTags,
+    this.moreImages,
   });
 
   final List<Media> images;
@@ -38,11 +39,17 @@ class ImageViewerPage extends StatefulWidget {
   /// Per page, the [ViewerHero] it flies back to; see [viewerHeroTags].
   final List<String?> heroTags;
 
+  /// Optional background lookup for multi-picture 「查看图片」 links when the feed only knew the
+  /// first picture's URL; when it returns more pictures, the viewer extends in place.
+  final Future<List<Media>>? moreImages;
+
   @override
   State<ImageViewerPage> createState() => _ImageViewerPageState();
 }
 
 class _ImageViewerPageState extends State<ImageViewerPage> {
+  late List<Media> _images = widget.images;
+  late List<String?> _heroTags = widget.heroTags;
   late final PageController _pages = PageController(initialPage: widget.initialIndex);
   late int _index = widget.initialIndex;
   bool _saving = false;
@@ -74,6 +81,15 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
     Future<void>.delayed(const Duration(milliseconds: 320), () {
       if (mounted) _precacheAround(_index);
     });
+    widget.moreImages?.then((resolved) {
+      if (!mounted || resolved.length <= _images.length) return;
+      final firstTag = _heroTags.isNotEmpty ? _heroTags.first : null;
+      setState(() {
+        _images = resolved;
+        _heroTags = [firstTag, for (var i = 1; i < resolved.length; i++) null];
+      });
+      _precacheAround(_index);
+    }).catchError((Object _) {});
   }
 
   @override
@@ -104,20 +120,20 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
   /// Decodes the pictures either side of [index], so a swipe lands on a sharp picture.
   void _precacheAround(int index) {
     for (final neighbour in [index + 1, index - 1]) {
-      if (neighbour < 0 || neighbour >= widget.images.length) continue;
-      final image = widget.images[neighbour];
+      if (neighbour < 0 || neighbour >= _images.length) continue;
+      final image = _images[neighbour];
       if (image.url.isEmpty) continue;
       precacheImage(weiboImageProvider(image.url), context, onError: (_, _) {});
     }
   }
 
   /// What page [index] is showing: the original once it has been asked for, else the API's size.
-  String _urlAt(int index) => _originals[index] ?? widget.images[index].url;
+  String _urlAt(int index) => _originals[index] ?? _images[index].url;
 
   /// sinaimg's `large` is the upload itself; the API hands out at most `mw2000`.
   String? _originalOf(int index) {
     if (_originals.containsKey(index)) return null;
-    final current = sanitizeImageUrl(widget.images[index].url);
+    final current = sanitizeImageUrl(_images[index].url);
     final original = sinaimgSized(current, 'large');
     return original == current ? null : original;
   }
@@ -153,10 +169,10 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
   Future<void> _saveAll() async {
     if (_saving) return;
     setState(() => _saving = true);
-    final total = widget.images.length;
+    final total = _images.length;
     showMessage(context, '正在保存 $total 张图片…');
     try {
-      final result = await saveImagesToGallery(widget.images);
+      final result = await saveImagesToGallery(_images);
       if (!mounted) return;
       (result.saved == total ? Haptic.success : Haptic.error).play();
       showMessage(context, saveAllMessage(result, total));
@@ -183,14 +199,14 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
 
   /// The live photo's motion clip, from the same disk cache its playback reads.
   Future<File> _liveClip(int index) => InfImageCache.manager.getSingleFile(
-        sanitizeImageUrl(widget.images[index].liveUrl!),
+        sanitizeImageUrl(_images[index].liveUrl!),
         headers: weiboImageHeaders(),
       );
 
   /// A live photo saves as a Motion Photo unless [as] asks for one half of it.
   Future<void> _saveImage(int index, {_SaveAs? as}) async {
     if (_saving) return;
-    final kind = as ?? (widget.images[index].isLive ? _SaveAs.motionPhoto : _SaveAs.picture);
+    final kind = as ?? (_images[index].isLive ? _SaveAs.motionPhoto : _SaveAs.picture);
     setState(() => _saving = true);
     String? copy;
     try {
@@ -233,8 +249,8 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
     Haptic.longPress.play();
     final original = _originalOf(index);
     final loading = _loadingOriginal == index;
-    final live = widget.images[index].isLive;
-    final count = widget.images.length;
+    final live = _images[index].isLive;
+    final count = _images.length;
 
     // The rows a live photo offers: saving it as a Motion Photo, or one half of it.
     final save = live
@@ -272,7 +288,7 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
       originRadius: 12,
       actions: imageActions(
         save: save,
-        saveAll: count > 1 ? (label: saveAllLabel(widget.images), run: _saveAll) : null,
+        saveAll: count > 1 ? (label: saveAllLabel(_images), run: _saveAll) : null,
         onShare: () => _shareImage(index),
         // Always a row: what varies is whether it can be used. Dropping it when there is no larger
         // file would move the rows above it, and the finger is still on one of them.
@@ -303,15 +319,15 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
           PageView.builder(
             controller: _pages,
             physics: _pagingLocked ? const NeverScrollableScrollPhysics() : null,
-            itemCount: widget.images.length,
+            itemCount: _images.length,
             onPageChanged: (index) {
               setState(() => _index = index);
-              ViewerHero.showing.value = widget.heroTags[index];
+              ViewerHero.showing.value = _heroTags[index];
               _livePlaying.value = false;
               _precacheAround(index);
             },
             itemBuilder: (context, index) {
-              final image = widget.images[index];
+              final image = _images[index];
               return _ZoomableImage(
                 image: image,
                 url: _urlAt(index),
@@ -320,7 +336,7 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
                 onLivePlaying: (playing) => _livePlaying.value = playing,
                 // Only the visible page may fly home; a neighbour the pager keeps alive would
                 // otherwise launch from off screen.
-                heroTag: index == _index ? widget.heroTags[index] : null,
+                heroTag: index == _index ? _heroTags[index] : null,
                 // The menu grows out of the finger, the way a post's does.
                 onLongPress: (point) => _showActions(index, origin: menuOriginAt(point)),
                 onToggleTools: () {
@@ -368,7 +384,7 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
                           onPressed: () => Navigator.of(context).maybePop(),
                           icon: const Icon(Icons.close_rounded, color: Colors.white),
                         ),
-                        if (widget.images[_index].isLive)
+                        if (_images[_index].isLive)
                           _LiveChip(
                             playing: _livePlaying,
                             onTap: () {
@@ -377,9 +393,9 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
                             },
                           ),
                         const Spacer(),
-                        if (widget.images.length > 1)
+                        if (_images.length > 1)
                           Text(
-                            '${_index + 1} / ${widget.images.length}',
+                            '${_index + 1} / ${_images.length}',
                             style: const TextStyle(color: Colors.white, fontSize: 13),
                           ),
                         const Spacer(),

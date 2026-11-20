@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/error_text.dart';
 import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/haptics.dart';
@@ -14,13 +15,15 @@ import '../../core/models.dart';
 import '../../core/motion.dart';
 import '../../core/navigation.dart';
 import '../../core/paging.dart';
+import '../../core/status_store.dart';
 import '../../core/parse.dart';
-import '../../core/prefs.dart';
+import '../../core/relation_store.dart';
 import '../../core/session.dart';
 import '../../core/share.dart';
 import '../../core/widgets/avatar.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/paged_status_list.dart';
+import '../../core/widgets/pager_tail.dart';
 import '../../core/widgets/refresh.dart';
 import '../../core/widgets/smart_image.dart';
 import '../../core/widgets/status_actions.dart';
@@ -41,7 +44,7 @@ class _UserPageState extends State<UserPage> with TickerProviderStateMixin {
   UserProfile? _profile;
   bool _loading = true;
   bool _followBusy = false;
-  String? _error;
+  Object? _error;
 
   /// The page's sections; weibo.com's own list replaces the usual four once it answers.
   List<ProfileTab> _tabs = ProfileTab.fallback;
@@ -123,6 +126,7 @@ class _UserPageState extends State<UserPage> with TickerProviderStateMixin {
         ProfileTab.photos => throw StateError('相册 pages through _photos'),
       },
       id: (status) => status.id,
+      remember: StatusStore.instance.remember,
     )..refresh();
     setState(() {});
   }
@@ -209,7 +213,7 @@ class _UserPageState extends State<UserPage> with TickerProviderStateMixin {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = error is ApiException ? error.message : '加载失败';
+        _error = error;
       });
     }
   }
@@ -230,30 +234,24 @@ class _UserPageState extends State<UserPage> with TickerProviderStateMixin {
       );
       if (confirmed != true) return;
     }
-    final next = !profile.following;
-    (next ? Haptic.toggleOn : Haptic.toggleOff).play();
+    // The store owns the state, so the same person's row in a search result or a follow list sees
+    // this tap without a reload. The page keeps the busy mark and mirrors the store's answer into
+    // its own copy of the profile, which the header draws from.
+    setState(() => _followBusy = true);
+    final failure = await RelationStore.instance.toggleFollowing(profile.user);
+    if (!mounted) return;
     setState(() {
-      _followBusy = true;
-      _profile = profile.withFollowing(next);
+      _followBusy = false;
+      _profile = profile.withFollowing(RelationStore.instance.following(profile.user));
     });
-    try {
-      await WeiboApi.instance.setFollowing(profile.user.id, next);
-      if (mounted) showMessage(context, next ? '已关注' : '已取消关注');
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _profile = profile);
-      Haptic.error.play();
-      showMessage(context, error is ApiException ? error.message : '操作失败');
-    } finally {
-      if (mounted) setState(() => _followBusy = false);
-    }
+    showMessage(context, failure ?? (RelationStore.instance.following(profile.user) ? '已关注' : '已取消关注'));
   }
 
   /// The page's `⋯`: the same menu, in the same place, as the one a post opens, so the app has one
   /// way of offering these rather than one per page.
   void _showMenu(UserProfile profile, bool isSelf, BuildContext anchor) {
     final user = profile.user;
-    final blocked = Prefs.instance.isBlocked(user.id);
+    final blocked = RelationStore.instance.isBlocked(user.id);
     showGlassActions(
       context,
       anchor: anchor,
@@ -297,7 +295,7 @@ class _UserPageState extends State<UserPage> with TickerProviderStateMixin {
   }
 
   Future<void> _unblock(User user) async {
-    await Prefs.instance.setBlocked(user, false);
+    await RelationStore.instance.setBlocked(user, false);
     Haptic.success.play();
     if (mounted) showMessage(context, '已取消屏蔽 @${user.screenName}');
   }
@@ -316,16 +314,14 @@ class _UserPageState extends State<UserPage> with TickerProviderStateMixin {
       ),
     );
     if (ok != true) return;
-    try {
-      await WeiboApi.instance.blacklist(user.id);
-      Haptic.success.play();
-      if (!mounted) return;
-      setState(() => _profile = _profile?.withFollowing(false));
-      showMessage(context, '已将 @${user.screenName} 加入黑名单');
-    } catch (error) {
-      Haptic.error.play();
-      if (mounted) showMessage(context, error is ApiException ? error.message : '拉黑失败');
+    final failure = await RelationStore.instance.blacklist(user);
+    if (!mounted) return;
+    if (failure != null) {
+      showMessage(context, failure);
+      return;
     }
+    setState(() => _profile = _profile?.withFollowing(false));
+    showMessage(context, '已将 @${user.screenName} 加入黑名单');
   }
 
   @override
@@ -346,7 +342,7 @@ class _UserPageState extends State<UserPage> with TickerProviderStateMixin {
           key: ValueKey(profile != null ? 'profile' : (_loading ? 'loading' : 'error')),
           builder: (context) {
             if (profile == null && !_loading) {
-              return Center(child: ErrorRetry(message: _error, onRetry: _load));
+              return Center(child: ErrorView(error: _error, onRetry: _load));
             }
             if (profile == null) return const _ProfileSkeleton();
             return InfRefreshIndicator(
@@ -686,7 +682,7 @@ class _PagedGrid<T> extends StatelessWidget {
         if (pager.items.isEmpty) {
           final Widget state;
           if (pager.error != null) {
-            state = ErrorRetry(message: pager.error.toString(), onRetry: pager.refresh);
+            state = ErrorView(error: pager.error, onRetry: pager.refresh);
           } else if (pager.loading || pager.refreshedAt == null) {
             state = const LoadingFooter();
           } else {
@@ -708,16 +704,7 @@ class _PagedGrid<T> extends StatelessWidget {
             ),
           );
         }
-        final Widget footer;
-        if (pager.items.isEmpty) {
-          footer = const SizedBox.shrink();
-        } else if (pager.loadingMore) {
-          footer = const LoadingFooter();
-        } else if (pager.moreError != null) {
-          footer = Center(child: TextButton(onPressed: pager.loadMore, child: const Text('加载失败，点此重试')));
-        } else {
-          footer = pager.hasMore ? const SizedBox(height: 24) : const LoadingFooter(text: '没有更多了');
-        }
+        final Widget footer = pager.items.isEmpty ? const SizedBox.shrink() : PagerTail(pager, gap: 24);
         return NotificationListener<ScrollNotification>(
           onNotification: (notification) {
             pager.onScroll(notification);

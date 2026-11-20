@@ -9,6 +9,7 @@ import '../../core/models.dart';
 import '../../core/motion.dart';
 import '../../core/navigation.dart';
 import '../../core/paging.dart';
+import '../../core/status_store.dart';
 import '../../core/parse.dart';
 import '../../core/widgets/avatar.dart';
 import '../../core/widgets/common.dart';
@@ -37,7 +38,11 @@ class _HotTopicPageState extends State<HotTopicPage> with SingleTickerProviderSt
   final ScrollController _outer = ScrollController();
   late final Map<HotTopicTab, PagingController<Status>> _pagers = {
     for (final tab in _tabs)
-      tab: PagingController<Status>(fetch: (cursor) => _fetch(tab, cursor), id: (status) => status.id),
+      tab: PagingController<Status>(
+        fetch: (cursor) => _fetch(tab, cursor),
+        id: (status) => status.id,
+        remember: StatusStore.instance.remember,
+      ),
   };
   final Set<HotTopicTab> _started = {};
   late HotSearch? _entry = widget.entry ?? HotSearchStore.instance.lookup(widget.query);

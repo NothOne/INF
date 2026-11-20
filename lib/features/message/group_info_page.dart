@@ -3,9 +3,11 @@ import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/api.dart';
+import '../../core/error_text.dart';
 import '../../core/haptics.dart';
 import '../../core/layout.dart';
 import '../../core/look.dart';
+import '../../core/group_chat_api.dart';
 import '../../core/models.dart';
 import '../../core/native.dart';
 import '../../core/navigation.dart';
@@ -48,7 +50,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
   bool _muted = false;
   bool _loading = true;
   bool _busy = false;
-  String? _error;
+  Object? _error;
 
   String? get _selfId => Session.instance.uid;
 
@@ -68,15 +70,15 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     try {
       // Independent requests, so they go out together: the group's own answer is what the page is
       // built around, and the members are the strip under it.
-      final info = await WeiboApi.instance.groupInfo(widget.gid);
+      final info = await GroupChatApi.instance.groupInfo(widget.gid);
       if (!mounted) return;
       setState(() {
         _info = info;
         _loading = false;
       });
       final (members, muted) = await (
-        WeiboApi.instance.groupMembers(widget.gid, count: 12),
-        WeiboApi.instance.groupMuted(widget.gid),
+        GroupChatApi.instance.groupMembers(widget.gid, count: 12),
+        GroupChatApi.instance.groupMuted(widget.gid),
       ).wait;
       if (!mounted) return;
       setState(() {
@@ -87,7 +89,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = error is ApiException ? error.message : '群资料加载失败';
+        _error = error;
       });
     }
   }
@@ -108,13 +110,13 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     setState(() => _muted = value);
     (value ? Haptic.toggleOn : Haptic.toggleOff).play();
     try {
-      await WeiboApi.instance.setGroupMuted(widget.gid, value);
+      await GroupChatApi.instance.setGroupMuted(widget.gid, value);
       if (mounted) showMessage(context, value ? '这个群的消息不再提醒' : '已恢复提醒');
     } catch (error) {
       Haptic.error.play();
       if (!mounted) return;
       setState(() => _muted = previous);
-      showMessage(context, error is ApiException ? error.message : '设置失败');
+      showMessage(context, friendlyError(error));
     }
   }
 
@@ -144,7 +146,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     controller.dispose();
     if (next == null || next == current) return;
     try {
-      await WeiboApi.instance.setGroupNotice(widget.gid, next);
+      await GroupChatApi.instance.setGroupNotice(widget.gid, next);
       Haptic.success.play();
       if (!mounted) return;
       setState(() => _info = GroupInfo(
@@ -161,7 +163,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
       showMessage(context, '群公告已更新');
     } catch (error) {
       Haptic.error.play();
-      if (mounted) showMessage(context, error is ApiException ? error.message : '没有权限修改群公告');
+      if (mounted) showMessage(context, friendlyError(error));
     }
   }
 
@@ -206,7 +208,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
       Haptic.error.play();
       if (mounted) {
         setState(() => _busy = false);
-        showMessage(context, error is ApiException ? error.message : '退出失败');
+        showMessage(context, friendlyError(error));
       }
     }
   }
@@ -254,7 +256,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
               else if (_error != null)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 20),
-                  child: ErrorRetry(message: _error!, onRetry: _load),
+                  child: ErrorView(error: _error, onRetry: _load),
                 )
               else ...[
                 const SizedBox(height: 18),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/error_text.dart';
 import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/layout.dart';
@@ -139,8 +140,36 @@ class _NotifyListState extends State<_NotifyList> with AutomaticKeepAliveClientM
 
   Future<bool> _refresh() async {
     final ok = await _pager.refresh(background: _pager.items.isNotEmpty);
-    if (mounted) UnreadMonitor.instance.refresh(force: true);
+    if (mounted) UnreadMonitor.instance.refresh(immediately: true);
     return ok;
+  }
+
+  /// Answers a comment from the notification itself.
+  ///
+  /// The notification carries the post's counts, which is what the store needs to count the comment
+  /// that was just sent; and the row says so afterwards, because a reply that leaves no trace on the
+  /// screen reads as one that did not go out — the reader tapped it again, and again.
+  Future<void> _reply(BuildContext page, BuildContext anchor, NotificationItem item) async {
+    final statusId = item.statusId;
+    final commentId = item.commentId;
+    if (statusId == null || commentId == null) return;
+    final status = Status(
+      id: statusId,
+      author: item.user,
+      text: item.targetText ?? '',
+      createdAt: item.createdAt,
+    );
+    final sent = await showCommentSheet(
+      page,
+      anchor: anchor,
+      status: status,
+      commentId: commentId,
+      replyToName: item.user.screenName,
+      replyToText: item.text,
+      countOnPost: false,
+    );
+    if (sent != true || !mounted) return;
+    UnreadMonitor.instance.refresh(immediately: true);
   }
 
   @override
@@ -168,7 +197,7 @@ class _NotifyListState extends State<_NotifyList> with AutomaticKeepAliveClientM
       if (_pager.error != null) {
         return Center(
           key: const ValueKey('error'),
-          child: ErrorRetry(message: _pager.error.toString(), onRetry: _refresh),
+          child: ErrorView(error: _pager.error, onRetry: _refresh),
         );
       }
       if (_pager.loading || _pager.refreshedAt == null) {
@@ -218,14 +247,7 @@ class _NotifyListState extends State<_NotifyList> with AutomaticKeepAliveClientM
                 onOpenUrl: (url) => openLink(context, url),
                 onReply: item.commentId == null || item.statusId == null
                     ? null
-                    : (anchor) => showCommentSheet(
-                          context,
-                          anchor: anchor,
-                          statusId: item.statusId!,
-                          commentId: item.commentId,
-                          replyToName: item.user.screenName,
-                          replyToText: item.text,
-                        ),
+                    : (anchor) => _reply(context, anchor, item),
               ),
               ),
             );

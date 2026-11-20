@@ -32,6 +32,7 @@ class RichStatusText extends StatefulWidget {
     this.onTopic,
     this.onUrl,
     this.onOpenImage,
+    this.onOpenImages,
     this.inlineImages = true,
     this.links = const {},
     this.linkColor,
@@ -55,6 +56,9 @@ class RichStatusText extends StatefulWidget {
   final ValueChanged<String>? onTopic;
   final ValueChanged<String>? onUrl;
   final void Function(String url, String? heroTag)? onOpenImage;
+
+  /// Used when a 「查看图片」 anchor bundles multiple pictures; falls back to [onOpenImage].
+  final void Function(List<Media> images, int index, String? heroTag)? onOpenImages;
   final bool inlineImages;
 
   @override
@@ -72,7 +76,7 @@ class _RichStatusTextState extends State<RichStatusText> {
     super.dispose();
   }
 
-  String _imageTag(int start) => 'link-img-' + identityHashCode(this).toString() + '-' + start.toString();
+  String _imageTag(int start) => 'link-img-${identityHashCode(this)}-$start';
 
   void _clearRecognizers() {
     for (final recognizer in _recognizers) {
@@ -114,40 +118,73 @@ class _RichStatusTextState extends State<RichStatusText> {
               ));
             case _TokenKind.url:
               final imageUrl = inlineImageUrl(token.value);
-              if (imageUrl != null && !widget.inlineImages) {
-                final callback = widget.onOpenImage;
+              final known = widget.links[token.value];
+              final bundled = known != null && known.images.isNotEmpty
+                  ? known.images
+                  : (imageUrl != null ? [Media.image(imageUrl)] : const <Media>[]);
+              if (bundled.isNotEmpty && !widget.inlineImages) {
+                final openMany = widget.onOpenImages;
+                final openOne = widget.onOpenImage;
                 final tag = _imageTag(token.start);
-                Widget link = InlineLinkLabel(icon: Icons.image_outlined, label: '查看图片', style: style, color: linkColor);
-                if (callback != null) {
+                final label = bundled.length > 1
+                    ? (known != null && known.label.isNotEmpty && known.label != '查看图片'
+                        ? known.label
+                        : '查看${bundled.length}张图片')
+                    : '查看图片';
+                Widget link = InlineLinkLabel(icon: Icons.image_outlined, label: label, style: style, color: linkColor);
+                if (openMany != null || openOne != null) {
                   link = GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onTap: () => callback(imageUrl, tag),
+                    onTap: () {
+                      if (openMany != null) {
+                        openMany(bundled, 0, tag);
+                      } else {
+                        openOne!(bundled.first.url, tag);
+                      }
+                    },
                     child: ViewerHero(tag: tag, child: link),
                   );
                 }
                 spans.add(WidgetSpan(alignment: PlaceholderAlignment.middle, child: link));
-              } else if (imageUrl != null) {
-                final callback = widget.onOpenImage;
-                final tag = _imageTag(token.start);
-                Widget picture = ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: SizedBox(
-                    width: 150,
-                    height: 150,
-                    child: SmartImage(url: imageUrl, fit: BoxFit.cover),
-                  ),
-                );
-                if (callback != null) {
-                  picture = GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => callback(imageUrl, tag),
-                    child: ViewerHero(tag: tag, child: picture),
+              } else if (bundled.isNotEmpty) {
+                final openMany = widget.onOpenImages;
+                final openOne = widget.onOpenImage;
+                Widget thumb(Media img, int i, double size) {
+                  final tag = '${_imageTag(token.start)}-$i';
+                  Widget picture = ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: SizedBox(
+                      width: size,
+                      height: size,
+                      child: SmartImage(url: img.previewUrl.isEmpty ? img.url : img.previewUrl, fit: BoxFit.cover),
+                    ),
                   );
+                  if (openMany != null || openOne != null) {
+                    picture = GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () {
+                        if (openMany != null) {
+                          openMany(bundled, i, tag);
+                        } else {
+                          openOne!(img.url, tag);
+                        }
+                      },
+                      child: ViewerHero(tag: tag, child: picture),
+                    );
+                  }
+                  return picture;
                 }
-                spans.add(WidgetSpan(alignment: PlaceholderAlignment.middle, child: picture));
+
+                final child = bundled.length == 1
+                    ? thumb(bundled.first, 0, 150)
+                    : Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [for (var i = 0; i < bundled.length; i++) thumb(bundled[i], i, 104)],
+                      );
+                spans.add(WidgetSpan(alignment: PlaceholderAlignment.middle, child: child));
               } else {
                 final callback = widget.onUrl;
-                final known = widget.links[token.value];
                 var kind = known?.kind ?? linkKindOf(token.value);
                 if (kind == LinkKind.web && isVideoLink(token.value)) kind = LinkKind.video;
                 Widget link = InlineLinkLabel(

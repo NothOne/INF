@@ -4,6 +4,7 @@ import '../../core/look.dart';
 import '../../core/api.dart';
 import '../../core/models.dart';
 import '../../core/paging.dart';
+import '../../core/status_store.dart';
 import '../../core/widgets/paged_status_list.dart';
 
 class TopicPage extends StatefulWidget {
@@ -32,6 +33,7 @@ class _TopicPageState extends State<TopicPage> {
   late final PagingController<Status> _pager = PagingController<Status>(
     fetch: _fetch,
     id: (status) => status.id,
+    remember: StatusStore.instance.remember,
   );
 
   @override

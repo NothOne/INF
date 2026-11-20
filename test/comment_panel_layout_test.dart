@@ -62,9 +62,7 @@ void main() {
                         bar,
                         anchor: bar,
                         builder: (context) => CommentSheet(
-                          statusId: '1',
-                          onSent: () {},
-                          target: Status(
+                          status: Status(
                             id: '1',
                             text: '正文',
                             createdAt: DateTime(2026),
@@ -74,6 +72,7 @@ void main() {
                             commentsCount: 0,
                             likesCount: 0,
                           ),
+                          onSent: () {},
                         ),
                       ),
                       child: const Text('open'),

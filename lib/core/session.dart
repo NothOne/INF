@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'api.dart';
+import 'failure.dart';
 import 'native.dart';
 import 'page_cache.dart';
 import 'prefs.dart';
@@ -26,6 +27,7 @@ class Session extends ChangeNotifier {
   final Map<String, String> cookies = {};
   String? uid;
   String? st;
+  String? _activeUid;
   String _userAgent =
       'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36';
 
@@ -34,6 +36,20 @@ class Session extends ChangeNotifier {
 
   int _revision = 0;
   int get revision => _revision;
+
+  final List<VoidCallback> _onAccountReset = [];
+
+  /// Registers a callback run when the signed-in account signs out or switches to another uid,
+  /// so higher-layer stores drop account-scoped memory without [Session] importing them.
+  void registerAccountReset(VoidCallback callback) {
+    if (!_onAccountReset.contains(callback)) _onAccountReset.add(callback);
+  }
+
+  void _notifyAccountReset() {
+    for (final callback in List<VoidCallback>.of(_onAccountReset)) {
+      callback();
+    }
+  }
 
   String get userAgent => _userAgent;
   String? get xsrf => cookies['XSRF-TOKEN'];
@@ -120,9 +136,14 @@ class Session extends ChangeNotifier {
       final config = await WeiboApi.instance.config();
       if (config.st != null) st = config.st;
       if (config.login && config.uid != null && config.uid!.isNotEmpty) {
+        final previousUid = _activeUid;
         uid = config.uid;
+        _activeUid = uid;
         state = SessionState.loggedIn;
         Prefs.instance.setLastUid(uid);
+        if (previousUid != null && previousUid != uid) {
+          _notifyAccountReset();
+        }
       } else {
         uid = null;
         state = SessionState.loggedOut;
@@ -138,7 +159,7 @@ class Session extends ChangeNotifier {
       }
     } catch (error) {
       uid = null;
-      unreachableMessage = error is ApiException ? error.message : error.toString();
+      unreachableMessage = Failure.from(error).message;
       state = SessionState.unreachable;
     }
     notifyListeners();
@@ -176,9 +197,11 @@ class Session extends ChangeNotifier {
     await PageCache.instance.clear();
     cookies.clear();
     uid = null;
+    _activeUid = null;
     st = null;
     state = SessionState.loggedOut;
     _revision++;
+    _notifyAccountReset();
     notifyListeners();
   }
 

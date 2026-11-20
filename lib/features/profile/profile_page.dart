@@ -94,7 +94,7 @@ class _ProfilePageState extends State<ProfilePage> with ShellTabAware {
     );
     if (confirmed == true) {
       await Session.instance.logout();
-      await UnreadMonitor.instance.refresh(force: true);
+      await UnreadMonitor.instance.refresh(immediately: true);
     }
   }
 

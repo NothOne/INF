@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/error_text.dart';
 import '../../core/layout.dart';
 import '../../core/look.dart';
 import '../../core/api.dart';
@@ -46,7 +47,7 @@ class _SuperTopicsPageState extends State<SuperTopicsPage> {
         builder: (context, _) {
           if (_pager.loading && _pager.items.isEmpty) return const LoadingFooter();
           if (_pager.error != null && _pager.items.isEmpty) {
-            return Center(child: ErrorRetry(message: _pager.error.toString(), onRetry: _pager.refresh));
+            return Center(child: ErrorView(error: _pager.error, onRetry: _pager.refresh));
           }
           if (_pager.items.isEmpty) return const EmptyHint(text: '还没有超话', icon: Icons.tag_rounded);
           return NotificationListener<ScrollNotification>(

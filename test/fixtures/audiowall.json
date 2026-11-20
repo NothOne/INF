@@ -1,0 +1,333 @@
+{
+ "data": {
+  "next_cursor": -1,
+  "list": [
+   {
+    "visible": {
+     "type": 0,
+     "list_id": 0
+    },
+    "created_at": "Wed Jun 04 21:48:35 +0800 2025",
+    "id": 5173931733681377,
+    "idstr": "5173931733681377",
+    "mid": "5173931733681377",
+    "mblogid": "Pv1iJfrH3",
+    "user": {
+     "id": 1727858283,
+     "idstr": "1727858283",
+     "pc_new": 7,
+     "screen_name": "宝玉xp",
+     "profile_image_url": "https://tva3.sinaimg.cn/crop.0.0.180.180.50/66fd066bjw1e8qgp5bmzyj2050050aa8.jpg?KID=imgbed,tva&Expires=1795078525&ssig=ilqVIqZf8S",
+     "profile_url": "/u/1727858283",
+     "verified": true,
+     "verified_type": 0,
+     "domain": "dotey",
+     "weihao": "",
+     "verified_type_ext": 1,
+     "status_total_counter": {
+      "total_cnt_format": "420.5万",
+      "comment_cnt": "241,828",
+      "repost_cnt": "2,001,092",
+      "like_cnt": "1,962,031",
+      "total_cnt": "4,204,951"
+     },
+     "avatar_large": "https://tva3.sinaimg.cn/crop.0.0.180.180.180/66fd066bjw1e8qgp5bmzyj2050050aa8.jpg?KID=imgbed,tva&Expires=1795078525&ssig=ybCwoiG98W",
+     "avatar_hd": "https://tva3.sinaimg.cn/crop.0.0.180.180.1024/66fd066bjw1e8qgp5bmzyj2050050aa8.jpg?KID=imgbed,tva&Expires=1795078525&ssig=CbfWGQlmWm",
+     "follow_me": false,
+     "following": false,
+     "mbrank": 2,
+     "mbtype": 12,
+     "v_plus": 0,
+     "user_ability": 11799048,
+     "planet_video": false,
+     "icon_list": [
+      {
+       "type": "vip",
+       "data": {
+        "mbrank": 2,
+        "mbtype": 12,
+        "svip": 1,
+        "vvip": 1
+       }
+      }
+     ]
+    },
+    "can_edit": false,
+    "textLength": 370,
+    "annotations": [
+     []
+    ],
+    "source": "微博音频",
+    "favorited": false,
+    "mark": "999_reallog_mark_ad:999|WeiboADNatural",
+    "rid": "0_0_0_5245802669415128289_0_0_0",
+    "pic_ids": [],
+    "pic_num": 0,
+    "is_paid": false,
+    "mblog_vip_type": 0,
+    "number_display_strategy": {
+     "apply_scenario_flag": 51,
+     "display_text_min_number": 1000000,
+     "display_text": "100万+"
+    },
+    "reposts_count": 16,
+    "comments_count": 4,
+    "attitudes_count": 40,
+    "attitudes_status": 0,
+    "continue_tag": {
+     "title": "全文",
+     "pic": "http://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_article.png",
+     "scheme": "sinaweibo://detail?mblogid=5173931733681377&id=5173931733681377&next_fid=232532_mblog&feed_detail_type=0"
+    },
+    "isLongText": true,
+    "mlevel": 0,
+    "content_auth": 0,
+    "is_show_bulletin": 2,
+    "comment_manage_info": {
+     "comment_permission_type": -1,
+     "approval_comment_type": 0,
+     "comment_sort_type": 0,
+     "comment_anon_type": 0
+    },
+    "share_repost_type": 0,
+    "topic_struct": [
+     {
+      "title": "",
+      "topic_url": "sinaweibo://searchall?containerid=231522&q=%23%E5%BE%AE%E5%8D%9A%E5%A3%B0%E6%B5%AA%E8%AE%A1%E5%88%92%23&extparam=%23%E5%BE%AE%E5%8D%9A%E5%A3%B0%E6%B5%AA%E8%AE%A1%E5%88%92%23",
+      "topic_title": "微博声浪计划",
+      "actionlog": {
+       "act_type": 1,
+       "act_code": 300,
+       "oid": "1022:231522f88fcb5c11898dfb8a4dc92a51dd26c2",
+       "uuid": 5027767388209250,
+       "cardid": "",
+       "lcardid": "",
+       "uicode": "",
+       "luicode": "",
+       "fid": "",
+       "lfid": "",
+       "ext": "mid:5173931733681377|rid:0_0_0_5245802669415128289_0_0_0|miduid:1727858283|rootmid:5173931733681377|rootuid:1727858283|authorid:|uuid:5027767388209250|is_ad_weibo:1|oid:1022:231522f88fcb5c11898dfb8a4dc92a51dd26c2"
+      }
+     }
+    ],
+    "url_struct": [
+     {
+      "url_title": "宝玉xp的微博音频",
+      "url_type_pic": "https://h5.sinaimg.cn/upload/1000/1327/2023/09/12/feed_podcast_headline_icon_audio.png",
+      "ori_url": "sinaweibo://audio/podcast?mid=5173931733681377&object_id=2373717%3A5173918097408038&media_id=5173918097408038",
+      "page_id": "2328495173918097408038",
+      "short_url": "http://t.cn/A6eqTvba",
+      "long_url": "https://video.weibo.com/show?fid=2373717:5173918097408038&mark_id=999_reallog_mark_ad%3A999%7CWeiboADNatural",
+      "url_type": 39,
+      "result": false,
+      "actionlog": {
+       "act_type": 1,
+       "act_code": 300,
+       "oid": "2373717:5173918097408038",
+       "uuid": 5173918104289421,
+       "cardid": "",
+       "lcardid": "",
+       "uicode": "",
+       "luicode": "",
+       "fid": "",
+       "lfid": "",
+       "ext": "mid:5173931733681377|rid:0_0_0_5245802669415128289_0_0_0|miduid:1727858283|rootmid:5173931733681377|rootuid:1727858283|authorid:1727858283|uuid:5173918104289421|is_ad_weibo:1|oid:2373717:5173918097408038|analysis_card:url_struct"
+      },
+      "storage_type": "",
+      "hide": 0,
+      "object_type": "",
+      "h5_target_url": "https://video.weibo.com/show?fid=2373717:5173918097408038&from=1FFFF96039&weiboauthoruid=1727858283",
+      "need_save_obj": 0
+     }
+    ],
+    "mblogtype": 0,
+    "showFeedRepost": false,
+    "showFeedComment": false,
+    "pictureViewerSign": false,
+    "showPictureViewer": false,
+    "rcList": [],
+    "analysis_extra": "",
+    "mixed_count": 0,
+    "is_show_mixed": false,
+    "mblog_feed_back_menus_format": [],
+    "isAd": true,
+    "isSinglePayAudio": false,
+    "md_render_mark": null,
+    "text": "测试微博的播客功能，从之前一条微博中生成 <a target=\"_blank\" href=\"https://weibo.com/1727858283/PuOth2H3M?mark_id=999_reallog_mark_ad%3A999%7CWeiboADNatural\"><img class=\"icon-link\" title=\"http://t.cn/A6eqTvwH\" src=\"https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_weibo_default.png\"/>微博正文</a> ，还不错，就是太正经了点，感觉可以多一点生成选项，比如支持 NotebookLM 那种说相声的风格，比较生动有趣一些。<a href=/n/Yuki_小倩 usercard=\"name=@Yuki_小倩\">@Yuki_小倩</a><br /><a href=\"//s.weibo.com/weibo?q=%23%E5%BE%AE%E5%8D%9A%E5%A3%B0%E6%B5%AA%E8%AE%A1%E5%88%92%23\" target=\"_blank\">#微博声浪计划#</a><a href=\"//s.weibo.com/weibo?q=%23%E5%90%AC%E8%A7%81%E5%BE%AE%E5%8D%9A%23\" target=\"_blank\">#听见微博#</a> AI编程很强大，但架构师与程序员的价值依然凸显。复杂的系统、全局视角及创新能力 ​​​ ...<span class=\"expand\">展开</span>",
+    "text_raw": "测试微博的播客功能，从之前一条微博中生成 http://t.cn/A6eqTvwH ，还不错，就是太正经了点，感觉可以多一点生成选项，比如支持 NotebookLM 那种说相声的风格，比较生动有趣一些。@Yuki_小倩\n#微博声浪计划##听见微博# AI编程很强大，但架构师与程序员的价值依然凸显。复杂的系统、全局视角及创新能力 ​​​",
+    "region_name": "发布于 美国",
+    "page_info": {
+     "type": "44",
+     "page_id": "2328495173918097408038",
+     "object_type": "podcast_audio",
+     "page_desc": "测试微博的播客功能，从之前一条微博中生成 https://weibo.com/1727858283/PuOth2H3M ，还不错，就是太正经了点，感觉可以多一点生成选项，比如支持 NotebookLM 那种说相声的风格，比较生动有趣一些。@Yuki_小倩\n#微博声浪计划##听见微",
+     "oid": "1727858283",
+     "page_title": "宝玉xp的微博音频",
+     "page_pic": "https://wx4.sinaimg.cn/orj480/952cc65ely1i0yx30rufzj206o06oq2q.jpg",
+     "type_icon": "",
+     "page_url": "sinaweibo://infopage?containerid=2328495173918097408038&containerid=2328495173918097408038",
+     "object_id": "2373717:5173918097408038",
+     "media_info": {
+      "stream_url": "http://podcast.video.weibocdn.com/ol/KILUXn8klx08oMEvS7HO010c12009Y8R0E01l.mp3?ori=0&ps=1CwnkDw1GXwCQx&Expires=1795071325&ssig=iIQ06hcxgN&KID=unistore,video",
+      "protocol": "general",
+      "media_id": "5173918097408038",
+      "duration": 148,
+      "author_mid": "5173931733681377",
+      "h5_url": "https://video.weibo.com/show?fid=2373717:5173918097408038",
+      "autoplay": 1,
+      "active_score": 20,
+      "deactive_score": 50,
+      "audio_start_time": 0,
+      "subtitle_preview": "你是不是也曾想过，在未来AI主导的时代里，程序员和架构师会不会变得可有可无呢？\n今天我们就好好聊聊这个话题，看看这些职业真的会彻底消失吗？\n先听听瑞叉的观点，他说擅长非精确计算能够成为人类很好的协作者，而不是单纯的工具。\n所以在碰撞使用或者设计模式方面，悲或许会比单一的架构师更加出色。\n",
+      "is_forward_spotlight": false,
+      "top_label": {
+       "text": "AI音频"
+      },
+      "play_completion_actions": [
+       {
+        "type": 6,
+        "icon": "https://tva3.sinaimg.cn/crop.0.0.180.180.180/66fd066bjw1e8qgp5bmzyj2050050aa8.jpg?KID=imgbed,tva&Expires=1795078525&ssig=ybCwoiG98W",
+        "text": "",
+        "display_mode": 2,
+        "display_starttime": 5,
+        "display_endtime": 99999,
+        "countdown_time": 5,
+        "show_position": 48,
+        "scheme": "",
+        "link": "",
+        "act_code": 91,
+        "btn_code": 1009,
+        "actionlog": {
+         "act_code": 91
+        },
+        "ext": {
+         "uid": "1727858283"
+        }
+       }
+      ],
+      "author_info": {
+       "id": 1727858283,
+       "idstr": "1727858283",
+       "pc_new": 7,
+       "screen_name": "宝玉xp",
+       "profile_image_url": "https://tva3.sinaimg.cn/crop.0.0.180.180.50/66fd066bjw1e8qgp5bmzyj2050050aa8.jpg?KID=imgbed,tva&Expires=1795078525&ssig=ilqVIqZf8S",
+       "profile_url": "/u/1727858283",
+       "verified": true,
+       "verified_type": 0,
+       "domain": "dotey",
+       "weihao": "",
+       "verified_type_ext": 1,
+       "status_total_counter": {
+        "total_cnt_format": "420.5万",
+        "comment_cnt": "241,828",
+        "repost_cnt": "2,001,092",
+        "like_cnt": "1,962,031",
+        "total_cnt": "4,204,951"
+       },
+       "avatar_large": "https://tva3.sinaimg.cn/crop.0.0.180.180.180/66fd066bjw1e8qgp5bmzyj2050050aa8.jpg?KID=imgbed,tva&Expires=1795078525&ssig=ybCwoiG98W",
+       "avatar_hd": "https://tva3.sinaimg.cn/crop.0.0.180.180.1024/66fd066bjw1e8qgp5bmzyj2050050aa8.jpg?KID=imgbed,tva&Expires=1795078525&ssig=CbfWGQlmWm",
+       "follow_me": false,
+       "following": false,
+       "mbrank": 2,
+       "mbtype": 12,
+       "v_plus": 0,
+       "user_ability": 11799048,
+       "planet_video": false,
+       "verified_reason": "前微软Asp.Net最有价值专家  2025微博年度新知博主 科技博主",
+       "description": "传播技术。不争论，只拉黑。个人网站：https://baoyu.io",
+       "location": "海外 美国",
+       "gender": "m",
+       "followers_count": 1155932,
+       "followers_count_str": "115.6万",
+       "friends_count": 563,
+       "statuses_count": 61063,
+       "url": "http://www.openlab.net.cn",
+       "svip": 1,
+       "vvip": 1,
+       "cover_image_phone": "https://ww1.sinaimg.cn/crop.0.0.640.640.640/549d0121tw1egm1kjly3jj20hs0hsq4f.jpg"
+      }
+     },
+     "author_id": "1727858283",
+     "authorid": "1727858283",
+     "card_info": {
+      "card_type": "245",
+      "mid": "5173931733681377",
+      "oid": "2373717:5173918097408038",
+      "cover": "https://wx4.sinaimg.cn/orj480/952cc65ely1i0yx30rufzj206o06oq2q.jpg",
+      "title": "AI时代程序员和架构师还重要吗？",
+      "author_name": "宝玉xp",
+      "describe": "",
+      "summary": {
+       "display_name": "AI总结",
+       "total_abstract": "AI 时代，程序员和架构师的角色并未消失，仍需保持学习态度和创造性思维",
+       "content": [
+        {
+         "abstract_id": "5173934468038743",
+         "end_time": 29000,
+         "begin_time": 10000,
+         "text": "AI 擅长非精确计算可协助人类，但人类角色仍重要，需发展至执行指导和交付代表"
+        }
+       ],
+       "scheme": "sinaweibo://audio/podcast?mid=5173931733681377&object_id=2373717%3A5173918097408038&media_id=5173918097408038&ai_summary_index=0",
+       "split_action_log": {
+        "act_type": 1,
+        "act_code": 7852,
+        "oid": "2373717:5173918097408038",
+        "uuid": 5173918104289421,
+        "cardid": "",
+        "lcardid": "",
+        "uicode": "",
+        "luicode": "",
+        "fid": "",
+        "lfid": "",
+        "ext": "mid:5173931733681377|rid:0_0_0_5245802669415128289_0_0_0|miduid:1727858283|rootmid:5173931733681377|rootuid:1727858283|authorid:1727858283|uuid:5173918104289421|is_ad_weibo:1|oid:2373717:5173918097408038|type:ai_summary"
+       },
+       "split_exposure_log": {
+        "act_type": 1,
+        "act_code": 7851,
+        "oid": "2373717:5173918097408038",
+        "uuid": 5173918104289421,
+        "cardid": "",
+        "lcardid": "",
+        "uicode": "",
+        "luicode": "",
+        "fid": "",
+        "lfid": "",
+        "ext": "mid:5173931733681377|rid:0_0_0_5245802669415128289_0_0_0|miduid:1727858283|rootmid:5173931733681377|rootuid:1727858283|authorid:1727858283|uuid:5173918104289421|is_ad_weibo:1|oid:2373717:5173918097408038|type:ai_summary"
+       }
+      },
+      "play_count_desc": "15.2万次播放",
+      "play_count_format": "#*#次播放",
+      "play_count_num": 152480,
+      "action_log": {
+       "act_code": 7596,
+       "ext": "mid:5173931733681377|oid:2373717:5173918097408038|audio_type:default"
+      },
+      "scheme": "sinaweibo://audio/podcast?mid=5173931733681377&object_id=2373717%3A5173918097408038&media_id=5173918097408038",
+      "primary_color": "#7f7f7f",
+      "background_colors": [
+       "#b2b2b2"
+      ],
+      "page_background_colors": [
+       "#b9b9b9"
+      ]
+     },
+     "actionlog": {
+      "act_type": 1,
+      "act_code": 7590,
+      "oid": "2373717:5173918097408038",
+      "uuid": 5173918104289421,
+      "cardid": "",
+      "lcardid": "",
+      "uicode": "",
+      "luicode": "",
+      "fid": "",
+      "lfid": "",
+      "ext": "mid:5173931733681377|rid:0_0_0_5245802669415128289_0_0_0|miduid:1727858283|rootmid:5173931733681377|rootuid:1727858283|authorid:1727858283|uuid:5173918104289421|is_ad_weibo:1|oid:2373717:5173918097408038|uid:1024145538474|isfan:0|from:1FFFF96039|object_id:2373717:5173918097408038|author_mid:5173931733681377|object_duration:148.479|album_id:|audio_type:default|audio_ai:1|analysis_card:page_info"
+     }
+    }
+   }
+  ]
+ },
+ "ok": 1
+}

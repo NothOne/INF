@@ -1,8 +1,10 @@
 import 'package:flutter/foundation.dart';
 
 import '../../core/api.dart';
+import '../../core/failure.dart';
 import '../../core/models.dart';
 import '../../core/paging.dart';
+import '../../core/status_store.dart';
 import '../../core/prefs.dart';
 import '../../core/session.dart';
 
@@ -19,10 +21,13 @@ class FeedController extends ChangeNotifier {
   List<FeedSource>? sources;
   String? unreachable;
   String? message;
-  bool _loadingSources = false;
+  bool _sourcesLoaded = false;
+  Future<void>? _sourcesInFlight;
   String? _pagerKey;
   bool _disposed = false;
   bool _started = false;
+
+  bool get sourcesLoaded => _sourcesLoaded;
 
   void start() {
     if (_started) return;
@@ -48,6 +53,7 @@ class FeedController extends ChangeNotifier {
     pager = PagingController<Status>(
       fetch: (cursor) => WeiboApi.instance.feed(cachedSource, Session.instance.uid ?? '', cursor),
       id: (status) => status.id,
+      remember: StatusStore.instance.remember,
       keepTailOnRefresh: true,
     )..seed(page);
   }
@@ -57,16 +63,21 @@ class FeedController extends ChangeNotifier {
   void _sessionChanged() {
     if (!_started) return;
     if (Session.instance.state == SessionState.loggedOut) {
-      pager?.dispose();
-      pager = null;
-      _pagerKey = null;
+      _clearSignedInState();
       mode = FeedMode.needsLogin;
       _notify();
-    } else if (Session.instance.state == SessionState.loggedIn) {
-      _load();
     } else {
       _load();
     }
+  }
+
+  void _clearSignedInState() {
+    pager?.disposeDeferred();
+    pager = null;
+    _pagerKey = null;
+    sources = null;
+    _sourcesLoaded = false;
+    source = FeedSource.all;
   }
 
   Future<void> _load() async {
@@ -80,9 +91,7 @@ class FeedController extends ChangeNotifier {
         _notify();
         return;
       case SessionState.loggedOut:
-        pager?.dispose();
-        pager = null;
-        _pagerKey = null;
+        _clearSignedInState();
         mode = FeedMode.needsLogin;
         _notify();
         return;
@@ -107,26 +116,28 @@ class FeedController extends ChangeNotifier {
     }
   }
 
-  Future<void> _ensureSources() async {
-    if (sources != null) return;
-    if (_loadingSources) return;
-    _loadingSources = true;
+  Future<void> _ensureSources() {
+    if (_sourcesLoaded) return Future.value();
+    return _sourcesInFlight ??= _fetchSources().whenComplete(() => _sourcesInFlight = null);
+  }
+
+  Future<void> _fetchSources() async {
     try {
       final next = await WeiboApi.instance.feedSources();
+      if (_disposed) return;
       sources = next;
+      _sourcesLoaded = true;
       final saved = FeedSource.fromKey(Prefs.instance.feedSourceKey, next);
       source = saved ?? FeedSource.all;
     } catch (error) {
-      sources = const [FeedSource.all];
-      source = FeedSource.all;
-      message = '分组加载失败：${error is ApiException ? error.message : '未知错误'}';
-    } finally {
-      _loadingSources = false;
+      if (_disposed) return;
+      sources ??= const [FeedSource.all];
+      message = '分组加载失败：${Failure.from(error).message}';
     }
   }
 
   Future<void> loadSources() async {
-    if (sources != null) return;
+    if (_sourcesLoaded) return;
     await _ensureSources();
     _notify();
   }
@@ -139,11 +150,17 @@ class FeedController extends ChangeNotifier {
       pager!.refresh(background: true);
       return;
     }
-    pager?.dispose();
+    final previous = pager;
     _pagerKey = key;
-    final controller = PagingController<Status>(fetch: fetch, id: (status) => status.id, keepTailOnRefresh: true);
+    final controller = PagingController<Status>(
+      fetch: fetch,
+      id: (status) => status.id,
+      remember: StatusStore.instance.remember,
+      keepTailOnRefresh: true,
+    );
     pager = controller;
     controller.refresh();
+    previous?.disposeDeferred();
   }
 
   void selectSource(FeedSource next) {

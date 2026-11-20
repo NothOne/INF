@@ -7,8 +7,8 @@ String sanitizeImageUrl(String? value) => secureUrl(value);
 String secureUrl(String? value) {
   if (value == null) return '';
   var url = value.trim();
-  if (url.startsWith('//')) url = 'https:' + url;
-  if (url.toLowerCase().startsWith('http://')) url = 'https://' + url.substring(7);
+  if (url.startsWith('//')) url = 'https:$url';
+  if (url.toLowerCase().startsWith('http://')) url = 'https://${url.substring(7)}';
   return url;
 }
 
@@ -38,7 +38,7 @@ String sinaimgSized(String url, String size) {
   final clean = sanitizeImageUrl(url);
   final match = _sinaimg.firstMatch(clean);
   if (match == null) return clean;
-  return match.group(1)! + size + '/' + match.group(3)!;
+  return '${match.group(1)!}$size/${match.group(3)!}';
 }
 
 final RegExp _avatarCrop = RegExp(r'(/crop\.\d+\.\d+\.\d+\.\d+)\.\d+/');

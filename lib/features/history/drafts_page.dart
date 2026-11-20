@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../core/layout.dart';
 import '../../core/look.dart';
 import '../../core/api.dart';
+import '../../core/error_text.dart';
 import '../../core/haptics.dart';
 import '../../core/models.dart';
 import '../../core/navigation.dart';
@@ -33,12 +34,8 @@ class _DraftsPageState extends State<DraftsPage> {
           ids.add(await WeiboApi.instance.uploadImage(File(path)));
         }
         await WeiboApi.instance.postStatus(draft.text.trim(), ids);
-      } else if (draft.type == DraftType.repost) {
-        await WeiboApi.instance.repost(draft.statusId ?? '', draft.text.trim(), draft.crossPost);
-      } else if (draft.type == DraftType.reply && draft.commentId != null) {
-        await WeiboApi.instance.reply(draft.statusId ?? '', draft.commentId!, draft.text.trim());
       } else {
-        await WeiboApi.instance.comment(draft.statusId ?? '', draft.text.trim());
+        await WeiboApi.instance.repost(draft.statusId ?? '', draft.text.trim(), draft.crossPost);
       }
       final drafts = Prefs.instance.drafts.where((d) => d.id != draft.id).toList();
       await Prefs.instance.saveDrafts(drafts);
@@ -46,18 +43,19 @@ class _DraftsPageState extends State<DraftsPage> {
       Haptic.success.play();
       if (mounted) showMessage(context, '已发送');
     } catch (error) {
+      final message = friendlyError(error);
       final drafts = Prefs.instance.drafts.toList();
       final index = drafts.indexWhere((d) => d.id == draft.id);
       if (index >= 0) {
         drafts[index] = drafts[index].copyWith(
           state: DraftState.failed,
-          error: error is ApiException ? error.message : '发送失败',
+          error: message,
           updatedAt: DateTime.now(),
         );
         await Prefs.instance.saveDrafts(drafts);
       }
       Haptic.error.play();
-      if (mounted) showMessage(context, error is ApiException ? error.message : '发送失败');
+      if (mounted) showMessage(context, message);
     } finally {
       if (mounted) setState(() => _busy.remove(draft.id));
     }
@@ -83,7 +81,7 @@ class _DraftsPageState extends State<DraftsPage> {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Prefs.instance,
+      animation: Prefs.instance.draftsNotifier,
       builder: (context, _) {
         final drafts = Prefs.instance.drafts;
         final scheme = Theme.of(context).colorScheme;
@@ -199,8 +197,6 @@ class _DraftsPageState extends State<DraftsPage> {
   String _typeLabel(Draft draft) => switch (draft.type) {
         DraftType.original => '原创',
         DraftType.repost => '转发',
-        DraftType.comment => '评论',
-        DraftType.reply => draft.replyToName == null ? '回复' : '回复 ${draft.replyToName}',
       };
 }
 

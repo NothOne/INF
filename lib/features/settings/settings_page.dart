@@ -8,6 +8,7 @@ import '../../core/layout.dart';
 import '../../core/liquid_glass.dart';
 import '../../core/look.dart';
 import '../../core/prefs.dart';
+import '../../core/relation_store.dart';
 import '../../core/motion.dart';
 import '../../core/temp_files.dart';
 import '../../core/theme.dart';
@@ -84,7 +85,7 @@ class _SettingsPageState extends State<SettingsPage> {
                               leading: Avatar(url: user.avatarUrl, size: 36),
                               title: Text(user.screenName.isEmpty ? user.id : user.screenName),
                               trailing: TextButton(
-                                onPressed: () => Prefs.instance.setBlocked(user, false),
+                                onPressed: () => RelationStore.instance.setBlocked(user, false),
                                 child: const Text('解除'),
                               ),
                             ),

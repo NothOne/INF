@@ -20,7 +20,7 @@ class StateSwitcher extends StatelessWidget {
       switchOutCurve: Curves.easeIn,
       layoutBuilder: (current, previous) => Stack(
         fit: StackFit.expand,
-        children: [...previous, if (current != null) current],
+        children: [...previous, ?current],
       ),
       child: child,
     );

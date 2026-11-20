@@ -5,10 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../core/api.dart';
-import '../../core/haptics.dart';
+import '../../core/error_text.dart';
 import '../../core/layout.dart';
 import '../../core/link_preview.dart';
 import '../../core/look.dart';
+import '../../core/message_sender.dart';
 import '../../core/models.dart';
 import '../../core/navigation.dart';
 import 'chat_link_sheet.dart';
@@ -37,7 +38,16 @@ class ChatPage extends StatefulWidget {
 
 class _ChatPageState extends State<ChatPage> {
   /// The last messages seen per conversation, so reopening one paints them at once.
+  /// Keyed with the signed-in account, capped by LRU, and cleared on sign-out/account switch.
   static final _recent = <String, ({List<DirectMessage> messages, String? cursor, bool hasMore})>{};
+  static const _recentKept = 20;
+  static bool _resetRegistered = false;
+
+  static void _ensureResetHook() {
+    if (_resetRegistered) return;
+    _resetRegistered = true;
+    Session.instance.registerAccountReset(_recent.clear);
+  }
 
   final ScrollController _scroll = ScrollController();
   final TextEditingController _text = TextEditingController();
@@ -46,7 +56,7 @@ class _ChatPageState extends State<ChatPage> {
 
   List<DirectMessage> _messages = [];
   String? _cursor;
-  String? _error;
+  Object? _error;
   User? _peer;
   String? _selfId;
 
@@ -97,9 +107,15 @@ class _ChatPageState extends State<ChatPage> {
     super.dispose();
   }
 
-  String get _key => '${widget.group ? 'g' : 'u'}${widget.uid}';
+  String get _key => '${Session.instance.cacheScope ?? ''}:${widget.group ? 'g' : 'u'}${widget.uid}';
 
-  void _remember() => _recent[_key] = (messages: _messages, cursor: _cursor, hasMore: _hasMore);
+  void _remember() {
+    _ensureResetHook();
+    final key = _key;
+    _recent.remove(key);
+    _recent[key] = (messages: _messages, cursor: _cursor, hasMore: _hasMore);
+    if (_recent.length > _recentKept) _recent.remove(_recent.keys.first);
+  }
 
   void _changed() => setState(() {});
 
@@ -151,7 +167,7 @@ class _ChatPageState extends State<ChatPage> {
       if (quiet) return;
       setState(() {
         _loading = false;
-        if (_messages.isEmpty) _error = error is ApiException ? error.message : '加载失败';
+        if (_messages.isEmpty) _error = error;
       });
     }
   }
@@ -219,20 +235,11 @@ class _ChatPageState extends State<ChatPage> {
     if (content.isEmpty || _sending) return;
     setState(() => _sending = true);
     _text.clear();
-    try {
-      if (widget.group) {
-        await WeiboApi.instance.sendGroupMessage(widget.uid, content);
-      } else {
-        await WeiboApi.instance.sendMessage(widget.uid, content);
-      }
-      await _loadLatest(quiet: true);
-      Haptic.success.play();
-    } catch (error) {
-      Haptic.error.play();
-      if (mounted) showMessage(context, error is ApiException ? error.message : '发送失败');
-    } finally {
-      if (mounted) setState(() => _sending = false);
-    }
+    final failure = await MessageSender.text(ChatTarget(widget.uid, widget.group), content);
+    if (failure == null) await _loadLatest(quiet: true);
+    if (!mounted) return;
+    setState(() => _sending = false);
+    showMessage(context, failure);
   }
 
   Future<void> _sendImage() async {
@@ -241,21 +248,13 @@ class _ChatPageState extends State<ChatPage> {
     if (picked == null) return;
     setState(() => _sending = true);
     final file = await TempFiles.file('chat-${DateTime.now().millisecondsSinceEpoch}.jpg');
-    try {
-      await File(picked.path).copy(file.path);
-      final target = ChatTarget(widget.uid, widget.group);
-      final fids = await WeiboApi.instance.uploadChatImage(file, target);
-      await WeiboApi.instance.sendChatImage(target, fids);
-      await _loadLatest(quiet: true);
-      Haptic.success.play();
-    } catch (error) {
-      Haptic.error.play();
-      if (mounted) showMessage(context, error is ApiException ? error.message : '图片发送失败');
-    } finally {
-      // Only the upload needed it.
-      await TempFiles.delete(file.path);
-      if (mounted) setState(() => _sending = false);
-    }
+    await File(picked.path).copy(file.path);
+    // The sender deletes this copy once the upload has taken it, whatever the outcome.
+    final failure = await MessageSender.image(ChatTarget(widget.uid, widget.group), file);
+    if (failure == null) await _loadLatest(quiet: true);
+    if (!mounted) return;
+    setState(() => _sending = false);
+    showMessage(context, failure);
   }
 
   Future<void> _openGroupInfo() async {
@@ -352,7 +351,7 @@ class _ChatPageState extends State<ChatPage> {
   Widget _messagesBody(BuildContext context) {
     if (_loading && _messages.isEmpty) return const LoadingFooter();
     if (_error != null && _messages.isEmpty) {
-      return Center(child: ErrorRetry(message: _error, onRetry: () => _loadLatest(initial: true)));
+      return Center(child: ErrorView(error: _error, onRetry: () => _loadLatest(initial: true)));
     }
     if (_messages.isEmpty) {
       return const EmptyHint(text: '还没有消息', icon: Icons.chat_bubble_outline_rounded);

@@ -1,16 +1,24 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 import 'dart:ui' show PlatformDispatcher;
 
 import 'package:dio/dio.dart';
 
 import 'emoji.dart';
+import 'cached_page.dart';
 import 'models.dart';
-import 'native.dart';
-import 'page_cache.dart';
 import 'parse.dart';
 import 'session.dart';
+import 'weibo_com_session.dart';
+
+part 'api_feeds.dart';
+part 'api_statuses.dart';
+part 'api_weibo_com.dart';
+part 'api_search_topic.dart';
+part 'api_notify_message.dart';
+part 'api_relations.dart';
+part 'api_comments.dart';
+part 'api_writes.dart';
 
 class LoginRequiredException implements Exception {
   final String? loginUrl;
@@ -26,15 +34,40 @@ class LoginRequiredException implements Exception {
 class ApiException implements Exception {
   final String message;
   final int? code;
-  ApiException(this.message, {this.code});
+
+  /// Set where the transport already knows what went wrong, so [Failure.from] does not have to
+  /// re-derive it from the message. Null for everything thrown by a caller, which leaves the
+  /// classification to the envelope's code and wording.
+  final FailureKind? kind;
+
+  ApiException(this.message, {this.code, this.kind});
+
   @override
   String toString() => message;
 }
+
+/// What the transport can tell about a failure without guessing: it never reached the service, or
+/// the service answered something that is not the shape this app reads.
+enum FailureKind { network, parse }
 
 /// A write Weibo will take only after its captcha; [captchaId] is what the puzzle is issued for.
 class CaptchaRequiredException extends ApiException {
   final String captchaId;
   CaptchaRequiredException(super.message, {required this.captchaId});
+}
+
+/// Shared Dio transport error mapping used across m.weibo.cn, weibo.com, and api.weibo.com.
+Exception dioError(DioException error) {
+  final type = error.type;
+  if (type == DioExceptionType.connectionTimeout ||
+      type == DioExceptionType.sendTimeout ||
+      type == DioExceptionType.receiveTimeout) {
+    return ApiException('网络连接超时', kind: FailureKind.network);
+  }
+  if (type == DioExceptionType.connectionError || type == DioExceptionType.badCertificate) {
+    return ApiException('网络连接失败', kind: FailureKind.network);
+  }
+  return ApiException(error.message ?? '网络请求失败', kind: FailureKind.network);
 }
 
 /// Calls the JSON endpoints used by m.weibo.cn, with the same paths, parameters and headers the
@@ -48,6 +81,13 @@ class WeiboApi {
           sendTimeout: const Duration(seconds: 30),
           responseType: ResponseType.plain,
           validateStatus: (_) => true,
+        )),
+        _publicDio = Dio(BaseOptions(
+          connectTimeout: const Duration(seconds: 15),
+          receiveTimeout: const Duration(seconds: 20),
+          sendTimeout: const Duration(seconds: 30),
+          responseType: ResponseType.plain,
+          validateStatus: (_) => true,
         )) {
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) {
@@ -56,7 +96,7 @@ class WeiboApi {
         headers['Accept'] = 'application/json, text/plain, */*';
         headers['X-Requested-With'] = 'XMLHttpRequest';
         headers['MWeibo-Pwa'] = '1';
-        headers.putIfAbsent('Referer', () => '${_web}/');
+        headers.putIfAbsent('Referer', () => '$_web/');
         if (session.cookieHeader.isNotEmpty && options.uri.host == 'm.weibo.cn') {
           headers['Cookie'] = session.cookieHeader;
         }
@@ -73,6 +113,16 @@ class WeiboApi {
         handler.next(response);
       },
     ));
+    // Non-m.weibo.cn hosts (weibo.com, passport, m.s.weibo.com) use a separate Dio with no
+    // m.weibo.cn cookie/XSRF/PWA interceptor so credentials and site headers never leak across hosts.
+    _publicDio.interceptors.add(InterceptorsWrapper(
+      onRequest: (options, handler) {
+        final headers = options.headers;
+        headers.putIfAbsent('User-Agent', () => session.userAgent);
+        headers.putIfAbsent('Accept', () => 'application/json, text/plain, */*');
+        handler.next(options);
+      },
+    ));
   }
 
   static final WeiboApi instance = WeiboApi._(Session.instance);
@@ -80,6 +130,7 @@ class WeiboApi {
 
   final Session session;
   final Dio _dio;
+  final Dio _publicDio;
 
   Future<WeiboConfig> config() async {
     final data = await _get('api/config');
@@ -94,57 +145,6 @@ class WeiboApi {
   }
 
   // ---- feeds --------------------------------------------------------------------------------
-
-  Future<List<FeedSource>> feedGroups() async {
-    final data = await _get('api/config/list');
-    return parseFeedGroups(data);
-  }
-
-  Future<List<FeedSource>> feedSources() async {
-    final groups = await feedGroups();
-    return [
-      FeedSource.all,
-      ...groups,
-      FeedSource.circle,
-      FeedSource.private,
-      FeedSource.liked,
-      FeedSource.favorites,
-    ];
-  }
-
-  Future<PageResult<Status>> feed(FeedSource source, String uid, String? cursor) async {
-    final page = int.tryParse(cursor ?? '') ?? 1;
-    final data = await switch (source.kind) {
-      FeedKind.all => _get('feed/friends', query: {'max_id': cursor}),
-      FeedKind.group => _listFeed('feed/group', cursor, {'gid': source.id}),
-      FeedKind.circle => _listFeed('feed/circle', cursor),
-      FeedKind.private => _listFeed('feed/private', cursor),
-      FeedKind.liked => _cardFeed(likedContainer(uid), page),
-      FeedKind.favorites => _cardFeed('230259', page),
-      FeedKind.card => _cardFeed(source.id.isEmpty ? '102803' : source.id, page),
-    };
-    if (cursor == null) {
-      PageCache.instance.write(session.uid, 'feed', {'source': source.key, 'name': source.name, 'data': data});
-    }
-    return _parseFeed(source.kind, data, page);
-  }
-
-  /// The first page of the feed last shown, and the source it came from.
-  (FeedSource, PageResult<Status>)? cachedFeed() {
-    final cached = asMap(PageCache.instance.read(session.cacheScope, 'feed'));
-    final key = textOf(cached?['source']);
-    if (cached == null || key == null) return null;
-    final parts = key.split('\u001F');
-    final kind = parts.length == 2 ? FeedKind.values.where((k) => k.name == parts[0]).firstOrNull : null;
-    if (kind == null) return null;
-    final source = FeedSource(kind, textOf(cached['name']) ?? '', parts[1] == kind.name ? '' : parts[1]);
-    try {
-      final page = _parseFeed(kind, cached['data'], 1);
-      return page.items.isEmpty ? null : (source, page);
-    } catch (_) {
-      return null;
-    }
-  }
 
   PageResult<Status> _parseFeed(FeedKind kind, dynamic data, int page) => switch (kind) {
         FeedKind.all || FeedKind.group || FeedKind.circle || FeedKind.private => parseFriendsFeed(data),
@@ -165,88 +165,6 @@ class WeiboApi {
 
   // ---- statuses -----------------------------------------------------------------------------
 
-  Future<Status?> status(String id) async {
-    final data = await _get('statuses/show', query: {'id': id});
-    return toStatus(data);
-  }
-
-  Future<({String text, Map<String, WeiboLink> links})?> longText(String id) async {
-    final data = await _get('statuses/extend', query: {'id': id});
-    final raw = textOf(asMap(data)?['longTextContent']);
-    if (raw == null) return null;
-    final rich = weiboHtmlToRichText(raw);
-    final text = rich.text.trim();
-    return text.isEmpty ? null : (text: text, links: rich.links);
-  }
-
-  Future<PageResult<Status>> userTimeline(String uid, String? cursor) async {
-    final data = await _get(
-      'api/container/getIndex',
-      query: {
-        'type': 'uid',
-        'value': uid,
-        'containerid': '107603$uid',
-        'since_id': cursor,
-      },
-    );
-    return parseUserTimeline(data);
-  }
-
-  /// 搜他的微博. m.weibo.cn's own search box searches the whole site; weibo.com's profile search
-  /// narrows to the account, but answers only the signed-in weibo.com cookie, never a visitor.
-  Future<PageResult<Status>> searchUserStatuses(String uid, String query, String? cursor) => _numberedPage(
-        cursor,
-        (page) async => parseStatusList(await _getWeiboCom(
-          'profile/searchblog',
-          {'uid': uid, 'page': page, 'feature': '0', 'q': query},
-          referer: 'https://weibo.com/u/$uid',
-        )),
-      );
-
-  Future<UserProfile?> userProfile(String uid) async {
-    final data = await _get('api/container/getIndex', query: {'type': 'uid', 'value': uid});
-    final profile = parseUserProfile(data);
-    if (profile != null && uid == session.uid) {
-      PageCache.instance.write(uid, 'profile', {'userInfo': asMap(data)?['userInfo']});
-    }
-    return profile;
-  }
-
-  UserProfile? cachedSelfProfile() {
-    try {
-      return parseUserProfile(PageCache.instance.read(session.cacheScope, 'profile'));
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<User?> user(String uid) async => (await userProfile(uid))?.user;
-
-  /// The sections weibo.com shows on someone's page; the usual four when it does not answer.
-  Future<ProfileExtras> profileExtras(String uid) async {
-    Future<dynamic> visit(String path) => _asVisitor((cookie) => _getPublic(
-          'https://weibo.com/ajax/profile/$path',
-          query: {'uid': uid},
-          referer: 'https://weibo.com/u/$uid',
-          cookie: cookie,
-        ));
-    final detail = visit('detail').then<dynamic>((data) => data, onError: (_) => null);
-    try {
-      return parseProfileExtras(await visit('info'), await detail);
-    } catch (_) {
-      return parseProfileExtras(null, await detail);
-    }
-  }
-
-  /// 精选: what weibo.com calls the account's 热门内容.
-  Future<PageResult<Status>> profileFeatured(String uid, String? cursor) =>
-      _profileContainer(uid, '231002${uid}_-_HOTMBLOG', cursor);
-
-  /// The 微博 tab narrowed to originals, pictures, videos or articles; [ProfilePostFilter.all] is
-  /// [userTimeline].
-  Future<PageResult<Status>> profilePosts(String uid, String suffix, String? cursor) =>
-      _profileContainer(uid, '230413${uid}_-_WEIBO_SECOND_PROFILE_WEIBO${suffix.isEmpty ? '' : '_$suffix'}', cursor);
-
   /// weibo.com's `profile/feature` hands a visitor m.weibo.cn's profile containers, paged by number.
   Future<PageResult<Status>> _profileContainer(String uid, String containerId, String? cursor) async {
     final page = int.tryParse(cursor ?? '') ?? 1;
@@ -258,125 +176,6 @@ class WeiboApi {
         ));
     return parseContainerStatuses(data, page);
   }
-
-  Future<PageResult<Status>> profileVideos(String uid, String? cursor) async => parseCursorStatuses(await _asVisitor(
-        (cookie) => _getPublic(
-          'https://weibo.com/ajax/profile/getWaterFallContent',
-          query: {'uid': uid, 'cursor': cursor ?? '0'},
-          referer: 'https://weibo.com/u/$uid',
-          cookie: cookie,
-        ),
-      ));
-
-  Future<PageResult<Status>> profileAudio(String uid, String? cursor) async => parseCursorStatuses(await _asVisitor(
-        (cookie) => _getPublic(
-          'https://weibo.com/ajax/profile/getAudioList',
-          query: {'profile_uid': uid, 'cursor': cursor ?? ''},
-          referer: 'https://weibo.com/u/$uid',
-          cookie: cookie,
-        ),
-      ));
-
-  Future<PageResult<ProfilePhoto>> profilePhotos(String uid, String? cursor) async => parseImageWall(await _asVisitor(
-        (cookie) => _getPublic(
-          'https://weibo.com/ajax/profile/getImageWall',
-          query: {'uid': uid, 'sinceid': cursor ?? '0', 'has_album': cursor == null ? 'true' : 'false'},
-          referer: 'https://weibo.com/u/$uid',
-          cookie: cookie,
-        ),
-      ));
-
-  /// weibo.com's board carries rank, badge, category and time on the list; m.weibo.cn's only the
-  /// words, so it is the fallback.
-  Future<List<HotSearch>> hotSearch() async {
-    try {
-      final band = parseHotBand(await _getPublic('https://weibo.com/ajax/statuses/hot_band'));
-      if (band.isNotEmpty) return band;
-    } catch (_) {}
-    final data = await _get(
-      'api/container/getIndex',
-      query: {'containerid': '106003type=25&t=3&disable_hot=1&filter_type=realtimehot'},
-    );
-    return parseHotSearch(data);
-  }
-
-  /// One of weibo.com's boards. Those behind the visitor wall get a visitor cookie; a stale one is
-  /// replaced once.
-  Future<List<HotSearch>> hotBoard(HotBoard board) async {
-    if (board == HotBoard.realtime) return hotSearch();
-    final url = 'https://weibo.com/ajax/statuses/${board.path}';
-    return _asVisitor(
-      (cookie) async => parseHotBand(await _getPublic(url, cookie: cookie), board: board),
-      accept: (band) => band.isNotEmpty,
-    );
-  }
-
-  /// weibo.com's 推荐 channels. They are the same for every visitor, so no account is needed.
-  Future<List<RecommendChannel>> recommendChannels() => _asVisitor(
-        (cookie) async => parseRecommendChannels(await _getPublic(
-          'https://weibo.com/ajax/feed/allGroups',
-          query: {'is_new_segment': '1', 'fetch_hot': '1'},
-          cookie: cookie,
-          whole: true,
-        )),
-        accept: (channels) => channels.isNotEmpty,
-      );
-
-  /// One channel's posts; 热门 signed in is m.weibo.cn's, tuned to the account. weibo.com draws a fresh batch on every call and its `max_id` stays 1,
-  /// so the cursor is only a page count; the pager drops the repeats.
-  Future<PageResult<Status>> recommendFeed(RecommendChannel channel, String? cursor) async {
-    if (channel.personal && session.uid != null) {
-      final page = int.tryParse(cursor ?? '') ?? 1;
-      return _parseFeed(FeedKind.card, await _cardFeed(channel.containerId, page), page);
-    }
-    final page = int.tryParse(cursor ?? '') ?? 0;
-    final items = await _asVisitor(
-      (cookie) async => parseHotTimeline(await _getPublic(
-        'https://weibo.com/ajax/feed/hottimeline',
-        query: {
-          'since_id': '0',
-          'refresh': page == 0 ? '1' : '0',
-          'group_id': channel.gid,
-          'containerid': channel.containerId,
-          'extparam': 'discover|new_feed',
-          'max_id': '$page',
-          'count': '10',
-        },
-        referer: 'https://weibo.com/hot/weibo/${channel.gid}',
-        cookie: cookie,
-        whole: true,
-      )),
-      accept: (items) => items.isNotEmpty,
-    );
-    return PageResult(items, items.isEmpty || page >= 30 ? null : '${page + 1}');
-  }
-
-  /// Where a post's card goes when the feed left the address out: weibo.com's copy of the post
-  /// still has it. Null when it does not either.
-  Future<String?> cardUrl(String statusId) async {
-    final json = await _asVisitor((cookie) async => asMap(await _getPublic(
-          'https://weibo.com/ajax/statuses/show',
-          query: {'id': statusId},
-          cookie: cookie,
-          whole: true,
-        )));
-    final pageUrl = textOf(asMap(json?['page_info'])?['page_url']);
-    if (pageUrl != null && pageUrl.isNotEmpty) return pageUrl;
-    for (final entry in asList(json?['url_struct'])) {
-      final url = textOf(asMap(entry)?['h5_target_url']);
-      if (url != null && url.isNotEmpty) return url;
-    }
-    return null;
-  }
-
-  /// A post's sound with a signed address and its transcript: m.weibo.cn leaves voice posts'
-  /// audio out or unsigned, weibo.com's copy has both.
-  Future<AudioClip?> audioClip(String statusId) async => audioClipOf(await _asVisitor((cookie) => _getPublic(
-        'https://weibo.com/ajax/statuses/show',
-        query: {'id': statusId},
-        cookie: cookie,
-        whole: true,
-      )));
 
   /// A weibo.com request behind the visitor wall; a refused or [accept]-failing answer gets one
   /// more try with a new visitor cookie.
@@ -401,7 +200,7 @@ class WeiboApi {
 
   /// passport.weibo.com hands any client an anonymous SUB/SUBP pair, wrapped in a JSONP callback.
   Future<String> _newVisitor() async {
-    final response = await _dio.post<String>(
+    final response = await _publicDio.post<String>(
       'https://passport.weibo.com/visitor/genvisitor2',
       data: {'cb': 'visitor_gray_callback', 'tid': '', 'from': 'weibo'},
       options: Options(
@@ -420,52 +219,6 @@ class WeiboApi {
     return 'SUB=$sub; SUBP=${textOf(data?['subp']) ?? ''}';
   }
 
-  /// A QR code for the m.weibo.cn SSO entry. Confirming it in the Weibo app needs no captcha: the
-  /// app is already signed in.
-  Future<QrLogin> qrLogin() async {
-    final login = parseQrLogin(await _getPublic(
-      'https://passport.weibo.com/sso/v2/qrcode/image',
-      query: {'entry': 'wapsso', 'size': '180'},
-      referer: Session.loginUrl,
-      whole: true,
-    ));
-    if (login == null) throw ApiException('二维码获取失败');
-    return login;
-  }
-
-  Future<QrLoginStatus> qrLoginStatus(String qrid) async => parseQrLoginStatus(await _getPublic(
-        'https://passport.weibo.com/sso/v2/qrcode/check',
-        query: {
-          'entry': 'wapsso',
-          'source': 'wapssowb',
-          'url': 'https://m.weibo.cn/',
-          'qrid': qrid,
-          'rid': 'norid',
-          'ver': '20250520',
-        },
-        referer: Session.loginUrl,
-        whole: true,
-      ));
-
-  Future<SearchSuggestions> searchSuggestions(String query) async {
-    final data = await _getPublic('https://weibo.com/ajax/side/search', query: {'q': query});
-    return parseSearchSuggestions(data);
-  }
-
-  /// One page of a search channel's posts, and on the first page the channels the search offers.
-  Future<(PageResult<Status>, List<SearchChannel>?)> searchStatuses(String query, int type, String? cursor) async {
-    final page = int.tryParse(cursor ?? '') ?? 1;
-    final data = await _searchPage(query, type, page);
-    return (parseContainerStatuses(data, page), page == 1 ? parseSearchChannels(data) : null);
-  }
-
-  /// A channel whose cards are not posts: topics, super topics, places …
-  Future<PageResult<SearchEntry>> searchEntries(String query, int type, String? cursor) async {
-    final page = int.tryParse(cursor ?? '') ?? 1;
-    final entries = parseSearchEntries(await _searchPage(query, type, page));
-    return PageResult(entries, entries.isEmpty ? null : '${page + 1}');
-  }
-
   Future<dynamic> _searchPage(String query, int type, int page) => _get(
         'api/container/getIndex',
         query: {
@@ -476,37 +229,8 @@ class WeiboApi {
         emptyIsOk: true,
       );
 
-  Future<PageResult<Status>> topicStatuses(String name, String? keyword, String? cursor) =>
-      _containerStatuses(topicQuery(name, keyword), cursor);
-
-  /// The card m.s.weibo.com keeps for a hashtag: counts, host, boards, contributors, media.
-  Future<TopicInfo?> topicDetail(String topic) async =>
-      parseTopicDetail(await _getPublic('https://m.s.weibo.com/ajax_topic/detail', query: {'q': topic}, referer: _vtopic(topic)));
-
-  Future<List<TopicTrendPoint>> topicTrend(String topic) async => parseTopicTrend(await _getPublic(
-        'https://m.s.weibo.com/ajax_topic/trend',
-        query: {'q': topic, 'time': '24h', 'type': 'read'},
-        referer: _vtopic(topic),
-      ));
-
   /// m.s.weibo.com only answers its own topic page.
   String _vtopic(String topic) => 'https://m.s.weibo.com/vtopic/detail_new?q=${Uri.encodeQueryComponent(topic)}';
-
-  /// One page of a topic or hot-search page, and on the first page whatever its head says about
-  /// it. [query] is sent as is: `#话题#` for a hashtag, the bare words otherwise.
-  Future<(PageResult<Status>, TopicInfo?)> hotTopicPage(String query, HotTopicTab tab, String? cursor) async {
-    final page = int.tryParse(cursor ?? '') ?? 1;
-    final data = await _get(
-      'api/container/getIndex',
-      query: {
-        'containerid': '100103type=${tab.type}&q=$query',
-        'page_type': 'searchall',
-        if (page > 1) 'page': page.toString(),
-      },
-      emptyIsOk: true,
-    );
-    return (parseContainerStatuses(data, page), page == 1 ? parseTopicInfo(data) : null);
-  }
 
   Future<PageResult<Status>> _containerStatuses(String containerId, String? cursor) async {
     final page = int.tryParse(cursor ?? '') ?? 1;
@@ -522,513 +246,6 @@ class WeiboApi {
   }
 
   // ---- notifications and messages -----------------------------------------------------------
-
-  Future<UnreadCounts> unread() async {
-    final data = await _get('api/remind/unread', query: {
-      't': DateTime.now().millisecondsSinceEpoch.toString(),
-    });
-    return parseUnread(data);
-  }
-
-  Future<PageResult<NotificationItem>> notifications(NotificationKind kind, String? cursor) async {
-    final path = switch (kind) {
-      NotificationKind.mentionInStatus => 'message/mentionsAt',
-      NotificationKind.mentionInComment => 'message/mentionsCmt',
-      NotificationKind.comment => 'message/cmt',
-      NotificationKind.like => 'message/attitude',
-    };
-    return _numberedPage(cursor, (page) async {
-      final data = await _get(path, query: {'page': page}, emptyIsOk: true);
-      if (page == '1') PageCache.instance.write(session.uid, 'notify-${kind.name}', data);
-      return parseNotifications(data, kind);
-    });
-  }
-
-  PageResult<NotificationItem>? cachedNotifications(NotificationKind kind) =>
-      _cachedNumbered(PageCache.instance.read(session.cacheScope, 'notify-${kind.name}'),
-          (data) => parseNotifications(data, kind));
-
-  Future<PageResult<Conversation>> conversations(bool strangers, String? cursor) async {
-    final path = strangers ? 'message/notelist' : 'message/msglist';
-    return _numberedPage(cursor, (page) async {
-      final data = await _get(path, query: {'page': page}, emptyIsOk: true);
-      if (page == '1') PageCache.instance.write(session.uid, 'conversations-$strangers', data);
-      return parseConversations(data);
-    });
-  }
-
-  PageResult<Conversation>? cachedConversations(bool strangers) =>
-      _cachedNumbered(PageCache.instance.read(session.cacheScope, 'conversations-$strangers'), parseConversations);
-
-  PageResult<T>? _cachedNumbered<T>(dynamic data, List<T> Function(dynamic data) parse) {
-    if (data == null) return null;
-    try {
-      final items = parse(data);
-      return items.isEmpty ? null : PageResult(items, '2');
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<PageResult<DirectMessage>> chat(String uid, String? cursor) async {
-    final data = await _get('api/chat/list', query: {
-      'uid': uid,
-      'count': '20',
-      'unfollowing': '0',
-      'max_id': cursor,
-    });
-    final parsed = parseChat(data);
-    final messages = parsed.$1;
-    return PageResult(messages, messages.length > 1 ? messages.last.id : null);
-  }
-
-  Future<PageResult<DirectMessage>> groupChat(String gid, String? cursor) async =>
-      (await groupChatPage(gid, cursor)).messages;
-
-  /// A page of group messages, and the group's title as that page carried it.
-  ///
-  /// The title is `群名(828)` — the only thing m.weibo.cn says about a group itself, and enough to
-  /// paint the chat's top bar. The group's full description, members and announcement come from
-  /// weibo.com instead (see [groupInfo]).
-  Future<({PageResult<DirectMessage> messages, String? title})> groupChatPage(String gid, String? cursor) async {
-    final data = await _get('api/groupchat/list', query: {
-      'gid': gid,
-      'count': '20',
-      'max_mid': cursor,
-    });
-    final messages = parseGroupChat(data);
-    return (messages: PageResult(messages, messages.length > 1 ? messages.last.id : null), title: groupTitle(data));
-  }
-
-  /// The group's name and member count out of the title its message pages carry.
-  ///
-  /// Only used to paint the chat's top bar before weibo.com's own answer arrives; [groupInfo] is the
-  /// real source.
-  GroupInfo groupInfoFromTitle(String gid, String? title) {
-    final split = splitGroupTitle(title ?? '');
-    return GroupInfo(gid: gid, name: split.name, memberCount: split.count);
-  }
-
-  Future<void> sendMessage(String uid, String content) async {
-    await _post('api/chat/send', {
-      'uid': uid,
-      'content': content,
-    }, referer: '${_web}/message/chat?uid=$uid');
-  }
-
-  Future<void> sendGroupMessage(String gid, String content) async {
-    await _post('api/groupchat/send', {
-      'gid': gid,
-      'content': content,
-    }, referer: '${_web}/message/chat?gid=$gid');
-  }
-
-  Future<String> uploadChatImage(File file, ChatTarget target) async {
-    final data = await _postMultipart(
-      'api/chat/upload',
-      fields: {
-        if (target.isGroup) 'tochatid': target.id else 'tuid': target.id,
-      },
-      fileField: 'file',
-      file: file,
-      referer: '${_web}/message/chat?${target.isGroup ? 'gid' : 'uid'}=${target.id}',
-    );
-    final fids = textOf(asMap(data)?['fids']);
-    if (fids == null || fids.isEmpty) throw ApiException('图片上传失败');
-    return fids;
-  }
-
-  Future<void> sendChatImage(ChatTarget target, String fids) async {
-    final path = target.isGroup ? 'api/groupchat/send' : 'api/chat/send';
-    final key = target.isGroup ? 'gid' : 'uid';
-    await _post(path, {
-      key: target.id,
-      'media_type': '1',
-      'fids': fids,
-    }, referer: '${_web}/message/chat?${key}=${target.id}');
-  }
-
-  /// The path really is "quite" (a typo in Weibo's own API); do not correct it.
-  Future<void> leaveGroup(String gid) async {
-    await _post('api/groupchat/quite', {'gid': gid},
-        referer: '${_web}/message/chat?gid=$gid');
-  }
-
-  // ---- relationships and people -------------------------------------------------------------
-
-  Future<void> setFollowing(String uid, bool follow) async {
-    final path = follow ? 'api/friendships/create' : 'api/friendships/destory';
-    await _post(path, {'uid': uid}, referer: '${_web}/u/$uid');
-  }
-
-  /// weibo.com's 加入黑名单, its 屏蔽 dialog with every box ticked: no posts from them, no
-  /// interaction, no following. m.weibo.cn has no blacklist of its own.
-  Future<void> blacklist(String uid) async {
-    await _postWeiboCom(
-      'statuses/filterUser',
-      {'uid': uid, 'status': 1, 'interact': 1, 'follow': 1},
-      referer: 'https://weibo.com/u/$uid',
-    );
-  }
-
-  Future<String?> resolveUid(String screenName) async {
-    final users = await searchUsers(screenName);
-    return users.where((user) => user.screenName == screenName).firstOrNull?.id;
-  }
-
-  Future<List<User>> searchUsers(String query) async {
-    final containerId = query.trim().isEmpty ? '231093_-_selffollowed' : '100103type=3&q=$query';
-    final data = await _get('api/container/getIndex', query: {
-      'containerid': containerId,
-      'page_type': 'searchall',
-    });
-    final users = <User>[];
-    void visit(dynamic element) {
-      final map = asMap(element);
-      if (map != null) {
-        final own = toUser(map['user']);
-        if (own != null && own.screenName.isNotEmpty) users.add(own);
-        for (final entry in map.entries) {
-          if (entry.key != 'user') visit(entry.value);
-        }
-      } else if (element is List) {
-        for (final value in element) {
-          visit(value);
-        }
-      }
-    }
-
-    visit(data);
-    final seen = <String>{};
-    return users.where((user) => seen.add(user.id)).toList();
-  }
-
-  Future<PageResult<User>> relationUsers(String containerId, int page) async {
-    final data = await _get(
-      'api/container/getIndex',
-      query: {
-        'containerid': containerId,
-        if (page > 1) 'page': page.toString(),
-      },
-      emptyIsOk: true,
-    );
-    return parseRelations(data, page);
-  }
-
-  Future<PageResult<SuperTopic>> superTopics(String? sinceId) async {
-    final data = await _get('api/container/getIndex', query: {
-      'containerid': '231093_-_chaohua',
-      'since_id': sinceId,
-    });
-    return parseSuperTopics(data);
-  }
-
-  // ---- comments -----------------------------------------------------------------------------
-
-  Future<PageResult<Status>> reposts(String statusId, String? cursor) {
-    return _numberedPage(cursor, (page) async {
-      final data = await _get(
-        'api/statuses/repostTimeline',
-        query: {'id': statusId, 'page': page},
-        emptyIsOk: true,
-        referer: '$_web/detail/$statusId',
-      );
-      return parseReposts(data);
-    });
-  }
-
-  /// [byTime] asks the first page to come back newest-first: the hot flow with
-  /// `max_id_type=1` and no cursor is the same list in reverse chronological order, and its own
-  /// cursor continues paging it. Later pages follow the cursor either way.
-  Future<PageResult<Comment>> comments(String statusId, String? cursor, {bool byTime = false}) async {
-    final parts = cursor?.split(':');
-    final maxId = (parts != null && parts.length == 2) ? parts[0] : null;
-    final maxIdType = (parts != null && parts.length == 2) ? parts[1] : (byTime ? '1' : '0');
-    final data = await _get(
-      'comments/hotflow',
-      query: {
-        'id': statusId,
-        'mid': statusId,
-        'max_id': maxId,
-        'max_id_type': maxIdType,
-      },
-      emptyIsOk: true,
-    );
-    return parseCommentPage(asMap(data), statusId);
-  }
-
-  Future<PageResult<Comment>> replies(String statusId, String commentId, String? cursor) async =>
-      (await replyThread(statusId, commentId, cursor)).$1;
-
-  /// A page of replies, and the comment they answer.
-  Future<(PageResult<Comment>, Comment?)> replyThread(String statusId, String commentId, String? cursor) async {
-    final parts = cursor?.split(':');
-    final maxId = (parts != null && parts.length == 2) ? parts[0] : '0';
-    final maxIdType = (parts != null && parts.length == 2) ? parts[1] : '0';
-    final root = await _get(
-      'comments/hotFlowChild',
-      returnRoot: true,
-      query: {
-        'cid': commentId,
-        'max_id': maxId,
-        'max_id_type': maxIdType,
-      },
-      emptyIsOk: true,
-    );
-    final map = asMap(root);
-    return (parseCommentPage(map, statusId), parseRootComment(map, statusId));
-  }
-
-  // ---- writes -------------------------------------------------------------------------------
-
-  Future<void> setLiked(String statusId, bool liked) async {
-    final path = liked ? 'api/attitudes/create' : 'api/attitudes/destroy';
-    await _post(path, {
-      'id': statusId,
-      'attitude': 'heart',
-    }, referer: '${_web}/detail/$statusId');
-  }
-
-  Future<void> setCommentLiked(String commentId, bool liked, {String? statusId}) async {
-    final path = liked ? 'api/likes/update' : 'api/likes/destroy';
-    try {
-      await _post(path, {
-        'id': commentId,
-        'type': 'comment',
-      }, referer: statusId == null ? null : '$_web/detail/$statusId');
-    } on ApiException catch (error) {
-      // m.weibo.cn's own comment like answers the same for an account it holds back.
-      if (error.code == 20000) throw ApiException('微博暂时不让这个账号给评论点赞（网页版同样失败），请稍后再试', code: 20000);
-      rethrow;
-    }
-  }
-
-  /// m.weibo.cn's own menu posts these; the path names are its own.
-  Future<void> setFavorited(String statusId, bool favorited) async {
-    final path = favorited ? 'api/statuses/createfav' : 'api/statuses/destroyfav';
-    await _post(path, {'id': statusId}, referer: '$_web/detail/$statusId');
-  }
-
-  Future<String> uploadImage(File file, {String? referer}) async {
-    final st = await _token(refresh: true);
-    final response = await _dio.post(
-      'api/statuses/uploadPic',
-      data: FormData.fromMap({
-        'type': 'json',
-        'st': st,
-        'pic': await MultipartFile.fromFile(
-          file.path,
-          filename: file.path.split(Platform.pathSeparator).last,
-          contentType: DioMediaType.parse(_imageType(file.path)),
-        ),
-      }),
-      options: Options(headers: {
-        'X-XSRF-TOKEN': st,
-        'Origin': _web,
-        // The same upload serves a post and a comment; each sends the page it is written on.
-        'Referer': referer ?? '$_web/compose/',
-      }),
-    );
-    final root = _decodeEnvelope(response, false, returnRoot: true);
-    final direct = textOf(asMap(root)?['pic_id']);
-    if (direct != null && direct.isNotEmpty) return direct;
-    final nested = textOf(asMap(asMap(root)?['data'])?['pic_id']);
-    if (nested != null && nested.isNotEmpty) return nested;
-    throw ApiException('图片上传失败');
-  }
-
-  Future<String> uploadCommentImage(String statusId, File file) =>
-      uploadImage(file, referer: '$_web/detail/$statusId');
-
-  Future<void> postStatus(String content, List<String> picIds) async {
-    await _post('api/statuses/update', {
-      'content': content,
-      if (picIds.isNotEmpty) 'picId': picIds.join(','),
-    }, referer: '${_web}/compose/');
-  }
-
-  Future<void> repost(String statusId, String content, bool alsoComment) async {
-    await _post('api/statuses/repost', {
-      'id': statusId,
-      'mid': statusId,
-      'content': content,
-      if (alsoComment) 'dualPost': '1',
-    }, referer: '${_web}/compose/');
-  }
-
-  Future<void> comment(String statusId, String content, {String? picId}) async {
-    await _post('api/comments/create', {
-      'content': content,
-      'mid': statusId,
-      // A comment with a picture is the same request with the uploaded id attached; the picture is
-      // uploaded exactly as a post's is, so an account weibo.com refuses pictures to gets the same
-      // refusal here and nowhere else.
-      'picId': ?picId,
-    }, referer: '${_web}/detail/$statusId');
-  }
-
-  Future<void> reply(String statusId, String commentId, String content, {String? picId}) async {
-    await _post('api/comments/reply', {
-      'id': statusId,
-      'mid': statusId,
-      'cid': commentId,
-      'reply': commentId,
-      'content': content,
-      'picId': ?picId,
-    }, referer: '${_web}/detail/$statusId');
-  }
-
-  // ---- plumbing -----------------------------------------------------------------------------
-
-  // ---- group chat (weibo.com's webim) --------------------------------------------------------
-
-  /// The group-chat backend the web client at `api.weibo.com/chat` talks to.
-  ///
-  /// None of this exists on m.weibo.cn: every candidate there answered 404 or an empty page (see
-  /// `DEVLOG.md`). The web chat's own bundle names these endpoints, and they answer for an account
-  /// that has been signed in through weibo.com — its cookie is in the WebView's jar, because the
-  /// passport login plants one alongside m.weibo.cn's.
-  ///
-  /// Two things are easy to get wrong and both were found on-device:
-  ///  * The group's id goes in `id`, not `gid`. `gid` is answered with "invalid parameter".
-  ///  * `query_group` wants `source`; without it the service says `appkey` is missing and answers
-  ///    with an empty member list.
-  static const _webimSource = '209678993';
-
-  /// What the phone site calls a group: `api/groupchat/list`'s `gid` is this one's `id`.
-  Future<dynamic> _webim(String path, Map<String, String> query) async {
-    final (cookie, xsrf) = await _weiboComCookie();
-    try {
-      final response = await _dio.get(
-        'https://api.weibo.com/webim/$path',
-        queryParameters: query,
-        options: Options(
-          responseType: ResponseType.plain,
-          headers: {
-            'Referer': 'https://api.weibo.com/chat',
-            'Cookie': cookie,
-            // The web client sends it with every call; the service checks it for writes.
-            'X-XSRF-TOKEN': xsrf,
-          },
-        ),
-      );
-      final body = response.data;
-      final map = asMap(body is String ? _jsonOrNull(body) : body);
-      if (map == null) throw ApiException('接口返回格式错误');
-      if (map['result'] == false || map['error'] != null) {
-        throw ApiException(textOf(map['error']) ?? '群聊接口拒绝了这个请求');
-      }
-      return map;
-    } on DioException catch (error) {
-      throw _dioError(error);
-    }
-  }
-
-  static dynamic _jsonOrNull(String body) {
-    try {
-      return jsonDecode(body);
-    } on FormatException {
-      return null;
-    }
-  }
-
-  /// A group's own page: its name, size, owner, admins and announcement.
-  ///
-  /// The announcement is inside this answer (`bulletin.content`), so it needs no request of its own —
-  /// which is just as well, because there is no announcement endpoint.
-  Future<GroupInfo> groupInfo(String gid) async {
-    final map = await _webim('groupchat/query.json', {'id': gid});
-    final bulletin = asMap(map['bulletin']);
-    final admins = [for (final id in asList(map['admins'])) idOf(id) ?? ''].where((id) => id.isNotEmpty).toSet();
-    return GroupInfo(
-      gid: gid,
-      name: textOf(map['name']) ?? textOf(map['system_name']) ?? '',
-      memberCount: intOf(map['member_count']) ?? 0,
-      maxMembers: intOf(map['max_member']) ?? 0,
-      ownerId: idOf(map['owner']) ?? '',
-      adminIds: admins,
-      notice: parseGroupNotice(bulletin?['content']),
-      createdAt: intOf(map['create_time']),
-      place: textOf(asMap(map['position'])?['name']),
-    );
-  }
-
-  /// The group's members.
-  ///
-  /// The service hands these out in pages of its own size (`query_member_count`). The answer carries a
-  /// `members` array beside `member_infos`; both are read, because which one is populated has varied
-  /// between answers. There is no cursor in the answer, so a page that comes back shorter than asked
-  /// for is the last one.
-  Future<List<GroupMember>> groupMembers(String gid, {int offset = 0, int count = 50}) async {
-    final map = await _webim('query_group.json', {
-      'id': gid,
-      'source': _webimSource,
-      'is_pc': '1',
-      'query_member': '1',
-      'query_member_count': '$count',
-      if (offset > 0) 'member_offset': '$offset',
-      'sort_by_jp': '1',
-    });
-    return parseGroupMembers(map);
-  }
-
-  /// Whether this group's messages are muted for the account.
-  ///
-  /// `switch` is 1 for muted and 2 for not — not the 0/1 that the name suggests, which is why the
-  /// parser reads it explicitly rather than testing truthiness.
-  Future<bool> groupMuted(String gid) async {
-    final map = await _webim('2/notice_center/discussion_group/push_settings.json', {
-      'call_from': 'mobile',
-      'dgid': gid,
-    });
-    return intOf(map['switch']) == 1;
-  }
-
-  Future<void> setGroupMuted(String gid, bool muted) async {
-    await _postWebim('2/notice_center/discussion_group/set_push_settings.json', {
-      'dgid': gid,
-      'switch': muted ? '1' : '2',
-      'call_from': 'mobile',
-    });
-  }
-
-  /// Posts the group's announcement. Only the owner and admins may, and the service refuses quietly
-  /// otherwise, so the caller shows the error rather than assuming it worked.
-  Future<void> setGroupNotice(String gid, String notice) async {
-    await _postWebim('groupchat/send_bulletin.json', {
-      'id': gid,
-      'content': notice,
-      'keep_time': '8640000',
-    });
-  }
-
-  Future<dynamic> _postWebim(String path, Map<String, String> body) async {
-    final (cookie, xsrf) = await _weiboComCookie();
-    try {
-      final response = await _dio.post(
-        'https://api.weibo.com/webim/$path',
-        data: body,
-        options: Options(
-          contentType: Headers.formUrlEncodedContentType,
-          responseType: ResponseType.plain,
-          headers: {
-            'Referer': 'https://api.weibo.com/chat',
-            'Origin': 'https://api.weibo.com',
-            'Cookie': cookie,
-            'X-XSRF-TOKEN': xsrf,
-          },
-        ),
-      );
-      final map = asMap(response.data is String ? _jsonOrNull(response.data) : response.data);
-      if (map == null) throw ApiException('接口返回格式错误');
-      if (map['result'] == false || map['error'] != null) {
-        throw ApiException(textOf(map['error']) ?? '群聊接口拒绝了这个请求');
-      }
-      return map;
-    } on DioException catch (error) {
-      throw _dioError(error);
-    }
-  }
 
   Future<dynamic> _get(
     String path, {
@@ -1064,7 +281,7 @@ class WeiboApi {
     bool whole = false,
   }) async {
     try {
-      final response = await _dio.get(
+      final response = await _publicDio.get(
         url,
         queryParameters: query,
         options: Options(headers: {'Referer': referer ?? 'https://weibo.com/', 'Cookie': ?cookie}),
@@ -1083,7 +300,7 @@ class WeiboApi {
     try {
       map = asMap(body is String ? jsonDecode(body) : body);
     } on FormatException {
-      throw ApiException('接口返回格式错误');
+      throw ApiException('接口返回格式错误', kind: FailureKind.parse);
     }
     // weibo.com answers {ok: 1}, m.s.weibo.com {code: "100000"}; passport's {retcode} is read
     // by its parser, since a QR code still waiting for its scan is an answer too.
@@ -1097,15 +314,15 @@ class WeiboApi {
   /// weibo.com as the signed-in account: the WebView's weibo.com cookies, which the passport
   /// login set alongside m.weibo.cn's.
   Future<dynamic> _getWeiboCom(String path, Map<String, String> query, {required String referer}) async {
-    final (cookie, _) = await _weiboComCookie();
+    final (cookie, _) = await WeiboComSession.instance.cookie();
     return _getPublic('https://weibo.com/ajax/$path', query: query, referer: referer, cookie: cookie);
   }
 
   /// weibo.com's writes are JSON and check `X-XSRF-TOKEN` against the `XSRF-TOKEN` cookie.
   Future<dynamic> _postWeiboCom(String path, Map<String, Object> body, {required String referer}) async {
-    final (cookie, xsrf) = await _weiboComCookie();
+    final (cookie, xsrf) = await WeiboComSession.instance.cookie();
     try {
-      final response = await _dio.post(
+      final response = await _publicDio.post(
         'https://weibo.com/ajax/$path',
         data: jsonEncode(body),
         options: Options(
@@ -1121,16 +338,6 @@ class WeiboApi {
 
   /// The cookie header and its XSRF token. weibo.com sets the token on its first page load, which
   /// the WebView may never have made; it only has to match, so one is made up then.
-  Future<(String, String)> _weiboComCookie() async {
-    final cookie = await Native.getCookies('https://weibo.com/') ?? '';
-    final xsrf = RegExp(r'(?:^|;\s*)XSRF-TOKEN=([^;]+)').firstMatch(cookie)?.group(1);
-    if (xsrf != null) return (cookie, xsrf);
-    final made = [for (var i = 0; i < 24; i++) _random.nextInt(36).toRadixString(36)].join();
-    return ('$cookie; XSRF-TOKEN=$made', made);
-  }
-
-  static final _random = Random();
-
   /// m.weibo.cn adds the screen size in CSS pixels to every post.
   String get _screen {
     final view = PlatformDispatcher.instance.implicitView;
@@ -1179,7 +386,7 @@ class WeiboApi {
           headers: {
             'X-XSRF-TOKEN': st,
             'Origin': _web,
-            if (referer != null) 'Referer': referer,
+            'Referer': ?referer,
           },
         ),
       );
@@ -1212,7 +419,7 @@ class WeiboApi {
         options: Options(headers: {
           'X-XSRF-TOKEN': st,
           'Origin': _web,
-          if (referer != null) 'Referer': referer,
+          'Referer': ?referer,
         }),
       );
       return _decodeEnvelope(response, false);
@@ -1238,7 +445,7 @@ class WeiboApi {
       root = body;
     }
     final map = asMap(root);
-    if (map == null) throw ApiException('接口返回格式错误');
+    if (map == null) throw ApiException('接口返回格式错误', kind: FailureKind.parse);
     EmojiStore.instance.learn(collectEmoji(map));
     final envelope = parseWeiboResult(map);
     if (envelope.isOk) return returnRoot ? map : envelope.data;
@@ -1255,8 +462,14 @@ class WeiboApi {
     throw ApiException(envelope.message ?? '微博接口错误（$code）', code: code);
   }
 
+  Future<String>? _tokenInFlight;
+
   Future<String> _token({bool refresh = false}) async {
     if (!refresh && session.st != null && session.st!.isNotEmpty) return session.st!;
+    return _tokenInFlight ??= _fetchToken().whenComplete(() => _tokenInFlight = null);
+  }
+
+  Future<String> _fetchToken() async {
     final config = await this.config();
     final token = config.st;
     if (token == null || token.isEmpty) throw LoginRequiredException(null);
@@ -1264,18 +477,39 @@ class WeiboApi {
     return token;
   }
 
-  Exception _dioError(DioException error) {
-    final type = error.type;
-    if (type == DioExceptionType.connectionTimeout ||
-        type == DioExceptionType.sendTimeout ||
-        type == DioExceptionType.receiveTimeout) {
-      return ApiException('网络连接超时');
+  /// Downloads a public media file (such as a CDN video) without leaking m.weibo.cn auth cookies
+  /// to third-party hosts, supporting cancellation when the caller leaves the screen.
+  Future<void> downloadMedia(
+    String url,
+    String savePath, {
+    CancelToken? cancelToken,
+    ProgressCallback? onReceiveProgress,
+  }) async {
+    final uri = Uri.tryParse(url);
+    final headers = <String, String>{
+      'Referer': '$_web/',
+      'User-Agent': session.userAgent,
+      if (uri?.host == 'm.weibo.cn' && session.cookieHeader.isNotEmpty) 'Cookie': session.cookieHeader,
+    };
+    try {
+      await _publicDio.download(
+        url,
+        savePath,
+        cancelToken: cancelToken,
+        onReceiveProgress: onReceiveProgress,
+        options: Options(
+          headers: headers,
+          followRedirects: true,
+          receiveTimeout: const Duration(minutes: 5),
+        ),
+      );
+    } on DioException catch (error) {
+      if (CancelToken.isCancel(error)) rethrow;
+      throw _dioError(error);
     }
-    if (type == DioExceptionType.connectionError || type == DioExceptionType.badCertificate) {
-      return ApiException('网络连接失败');
-    }
-    return ApiException(error.message ?? '网络请求失败');
   }
+
+  Exception _dioError(DioException error) => dioError(error);
 
   String _imageType(String path) {
     final lower = path.toLowerCase();

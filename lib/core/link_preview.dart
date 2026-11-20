@@ -20,14 +20,34 @@ class LinkPreview {
   final String? imageUrl;
 }
 
-/// Previews for the links in private messages, fetched once per address and kept for the session.
+/// Previews for the links in private messages, fetched once per address and kept in a bounded LRU
+/// cache for the session. Transient network failures are not pinned so a later view can retry.
 class LinkPreviews {
   LinkPreviews._();
   static final LinkPreviews instance = LinkPreviews._();
 
-  final Map<String, Future<LinkPreview?>> _cache = {};
+  static const int _kept = 100;
 
-  Future<LinkPreview?> of(String url) => _cache.putIfAbsent(url, () => _load(url));
+  final Map<String, Future<LinkPreview?>> _cache = {};
+  HttpClient? _client;
+
+  HttpClient get _http {
+    final client = _client ??= HttpClient()..connectionTimeout = const Duration(seconds: 5);
+    client.userAgent = Session.instance.userAgent;
+    return client;
+  }
+
+  Future<LinkPreview?> of(String url) {
+    final existing = _cache.remove(url);
+    if (existing != null) {
+      _cache[url] = existing;
+      return existing;
+    }
+    final future = _load(url);
+    _cache[url] = future;
+    if (_cache.length > _kept) _cache.remove(_cache.keys.first);
+    return future;
+  }
 
   Future<LinkPreview?> _load(String raw) async {
     var url = unwrapWeiboRedirect(raw.trim());
@@ -37,7 +57,10 @@ class LinkPreviews {
     switch (linkTargetOf(url)) {
       case StatusTarget(:final id):
         final status = await WeiboApi.instance.status(id).catchError((Object _) => null);
-        if (status == null) return LinkPreview(url: url, title: '微博', site: '微博');
+        if (status == null) {
+          _cache.remove(raw);
+          return LinkPreview(url: url, title: '微博', site: '微博');
+        }
         return _ofStatus(url, status);
       case UserTarget():
         return LinkPreview(url: url, title: '微博用户主页', site: '微博');
@@ -48,7 +71,7 @@ class LinkPreviews {
       case WebTarget() || ShortLinkTarget():
         // Weibo's own pages answer a client without the login with the login page.
         if (_weiboHost(host)) return LinkPreview(url: url, title: _weiboPageTitle(url), site: host);
-        return _ofPage(url, host);
+        return _ofPage(raw, url, host);
       case AppOnlyTarget() || ClientPageTarget():
         return LinkPreview(url: url, title: '需要在客户端中查看', site: siteNameOf(url) ?? host);
     }
@@ -67,13 +90,10 @@ class LinkPreviews {
   }
 
   /// The page's own title and description, read from the head of its HTML.
-  Future<LinkPreview> _ofPage(String url, String host) async {
+  Future<LinkPreview> _ofPage(String raw, String url, String host) async {
     final site = siteNameOf(url) ?? host;
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 5)
-      ..userAgent = Session.instance.userAgent;
     try {
-      final request = await client.getUrl(Uri.parse(secureLink(url)));
+      final request = await _http.getUrl(Uri.parse(secureLink(url)));
       request.headers.set(HttpHeaders.acceptHeader, 'text/html,*/*;q=0.8');
       final response = await request.close().timeout(const Duration(seconds: 6));
       final type = response.headers.contentType;
@@ -109,9 +129,8 @@ class LinkPreviews {
         imageUrl: image == null ? null : Uri.parse(url).resolve(image).toString(),
       );
     } catch (_) {
+      _cache.remove(raw);
       return LinkPreview(url: url, site: site);
-    } finally {
-      client.close(force: true);
     }
   }
 }

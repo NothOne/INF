@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/error_text.dart';
 import '../../core/api.dart';
 import '../../core/layout.dart';
 import '../../core/look.dart';
@@ -120,7 +121,7 @@ class _ConversationListState extends State<_ConversationList> with AutomaticKeep
 
   Future<bool> _refresh() async {
     final ok = await _pager.refresh(background: _pager.items.isNotEmpty);
-    if (mounted) UnreadMonitor.instance.refresh(force: true);
+    if (mounted) UnreadMonitor.instance.refresh(immediately: true);
     return ok;
   }
 
@@ -161,7 +162,7 @@ class _ConversationListState extends State<_ConversationList> with AutomaticKeep
       if (_pager.error != null) {
         return Center(
           key: const ValueKey('error'),
-          child: ErrorRetry(message: _pager.error.toString(), onRetry: _refresh),
+          child: ErrorView(error: _pager.error, onRetry: _refresh),
         );
       }
       if (_pager.loading || _pager.refreshedAt == null) {

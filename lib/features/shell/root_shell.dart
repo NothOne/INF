@@ -174,7 +174,7 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
     // as one piece. Held only for the length of the switch.
     _tabSwitching.value = true;
     _tabFade.forward(from: 0);
-    if (index == 1 || index == 2) UnreadMonitor.instance.refresh(force: true);
+    if (index == 1 || index == 2) UnreadMonitor.instance.refresh(immediately: true);
   }
 
   /// Puts the switch away once the shell's own animation has finished.

@@ -94,3 +94,7 @@ git push origin main 1.5.0
 ```bash
 flutter test
 ```
+
+## 许可
+
+[MIT](LICENSE)。

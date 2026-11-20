@@ -9,7 +9,7 @@ import '../../core/share.dart';
 import '../../core/temp_files.dart';
 import '../../core/widgets/app_logo.dart';
 import '../../core/widgets/common.dart';
-import '../../core/widgets/status_card.dart';
+import '../../core/widgets/status_card_host.dart';
 
 class LongImagePage extends StatefulWidget {
   const LongImagePage({super.key, required this.status});
@@ -66,14 +66,12 @@ class _LongImagePageState extends State<LongImagePage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const SizedBox(height: 6),
-                        StatusCard(
-                          status: widget.status,
+                        buildStatusCard(
+                          context,
+                          widget.status,
+                          heroScope: widget.status.id,
                           detail: true,
-                          onOpenStatus: (_) {},
-                          onOpenUser: (_) {},
-                          onOpenTopic: (_) {},
-                          onOpenUrl: (_) {},
-                          onOpenMedia: (a, b, c) {},
+                          interactive: false,
                           enableImageHeroes: false,
                         ),
                         Padding(

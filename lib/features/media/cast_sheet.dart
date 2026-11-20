@@ -59,7 +59,7 @@ class _CastSheetState extends State<_CastSheet> {
 
   Future<void> _cast(CastDevice device) async {
     final messenger = ScaffoldMessenger.of(context);
-    final bar = infSnackBar(context, Text('已发送到 ' + device.name));
+    final bar = infSnackBar(context, Text('已发送到 ${device.name}'));
     setState(() => _casting = device.controlUrl);
     try {
       await DlnaCast.play(device, widget.videoUrl);

@@ -28,6 +28,7 @@ class StatusImageGrid extends StatelessWidget {
     required this.onOpen,
     this.enabled = true,
     this.heroEnabled = true,
+    this.maxItems = 9,
   });
 
   final List<Media> media;
@@ -36,12 +37,17 @@ class StatusImageGrid extends StatelessWidget {
   final bool enabled;
   final bool heroEnabled;
 
+  /// Cap on cells drawn in the grid (`null` shows every item, used on the post detail page).
+  /// Tapping any cell still hands the full [media] list to [onOpen] so swiping reaches the rest.
+  final int? maxItems;
+
   String _tag(int index) => 'img-$statusId-$index';
 
   @override
   Widget build(BuildContext context) {
-    final items = media.take(9).toList();
+    final items = (maxItems == null || media.length <= maxItems!) ? media : media.take(maxItems!).toList();
     if (items.isEmpty) return const SizedBox.shrink();
+    final overflow = media.length - items.length;
     final lone = items.length == 1;
     // A grid is built a little before it scrolls into view; that is the cue to fetch what it will
     // draw — the same rendition as the cell, never the original (see [ImagePrefetcher]).
@@ -70,7 +76,7 @@ class StatusImageGrid extends StatelessWidget {
               width: width,
               height: height,
               heroTag: (enabled && heroEnabled) ? _tag(0) : null,
-              onTap: enabled ? () => onOpen(items, 0, _tag(0)) : null,
+              onTap: enabled ? () => onOpen(media, 0, _tag(0)) : null,
             ),
           );
         }
@@ -90,7 +96,8 @@ class StatusImageGrid extends StatelessWidget {
                   width: cell,
                   height: cell,
                   heroTag: (enabled && heroEnabled) ? _tag(start + offset) : null,
-                  onTap: enabled ? () => onOpen(items, start + offset, _tag(start + offset)) : null,
+                  moreCount: overflow > 0 && start + offset == items.length - 1 ? overflow : 0,
+                  onTap: enabled ? () => onOpen(media, start + offset, _tag(start + offset)) : null,
                 ),
               ],
             ],
@@ -111,6 +118,7 @@ class _Cell extends StatelessWidget {
     required this.heroTag,
     required this.onTap,
     this.single = false,
+    this.moreCount = 0,
   });
 
   final Media media;
@@ -119,6 +127,7 @@ class _Cell extends StatelessWidget {
   final double height;
   final String? heroTag;
   final VoidCallback? onTap;
+  final int moreCount;
 
   @override
   Widget build(BuildContext context) {
@@ -157,6 +166,22 @@ class _Cell extends StatelessWidget {
             if (media.durationMs > 0)
               Positioned(right: 5, bottom: 5, child: _Badge(text: _duration(media.durationMs))),
           ],
+          if (moreCount > 0)
+            Positioned.fill(
+              child: ColoredBox(
+                color: Colors.black.withValues(alpha: 0.48),
+                child: Center(
+                  child: Text(
+                    '+$moreCount',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

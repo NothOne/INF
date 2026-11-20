@@ -3,391 +3,18 @@ import 'dart:math' as math;
 
 import 'links.dart';
 import 'models.dart';
+import 'weibo_html.dart';
+import 'weibo_json.dart';
+import 'weibo_time.dart';
 
-class WeiboEnvelope {
-  final int ok;
-  final dynamic data;
-  final int? errno;
-  final String? message;
-  final String? loginUrl;
-
-  const WeiboEnvelope({required this.ok, this.data, this.errno, this.message, this.loginUrl});
-
-  bool get isOk => ok == 1;
-  bool get needsLogin => ok == -100;
-}
-
-WeiboEnvelope parseWeiboResult(dynamic root) {
-  if (root is! Map) return const WeiboEnvelope(ok: 0);
-  return WeiboEnvelope(
-    ok: intOf(root['ok']) ?? 0,
-    data: root['data'],
-    errno: intOf(root['errno']),
-    message: textOf(root['msg']),
-    loginUrl: textOf(root['url']),
-  );
-}
-
-Map<String, dynamic>? asMap(dynamic value) =>
-    value is Map ? value.map((k, v) => MapEntry(k.toString(), v)) : null;
-
-List<dynamic> asList(dynamic value) => value is List ? value : const [];
-
-String? textOf(dynamic value) {
-  if (value is String) {
-    final trimmed = value.trim();
-    return trimmed.isEmpty ? null : value;
-  }
-  if (value is num) return value.toString();
-  return null;
-}
-
-String? idOf(dynamic value) {
-  if (value is String) {
-    final trimmed = value.trim();
-    return trimmed.isEmpty ? null : trimmed;
-  }
-  if (value is int) return value.toString();
-  if (value is double) return value.isFinite ? value.toStringAsFixed(0) : null;
-  return null;
-}
-
-int? intOf(dynamic value) {
-  if (value is int) return value;
-  if (value is double) return value.isFinite ? value.toInt() : null;
-  if (value is String) {
-    final trimmed = value.trim().replaceAll(',', '');
-    if (trimmed.isEmpty) return null;
-    return int.tryParse(trimmed) ?? double.tryParse(trimmed)?.toInt();
-  }
-  return null;
-}
-
-bool boolOf(dynamic value) => value == true || value == 1 || value == '1' || value == 'true';
-
-double? doubleOf(dynamic value) {
-  if (value is num) return value.toDouble();
-  if (value is String) return double.tryParse(value.trim());
-  return null;
-}
-
-int countOf(dynamic value) {
-  if (value == null || value is bool) return 0;
-  if (value is num) return value.toInt();
-  final text = value.toString().trim().replaceAll(',', '');
-  if (text.isEmpty) return 0;
-  final match = RegExp(r'^([+-]?\d+(?:\.\d+)?)\s*(万|亿)\+?$').firstMatch(text);
-  if (match != null) {
-    final number = double.tryParse(match.group(1)!) ?? 0;
-    final multiplier = match.group(2) == '亿' ? 100000000 : 10000;
-    return (number * multiplier).round();
-  }
-  return int.tryParse(text) ?? double.tryParse(text)?.toInt() ?? 0;
-}
-
-// ---------------------------------------------------------------------------------------------
-// HTML text
-
-String weiboHtmlToText(String html) => weiboHtmlToRichText(html).text;
-
-/// The post's text, with each link's address standing in its place, and what m.weibo.cn drew for
-/// those links: their own words (a place's name, a super topic, 抽奖详情) and kind.
-({String text, Map<String, WeiboLink> links}) weiboHtmlToRichText(String html) {
-  final links = <String, WeiboLink>{};
-  final withoutAnchors = html.replaceFirst(_voiceStub, '').replaceAllMapped(_anchorRegex, (match) {
-    final attributes = match.group(1) ?? '';
-    final body = match.group(2) ?? '';
-    final href = _attribute(attributes, 'href');
-    final decodedHref = href == null ? null : decodeHtmlEntities(href);
-    final visible = _htmlFragmentToText(body).trim();
-    final labelMatch = _surlTextRegex.firstMatch(body);
-    final label = labelMatch == null ? null : _htmlFragmentToText(labelMatch.group(1) ?? '').trim();
-    final preferred = (label != null && label.isNotEmpty) ? label : visible;
-
-    if (preferred == '全文') return '';
-    if (decodedHref != null && _isMentionHref(decodedHref)) {
-      if (preferred.startsWith('@')) return preferred;
-      final name = _mentionName(decodedHref);
-      return name == null ? preferred : '@$name';
-    }
-    final superTopic = decodedHref != null && _isSuperTopicHref(decodedHref);
-    if (RegExp(r'#[^#\n]+#').hasMatch(preferred) || (decodedHref != null && _isTopicHref(decodedHref) && !superTopic)) {
-      return preferred;
-    }
-    if (decodedHref != null) {
-      final absolute = _resolveLink(decodedHref);
-      if (absolute == null) return preferred;
-      final resolved = _asciiUrl(absolute);
-      final icon = RegExp(r'''<img\b[^>]*\bsrc\s*=\s*["']([^"']+)''', caseSensitive: false).firstMatch(body)?.group(1);
-      final kind = linkKindOf(resolved, iconUrl: icon);
-      final words = preferred == '网页链接' || preferred.startsWith('http') ? '' : preferred;
-      links[resolved] = WeiboLink(url: resolved, label: words, kind: kind);
-      return ' $resolved ';
-    }
-    return preferred;
-  });
-  final text = _htmlFragmentToText(withoutAnchors)
-      .replaceAll(RegExp(r'[ \t\r\f]+'), ' ')
-      .trim();
-  return (text: text, links: links);
-}
-
-/// The text tokenizer ends a link at the first character outside URL ASCII, so a raw 肖战 or a
-/// space in an href would cut it short.
-String _asciiUrl(String url) {
-  final buffer = StringBuffer();
-  for (final rune in url.runes) {
-    if (rune > 0x20 && rune < 0x7F && rune != 0x22 && rune != 0x3C && rune != 0x3E && rune != 0x5C &&
-        rune != 0x5E && rune != 0x60 && rune != 0x7B && rune != 0x7C && rune != 0x7D) {
-      buffer.writeCharCode(rune);
-    } else {
-      buffer.write(Uri.encodeComponent(String.fromCharCode(rune)));
-    }
-  }
-  return buffer.toString();
-}
-
-bool _isSuperTopicHref(String href) {
-  final normalized = href.toLowerCase();
-  return normalized.contains('containerid=100808') ||
-      normalized.contains('containerid%3d100808') ||
-      normalized.contains('/p/100808');
-}
-
-String _htmlFragmentToText(String fragment) {
-  final withBreaks = fragment.replaceAll(RegExp(r'<br\s*/?\s*>', caseSensitive: false), '\n');
-  final withAlt = withBreaks.replaceAllMapped(
-    RegExp(r'<img\b([^>]*)/?>', caseSensitive: false, dotAll: true),
-    (match) => decodeHtmlEntities(_attribute(match.group(1) ?? '', 'alt') ?? ''),
-  );
-  return decodeHtmlEntities(withAlt.replaceAll(RegExp(r'<[^>]*>', dotAll: true), ''));
-}
-
-String? _attribute(String attributes, String name) {
-  final pattern = '\\b' + RegExp.escape(name) + r'\s*=\s*(?:"([^"]*)"|\x27([^\x27]*)\x27|([^\s>]+))';
-  final match = RegExp(pattern, caseSensitive: false).firstMatch(attributes);
-  if (match == null) return null;
-  for (final value in [match.group(1), match.group(2), match.group(3)]) {
-    if (value != null && value.isNotEmpty) return value;
-  }
-  return null;
-}
-
-String decodeHtmlEntities(String value) => value.replaceAllMapped(
-      RegExp(r'&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos|nbsp);', caseSensitive: false),
-      (match) {
-        final entity = match.group(1)!.toLowerCase();
-        switch (entity) {
-          case 'amp':
-            return '&';
-          case 'lt':
-            return '<';
-          case 'gt':
-            return '>';
-          case 'quot':
-            return '"';
-          case 'apos':
-          case '#39':
-            return "'";
-          case 'nbsp':
-            return ' ';
-        }
-        final codePoint = entity.startsWith('#x')
-            ? int.tryParse(entity.substring(2), radix: 16)
-            : entity.startsWith('#')
-                ? int.tryParse(entity.substring(1))
-                : null;
-        if (codePoint == null || codePoint < 0 || codePoint > 0x10FFFF) return match.group(0)!;
-        return String.fromCharCode(codePoint);
-      },
-    );
-
-bool _isMentionHref(String href) =>
-    RegExp(r'^(?:https?://m\.weibo\.cn)?/n/', caseSensitive: false).hasMatch(href);
-
-String? _mentionName(String href) {
-  final path = href.split('?').first;
-  final index = path.lastIndexOf('/n/');
-  if (index < 0) return null;
-  return _decodeComponent(path.substring(index + 3));
-}
-
-bool _isTopicHref(String href) {
-  final normalized = href.toLowerCase();
-  return normalized.contains('containerid=231522') ||
-      normalized.contains('containerid%3d231522') ||
-      normalized.contains('containerid=100808') ||
-      normalized.contains('containerid%3d100808');
-}
-
-String? _resolveLink(String href) {
-  if (href.toLowerCase().startsWith('javascript:')) return null;
-  String absolute;
-  if (href.startsWith('//')) {
-    absolute = 'https:$href';
-  } else if (href.startsWith('/')) {
-    absolute = 'https://m.weibo.cn$href';
-  } else if (href.toLowerCase().startsWith('http://') || href.toLowerCase().startsWith('https://')) {
-    absolute = href;
-  } else {
-    return null;
-  }
-  if (!absolute.toLowerCase().contains('sinaurl?')) return absolute;
-  final after = absolute.contains('?') ? absolute.substring(absolute.indexOf('?') + 1) : '';
-  for (final part in after.split('&')) {
-    final key = part.contains('=') ? part.substring(0, part.indexOf('=')) : part;
-    if (key != 'u') continue;
-    final value = part.contains('=') ? part.substring(part.indexOf('=') + 1) : '';
-    final decoded = _decodeComponent(value);
-    if (decoded != null &&
-        (decoded.toLowerCase().startsWith('http://') || decoded.toLowerCase().startsWith('https://'))) {
-      return decoded;
-    }
-  }
-  return absolute;
-}
-
-String? _decodeComponent(String value) {
-  try {
-    return Uri.decodeComponent(value);
-  } catch (_) {
-    return null;
-  }
-}
-
-final _anchorRegex = RegExp(r'<a\b([^>]*)>(.*?)</a\s*>', caseSensitive: false, dotAll: true);
-final _surlTextRegex = RegExp(
-  r'<span\b[^>]*class\s*=\s*["\x27][^"\x27]*\bsurl-text\b[^"\x27]*["\x27][^>]*>(.*?)</span\s*>',
-  caseSensitive: false,
-  dotAll: true,
-);
-
-// ---------------------------------------------------------------------------------------------
-// Time
-
-DateTime parseWeiboTime(String? raw, {DateTime? now}) {
-  final current = now ?? DateTime.now();
-  final value = raw?.trim();
-  if (value == null || value.isEmpty) return current;
-
-  if (RegExp(r'^\d{10,13}$').hasMatch(value)) {
-    final epoch = int.tryParse(value);
-    if (epoch == null) return current;
-    return value.length >= 13
-        ? DateTime.fromMillisecondsSinceEpoch(epoch)
-        : DateTime.fromMillisecondsSinceEpoch(epoch * 1000);
-  }
-
-  final iso = DateTime.tryParse(value);
-  if (iso != null) return iso.toLocal();
-
-  final relative = RegExp(r'^(\d+)(秒|分钟|小时)前$').firstMatch(value);
-  if (relative != null) {
-    final amount = int.tryParse(relative.group(1)!) ?? 0;
-    final unit = relative.group(2)!;
-    final seconds = unit == '秒' ? amount : unit == '分钟' ? amount * 60 : amount * 3600;
-    return current.subtract(Duration(seconds: seconds));
-  }
-  if (value == '刚刚') return current;
-
-  final today = RegExp(r'^今天\s+(\d{2}):(\d{2})$').firstMatch(value);
-  if (today != null) {
-    return DateTime(current.year, current.month, current.day, int.parse(today.group(1)!), int.parse(today.group(2)!));
-  }
-  final yesterday = RegExp(r'^昨天\s+(\d{2}):(\d{2})$').firstMatch(value);
-  if (yesterday != null) {
-    final date = current.subtract(const Duration(days: 1));
-    return DateTime(date.year, date.month, date.day, int.parse(yesterday.group(1)!), int.parse(yesterday.group(2)!));
-  }
-
-  final monthDay = RegExp(r'^(\d{2})-(\d{2})$').firstMatch(value);
-  if (monthDay != null) {
-    var date = DateTime(current.year, int.parse(monthDay.group(1)!), int.parse(monthDay.group(2)!));
-    if (date.isAfter(current.add(const Duration(days: 1)))) {
-      date = DateTime(current.year - 1, date.month, date.day);
-    }
-    return date;
-  }
-
-  final dateOnly = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(value);
-  if (dateOnly != null) {
-    return DateTime(
-      int.parse(dateOnly.group(1)!),
-      int.parse(dateOnly.group(2)!),
-      int.parse(dateOnly.group(3)!),
-    );
-  }
-
-  final full = RegExp(r'^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$').firstMatch(value);
-  if (full != null) {
-    return DateTime(
-      int.parse(full.group(1)!),
-      int.parse(full.group(2)!),
-      int.parse(full.group(3)!),
-      int.parse(full.group(4)!),
-      int.parse(full.group(5)!),
-      int.parse(full.group(6)!),
-    );
-  }
-
-  final english = RegExp(
-    r'^[A-Za-z]{3}\s+([A-Za-z]{3})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+([+-])(\d{2})(\d{2})\s+(\d{4})$',
-  ).firstMatch(value);
-  if (english != null) {
-    const months = {
-      'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
-      'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12,
-    };
-    final month = months[english.group(1)!.toLowerCase()];
-    if (month != null) {
-      final offsetMinutes = int.parse(english.group(7)!) * 60 + int.parse(english.group(8)!);
-      final sign = english.group(6) == '-' ? -1 : 1;
-      final utc = DateTime.utc(
-        int.parse(english.group(9)!),
-        month,
-        int.parse(english.group(2)!),
-        int.parse(english.group(3)!),
-        int.parse(english.group(4)!),
-        int.parse(english.group(5)!),
-      );
-      return utc.subtract(Duration(minutes: sign * offsetMinutes)).toLocal();
-    }
-  }
-
-  return current;
-}
-
-String relativeTime(DateTime instant, {DateTime? now}) {
-  final current = now ?? DateTime.now();
-  final elapsed = current.difference(instant);
-  if (elapsed.isNegative || elapsed.inMinutes < 1) return '刚刚';
-  if (elapsed.inMinutes < 60) return '${elapsed.inMinutes}分钟前';
-  if (elapsed.inHours < 24) return '${elapsed.inHours}小时前';
-  final date = instant.toLocal();
-  final today = current.toLocal();
-  final yesterday = today.subtract(const Duration(days: 1));
-  if (date.year == yesterday.year && date.month == yesterday.month && date.day == yesterday.day) {
-    return '昨天 ${_two(date.hour)}:${_two(date.minute)}';
-  }
-  if (date.year == today.year) return '${_two(date.month)}-${_two(date.day)}';
-  return '${date.year}-${_two(date.month)}-${_two(date.day)}';
-}
-
-String compactCount(int n) {
-  if (n < 10000) return n.clamp(0, 1 << 62).toString();
-  if (n < 100000000) {
-    final tenths = n ~/ 1000;
-    final whole = tenths ~/ 10;
-    final fraction = tenths % 10;
-    return fraction == 0 ? '${whole}万' : '${whole}.${fraction}万';
-  }
-  final tenths = n ~/ 10000000;
-  final whole = tenths ~/ 10;
-  final fraction = tenths % 10;
-  return fraction == 0 ? '${whole}亿' : '${whole}.${fraction}亿';
-}
-
-String _two(int value) => value.toString().padLeft(2, '0');
+/// Everything a JSON answer becomes, plus the three things every reader of it needs: the lenient
+/// scalar readers, the time and count formatting, and the HTML-to-text for a post's words. They
+/// live in their own files — `weibo_json.dart`, `weibo_time.dart`, `weibo_html.dart` — because they
+/// are pure and are used far from the parsers; this file re-exports them so a caller still has one
+/// import for "read Weibo's answer".
+export 'weibo_html.dart';
+export 'weibo_json.dart';
+export 'weibo_time.dart';
 
 // ---------------------------------------------------------------------------------------------
 // Users and statuses
@@ -437,21 +64,32 @@ Status? toStatus(dynamic element) {
   final html = textOf(json['text']) ?? textOf(json['raw_text']) ?? '';
   final rich = weiboHtmlToRichText(html);
   final convertedText = rich.text;
+  final links = _mergeUrlStructImages(json, rich.links);
   final pageInfo = asMap(json['page_info']);
-  final pics = _imagesFromPics(json);
-  final images = pics.isNotEmpty ? pics : _imagesFromPicInfos(json);
-  _applyPicVideo(images, textOf(json['pic_video']));
-  final media = <Media>[...images];
+  final mixed = _mediaFromMixMedia(json);
+  final List<Media> media;
+  if (mixed.isNotEmpty) {
+    _applyPicVideo(mixed, textOf(json['pic_video']));
+    media = mixed;
+  } else {
+    final pics = _imagesFromPics(json);
+    final baseImages = pics.isNotEmpty ? pics : _imagesFromPicInfos(json);
+    final images = _completeImagesFromPicIds(json, baseImages);
+    _applyPicVideo(images, textOf(json['pic_video']));
+    media = <Media>[...images];
+  }
   final video = _videoFrom(pageInfo);
-  if (video != null) media.add(video);
+  if (video != null && !media.any((m) => m.kind == MediaKind.video && m.url == video.url)) {
+    media.add(video);
+  }
 
-  final topicNames = <String>[
+  final topicNames = <String>{
     ...RegExp(r'#([^#\n]+)#').allMatches(convertedText).map((m) => m.group(1)!),
     ...asList(json['topic_struct'])
         .map((e) => textOf(asMap(e)?['topic_title']))
         .whereType<String>()
         .where((value) => value.isNotEmpty),
-  ].toSet().toList();
+  }.toList();
 
   final sourceText = textOf(json['source']);
   return Status(
@@ -480,7 +118,7 @@ Status? toStatus(dynamic element) {
     article: _articleCard(pageInfo),
     card: _linkCard(pageInfo),
     audio: _voiceOf(asMap(json['blog_audio'])) ?? _audioFrom(pageInfo) ?? _voiceFromStub(html),
-    links: rich.links,
+    links: links,
     isLongText: boolOf(json['isLongText']),
     region: textOf(json['region_name']),
     pinned: intOf(json['isTop']) == 1 ||
@@ -559,6 +197,46 @@ void _applyPicVideo(List<Media> images, String? picVideo) {
   }
 }
 
+List<Media> _mediaFromMixMedia(Map<String, dynamic> json) {
+  final items = asList(asMap(json['mix_media_info'])?['items']);
+  if (items.isEmpty) return const [];
+  final result = <Media>[];
+  for (final element in items) {
+    final item = asMap(element);
+    if (item == null) continue;
+    final type = textOf(item['type']);
+    final data = asMap(item['data']);
+    if (data == null) continue;
+    if (type == 'video') {
+      final video = _videoFrom(data);
+      if (video != null) result.add(video);
+    } else if (type == 'pic') {
+      final image = _imageFromPicInfo(data);
+      if (image != null) result.add(image);
+    }
+  }
+  return result;
+}
+
+/// Completes picture lists when `pic_ids` carries more entries than `pics` or `pic_infos`:
+/// m.weibo.cn caps `pics` at 9 on mixed-media posts and omits `pics` on some retweeted payloads,
+/// while still listing every id in `pic_ids`.
+List<Media> _completeImagesFromPicIds(Map<String, dynamic> json, List<Media> existing) {
+  final ids = asList(json['pic_ids']).map(idOf).whereType<String>().where((id) => id.isNotEmpty).toList();
+  if (ids.isEmpty) return existing;
+  final seen = <String>{
+    for (final media in existing) ?(picIdOfUrl(media.url) ?? picIdOfUrl(media.previewUrl)),
+  };
+  final missing = [for (final id in ids) if (seen.add(id)) id];
+  if (missing.isEmpty) return existing;
+  final host = existing.map((m) => sinaimgHostOf(m.url) ?? sinaimgHostOf(m.previewUrl)).whereType<String>().firstOrNull ??
+      sinaimgHostOf(textOf(json['original_pic']) ?? textOf(json['bmiddle_pic']) ?? textOf(json['thumbnail_pic']));
+  return [
+    ...existing,
+    for (final pid in missing) mediaFromPicId(pid, host: host),
+  ];
+}
+
 List<Media> _imagesFromPicInfos(Map<String, dynamic> json) {
   final ids = asList(json['pic_ids']);
   final infos = asMap(json['pic_infos']);
@@ -580,43 +258,163 @@ List<Media> _imagesFromPicInfos(Map<String, dynamic> json) {
   if (infoList.isEmpty) return const [];
   final result = <Media>[];
   for (final info in infoList) {
-    Map<String, dynamic>? original;
-    for (final name in ['mw2000', 'largest', 'original', 'large']) {
-      final candidate = asMap(info[name]);
-      final url = textOf(candidate?['url']);
-      if (candidate != null && url != null && url.isNotEmpty) {
-        original = candidate;
-        break;
-      }
-    }
-    if (original == null) continue;
-    Map<String, dynamic>? preview;
-    for (final name in ['bmiddle', 'large', 'thumbnail']) {
-      final candidate = asMap(info[name]);
-      final url = textOf(candidate?['url']);
-      if (candidate != null && url != null && url.isNotEmpty) {
-        preview = candidate;
-        break;
-      }
-    }
-    Map<String, dynamic>? size;
-    for (final name in ['largest', 'original', 'mw2000', 'large']) {
-      final candidate = asMap(info[name]);
-      if (candidate != null && ((intOf(candidate['width']) ?? 0) > 0 || (intOf(candidate['height']) ?? 0) > 0)) {
-        size = candidate;
-        break;
-      }
-    }
-    final url = textOf(original['url'])!;
-    result.add(Media.image(
-      url,
-      previewUrl: textOf(preview?['url']) ?? url,
-      width: intOf(size?['width']) ?? 0,
-      height: intOf(size?['height']) ?? 0,
-      liveUrl: _liveUrlOf(info, 'video'),
-    ));
+    final image = _imageFromPicInfo(info);
+    if (image != null) result.add(image);
   }
   return result;
+}
+
+Media? _imageFromPicInfo(Map<String, dynamic> info) {
+  Map<String, dynamic>? original;
+  for (final name in ['mw2000', 'largest', 'original', 'large', 'woriginal']) {
+    final candidate = asMap(info[name]);
+    final url = textOf(candidate?['url']);
+    if (candidate != null && url != null && url.isNotEmpty) {
+      original = candidate;
+      break;
+    }
+  }
+  if (original == null) return null;
+  Map<String, dynamic>? preview;
+  for (final name in ['bmiddle', 'large', 'thumbnail']) {
+    final candidate = asMap(info[name]);
+    final url = textOf(candidate?['url']);
+    if (candidate != null && url != null && url.isNotEmpty) {
+      preview = candidate;
+      break;
+    }
+  }
+  Map<String, dynamic>? size;
+  for (final name in ['largest', 'original', 'mw2000', 'large', 'woriginal']) {
+    final candidate = asMap(info[name]);
+    if (candidate != null && ((intOf(candidate['width']) ?? 0) > 0 || (intOf(candidate['height']) ?? 0) > 0)) {
+      size = candidate;
+      break;
+    }
+  }
+  final url = textOf(original['url'])!;
+  return Media.image(
+    url,
+    previewUrl: textOf(preview?['url']) ?? url,
+    width: intOf(size?['width']) ?? 0,
+    height: intOf(size?['height']) ?? 0,
+    liveUrl: _liveUrlOf(info, 'video'),
+  );
+}
+
+/// Attaches bundled picture lists from weibo.com's `url_struct` (such as 「查看2张图片」 in a
+/// repost chain) onto the corresponding [WeiboLink]s in [base].
+Map<String, WeiboLink> _mergeUrlStructImages(Map<String, dynamic> json, Map<String, WeiboLink> base) {
+  final structs = asList(json['url_struct']).map(asMap).whereType<Map<String, dynamic>>().toList();
+  if (structs.isEmpty) return base;
+  var result = base;
+  void attach(String key, List<Media> images, String? title) {
+    if (identical(result, base)) result = Map<String, WeiboLink>.from(base);
+    final existing = result[key];
+    final currentLabel = existing?.label ?? '';
+    final label = images.length > 1 && (currentLabel.isEmpty || currentLabel == '查看图片')
+        ? (title != null && title.isNotEmpty && title != '查看图片' ? title : '查看${images.length}张图片')
+        : (currentLabel.isNotEmpty ? currentLabel : (title ?? ''));
+    result[key] = WeiboLink(
+      url: key,
+      label: label,
+      kind: existing?.kind ?? LinkKind.web,
+      images: images,
+    );
+  }
+
+  for (final entry in structs) {
+    final parsed = _completeImagesFromPicIds(entry, _imagesFromPicInfos(entry));
+    if (parsed.isEmpty) continue;
+    final title = textOf(entry['url_title']);
+    final entryPids = {
+      for (final img in parsed) ?picIdOfUrl(img.url),
+    };
+    var matched = false;
+    for (final candidate in [textOf(entry['short_url']), textOf(entry['ori_url']), textOf(entry['h5_target_url'])]) {
+      if (candidate != null && result.containsKey(candidate)) {
+        attach(candidate, parsed, title);
+        matched = true;
+      }
+    }
+    for (final key in result.keys.toList()) {
+      final pid = picIdOfUrl(key);
+      if (pid != null && entryPids.contains(pid)) {
+        attach(key, parsed, title);
+        matched = true;
+      }
+    }
+    if (!matched) {
+      final fallback = parsed.first.url;
+      attach(fallback, parsed, title);
+    }
+  }
+  return result;
+}
+
+/// Folds richer media and bundled link pictures from weibo.com's `ajax/statuses/show` into the
+/// [Status] parsed from m.weibo.cn, keeping m.weibo.cn's text and URLs as the anchor keys.
+Status mergeStatusDetails(Status base, Status supplemental) {
+  final baseVideos = base.media.where((m) => m.kind == MediaKind.video).length;
+  final extraVideos = supplemental.media.where((m) => m.kind == MediaKind.video).length;
+  final media = (supplemental.media.length > base.media.length ||
+          (supplemental.media.length == base.media.length && extraVideos > baseVideos))
+      ? supplemental.media
+      : base.media;
+
+  final byPid = <String, WeiboLink>{};
+  for (final link in supplemental.links.values) {
+    if (link.images.isEmpty) continue;
+    for (final img in link.images) {
+      final pid = picIdOfUrl(img.url) ?? picIdOfUrl(img.previewUrl);
+      if (pid != null) byPid[pid] = link;
+    }
+  }
+
+  var links = base.links;
+  if (byPid.isNotEmpty) {
+    Map<String, WeiboLink>? updated;
+    for (final entry in base.links.entries) {
+      final pid = picIdOfUrl(entry.key);
+      final richer = pid == null ? null : byPid[pid];
+      if (richer != null && richer.images.length > entry.value.images.length) {
+        updated ??= Map<String, WeiboLink>.from(base.links);
+        final label = richer.images.length > 1 && (entry.value.label.isEmpty || entry.value.label == '查看图片')
+            ? '查看${richer.images.length}张图片'
+            : entry.value.label;
+        updated[entry.key] = WeiboLink(
+          url: entry.key,
+          label: label,
+          kind: entry.value.kind,
+          images: richer.images,
+        );
+      }
+    }
+    // Also attach directly for any inline image URL present in text that had no WeiboLink entry yet.
+    for (final imageUrl in inlineSinaimgUrls(base.text)) {
+      if ((updated ?? base.links).containsKey(imageUrl)) continue;
+      final pid = picIdOfUrl(imageUrl);
+      final richer = pid == null ? null : byPid[pid];
+      if (richer != null && richer.images.length > 1) {
+        updated ??= Map<String, WeiboLink>.from(base.links);
+        updated[imageUrl] = WeiboLink(
+          url: imageUrl,
+          label: '查看${richer.images.length}张图片',
+          images: richer.images,
+        );
+      }
+    }
+    if (updated != null) links = updated;
+  }
+
+  final repost = (base.repostOf != null && supplemental.repostOf != null && base.repostOf!.id == supplemental.repostOf!.id)
+      ? mergeStatusDetails(base.repostOf!, supplemental.repostOf!)
+      : base.repostOf;
+
+  if (identical(media, base.media) && identical(links, base.links) && identical(repost, base.repostOf)) {
+    return base;
+  }
+  return base.copyWith(media: media, links: links, repostOf: repost);
 }
 
 Media? _videoFrom(Map<String, dynamic>? pageInfo) {
@@ -646,7 +444,8 @@ Media? _videoFrom(Map<String, dynamic>? pageInfo) {
   }
   if (url == null) return null;
   final pagePic = pageInfo['page_pic'];
-  final String? cover = pagePic is Map ? textOf(pagePic['url']) : textOf(pagePic);
+  final bigPic = asMap(asMap(mediaInfo?['big_pic_info'])?['pic_big']);
+  final String? cover = (pagePic is Map ? textOf(pagePic['url']) : textOf(pagePic)) ?? textOf(bigPic?['url']);
   final duration = doubleOf(mediaInfo?['duration']);
   return Media.video(
     url,
@@ -695,19 +494,17 @@ AudioClip? _audioFrom(Map<String, dynamic>? pageInfo) {
   );
 }
 
-/// m.weibo.cn leaves a voice post's `blog_audio` out and starts its text with
-/// `[语音10"]请用最新版手机微博app收听原声<br />` instead (`1'05"` past a minute).
-final _voiceStub = RegExp(r'^\s*\[语音([^\]]{0,16})\]\s*请用最新版[^<]{0,12}收听原声\s*(?:<br\s*/?>)?');
-final _voiceLength = RegExp(r'''^(?:(\d+)')?(\d+)''');
-
-/// The voice clip behind [_voiceStub], its address left for weibo.com to sign at play time.
+/// The voice clip a text-only voice post implies, its address left for weibo.com to sign at play
+/// time. [voiceStub], the pattern that finds the stub, lives with the HTML reader.
 AudioClip? _voiceFromStub(String html) {
-  final stub = _voiceStub.firstMatch(html);
+  final stub = voiceStub.firstMatch(html);
   if (stub == null) return null;
   final length = _voiceLength.firstMatch(stub.group(1)!.replaceAll('&quot;', '"').trim());
   final seconds = length == null ? 0 : (int.parse(length.group(1) ?? '0') * 60 + int.parse(length.group(2)!));
   return AudioClip(url: '', title: '语音', durationMs: seconds * 1000, voice: true);
 }
+
+final _voiceLength = RegExp(r'''^(?:(\d+)')?(\d+)''');
 
 /// http → https: Android plays no cleartext media.
 String _secureUrl(String url) => url.startsWith('http://') ? 'https://${url.substring(7)}' : url;
@@ -981,10 +778,28 @@ Comment? toComment(dynamic element, String statusId) {
     likesCount: countOf(json['like_count'] ?? json['like_counts']),
     liked: boolOf(json['liked']),
     region: textOf(json['source']),
+    replyTo: _replyToOf(json),
     replies: replies,
     repliesCount: total > replies.length ? total : replies.length,
     images: images,
   );
+}
+
+/// Who a reply answers. m.weibo.cn sends the answered comment as `reply_comment`; older answers
+/// carry only the name in `reply_text` ("回复@某人:…"), so that is read as the fallback. Without
+/// this the 「回复 X：」 prefix never appeared on a reply — [Comment.replyTo] had no source at all.
+User? _replyToOf(Map<String, dynamic> json) {
+  final answered = asMap(json['reply_comment']);
+  if (answered != null) {
+    final user = toUser(answered['user']);
+    if (user != null) return user;
+  }
+  final text = textOf(json['reply_text']);
+  if (text == null) return null;
+  final match = RegExp(r'回复\s*@([^:：\s]+)').firstMatch(text);
+  final name = match?.group(1);
+  if (name == null || name.isEmpty) return null;
+  return User(id: '', screenName: name);
 }
 
 List<Media> _commentImages(Map<String, dynamic> comment) {
@@ -994,9 +809,13 @@ List<Media> _commentImages(Map<String, dynamic> comment) {
   ];
   final result = <Media>[];
   for (final item in candidates) {
+    // A video in a comment is not a picture: it cannot be drawn by the picture grid, so it is
+    // left out of the images rather than shown as a still frame that plays nothing.
     if (textOf(item['type']) == 'video') continue;
     final thumb = textOf(item['url']);
-    if (thumb == null || !thumb.startsWith('http') || thumb.contains('&690')) continue;
+    // `&690` is part of the default avatar's dead address, not a picture size: it is matched on the
+    // path itself, so a 690-wide thumbnail is no longer dropped as if it were an avatar.
+    if (thumb == null || !thumb.startsWith('http') || thumb.contains('/default_avatar')) continue;
     final large = asMap(item['large']);
     final full = textOf(large?['url']);
     final geo = asMap(large?['geo']) ?? asMap(item['geo']);
@@ -1011,7 +830,10 @@ List<Media> _commentImages(Map<String, dynamic> comment) {
   return result.where((image) => seen.add(image.url)).toList();
 }
 
-PageResult<Comment> parseCommentPage(Map<String, dynamic>? container, String statusId) {
+/// [maxIdType] is what the request asked for, used when the answer does not say. Weibo leaves
+/// `max_id_type` out of the first page of 按时间 often enough that defaulting it to 0 turned every
+/// later page back into the hot order, which repeats and reorders the comments already shown.
+PageResult<Comment> parseCommentPage(Map<String, dynamic>? container, String statusId, {String? maxIdType}) {
   if (container == null) return const PageResult([], null);
   // hotFlowChild wraps its list one level deeper than hotflow:
   // { data: { data: [...], max_id: ... } }
@@ -1027,8 +849,8 @@ PageResult<Comment> parseCommentPage(Map<String, dynamic>? container, String sta
     if (comment != null) items.add(comment);
   }
   final maxId = idOf(pageRoot['max_id']);
-  final type = intOf(pageRoot['max_id_type']) ?? 0;
-  final next = (maxId != null && maxId != '0' && items.isNotEmpty) ? '${maxId}:${type}' : null;
+  final type = intOf(pageRoot['max_id_type'])?.toString() ?? maxIdType ?? '0';
+  final next = (maxId != null && maxId != '0' && items.isNotEmpty) ? '$maxId:$type' : null;
   return PageResult(items, next);
 }
 

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'api.dart';
+import 'failure.dart';
 import 'models.dart';
 
 /// weibo.com's boards, shared by the home tab, the search page and the topic pages (which look
@@ -42,7 +43,7 @@ class HotSearchStore extends ChangeNotifier {
       state.loadedAt = DateTime.now();
       return true;
     } catch (e) {
-      state.error = e is ApiException ? e.message : '加载失败';
+      state.error = Failure.from(e).message;
       return false;
     } finally {
       state.loading = false;
