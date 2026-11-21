@@ -98,7 +98,8 @@ class _RichStatusTextState extends State<RichStatusText> {
         final spans = <InlineSpan>[
           if (widget.prefix != null) widget.prefix!,
         ];
-        for (final token in _tokenize(widget.text)) {
+        final tokens = _tokenize(widget.text);
+        for (final (index, token) in tokens.indexed) {
           switch (token.kind) {
             case _TokenKind.plain:
               spans.add(TextSpan(text: token.value));
@@ -182,7 +183,11 @@ class _RichStatusTextState extends State<RichStatusText> {
                         runSpacing: 6,
                         children: [for (var i = 0; i < bundled.length; i++) thumb(bundled[i], i, 104)],
                       );
+                // A picture is its own line: in the paragraph it sat beside the words and emoji,
+                // which reads as an image glued to a sentence.
+                if (spans.any((span) => span.toPlainText().trim().isNotEmpty)) spans.add(const TextSpan(text: '\n'));
                 spans.add(WidgetSpan(alignment: PlaceholderAlignment.middle, child: child));
+                if (index < tokens.length - 1) spans.add(const TextSpan(text: '\n'));
               } else {
                 final callback = widget.onUrl;
                 var kind = known?.kind ?? linkKindOf(token.value);

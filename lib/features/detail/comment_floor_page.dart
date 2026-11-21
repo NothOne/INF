@@ -95,7 +95,6 @@ class _CommentFloorPageState extends State<CommentFloorPage> {
       onOpenTopic: (name) => openTopic(context, name),
       onOpenUrl: (url) => openLink(context, url),
       onOpenFloor: () {},
-      imagesAsLinks: !root,
       showReplies: false,
       onReply: awaitable ? (_) {} : (anchor) => _reply(anchor, comment),
       onTap: awaitable ? null : (anchor) => _reply(anchor, comment),

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:inf_flutter/core/models.dart';
 import 'package:inf_flutter/core/parse.dart';
 import 'package:inf_flutter/core/prefs.dart';
 import 'package:inf_flutter/core/widgets/image_grid.dart';
 import 'package:inf_flutter/core/widgets/rich_text.dart';
+import 'package:inf_flutter/core/widgets/smart_image.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -218,5 +220,29 @@ void main() {
       expect(find.text('+4'), findsNothing);
       expect(find.byType(GestureDetector), findsNWidgets(13));
     });
+  });
+
+  testWidgets('a picture in the text starts its own line', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await Prefs.instance.init();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: RichStatusText(
+            text: '看这个 😂 https://wx1.sinaimg.cn/large/abc.jpg 真不错',
+            style: const TextStyle(fontSize: 15),
+            inlineImages: true,
+            onOpenImage: (_, _) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // The picture used to be a WidgetSpan in the same paragraph, so it sat beside 看这个 and 😂.
+    final paragraph = tester.renderObject<RenderParagraph>(find.byType(RichText).first);
+    final firstLine = paragraph.getBoxesForSelection(const TextSelection(baseOffset: 0, extentOffset: 1)).first;
+    final imageTop = tester.getTopLeft(find.byType(SmartImage).first).dy - tester.getTopLeft(find.byType(RichText).first).dy;
+    expect(imageTop, greaterThanOrEqualTo(firstLine.bottom));
   });
 }

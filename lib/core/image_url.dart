@@ -23,6 +23,10 @@ bool signedUrlExpired(String url, DateTime now) {
 /// sinaimg wants Weibo as the referrer; chat attachments on `upload.api.weibo.com` also need the
 /// signed-in weibo.com Cookie and chat Referer; third-party covers (Bilibili's hdslb.com) refuse
 /// Weibo's referrer and get none.
+///
+/// `weibocdn.com` (video and podcast CDN) checks the referrer before the address's `ssig`: with no
+/// Weibo referrer it answers 403 `byte-error-code 00068` (deny code 68) even for a valid signature,
+/// and only with one does the request reach the signature check. The players take these headers.
 Map<String, String> weiboImageHeaders([String? url]) {
   final host = url == null ? null : Uri.tryParse(sanitizeImageUrl(url))?.host.toLowerCase();
   if (host == 'upload.api.weibo.com') {
@@ -33,7 +37,11 @@ Map<String, String> weiboImageHeaders([String? url]) {
       if (cookie.isNotEmpty) 'Cookie': cookie,
     };
   }
-  final weibo = host == null || host.endsWith('sinaimg.cn') || host.endsWith('weibo.com') || host.endsWith('weibo.cn');
+  final weibo = host == null ||
+      host.endsWith('sinaimg.cn') ||
+      host.endsWith('weibo.com') ||
+      host.endsWith('weibo.cn') ||
+      host.endsWith('weibocdn.com');
   return {
     if (weibo) 'Referer': 'https://m.weibo.cn/',
     'User-Agent': Session.instance.userAgent,

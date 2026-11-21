@@ -45,7 +45,6 @@ class CommentTile extends StatelessWidget {
     required this.onOpenFloor,
     required this.onReply,
     required this.onOpenImage,
-    this.imagesAsLinks = false,
     this.showReplies = true,
     this.onTap,
     this.onLongPress,
@@ -59,8 +58,6 @@ class CommentTile extends StatelessWidget {
   final VoidCallback onOpenFloor;
   final void Function(BuildContext anchor) onReply;
   final void Function(List<Media> images, int index, String? heroTag) onOpenImage;
-  final bool imagesAsLinks;
-
   /// Off where the replies are listed in full right below, as on the floor page.
   final bool showReplies;
   final void Function(BuildContext anchor)? onTap;
@@ -154,36 +151,16 @@ class CommentTile extends StatelessWidget {
                     onMention: onOpenUser,
                     onTopic: onOpenTopic,
                     onUrl: onOpenUrl,
-                    inlineImages: !imagesAsLinks && comment.images.isEmpty,
+                    inlineImages: comment.images.isEmpty,
                     onOpenImage: (url, tag) => onOpenImage([Media.image(url)], 0, tag),
                   ),
                   if (comment.images.isNotEmpty) ...[
                     const SizedBox(height: 6),
-                    if (imagesAsLinks)
-                      Wrap(
-                        spacing: 14,
-                        children: [
-                          for (final (index, _) in unlinkedPictures(comment))
-                            GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: () => onOpenImage(comment.images, index, 'link-img-comment-${comment.id}-$index'),
-                              child: ViewerHero(
-                                tag: 'link-img-comment-${comment.id}-$index',
-                                child: InlineLinkLabel(
-                                  icon: Icons.image_outlined,
-                                  label: '查看图片',
-                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 13),
-                                ),
-                              ),
-                            ),
-                        ],
-                      )
-                    else
-                      _CommentImages(
-                        images: comment.images,
-                        commentId: comment.id,
-                        onOpen: onOpenImage,
-                      ),
+                    _CommentImages(
+                      images: comment.images,
+                      commentId: comment.id,
+                      onOpen: onOpenImage,
+                    ),
                   ],
                   const SizedBox(height: 4),
                   Row(

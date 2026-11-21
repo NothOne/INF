@@ -1,7 +1,7 @@
 name: inf_flutter
 description: "INF for Android — 微博第三方客户端（Flutter 重写版）"
 publish_to: "none"
-version: 1.7.8+78
+version: 1.8.0+80
 
 environment:
   sdk: ^3.13.5

@@ -380,30 +380,25 @@ class FeedPageState extends State<FeedPage> {
                 child: _SwipeKeepsBars(
                   pages: _pages,
                   index: _HomePage.board.index,
-                  child: AnimatedSwitcher(
-                    duration: InfMotion.feedback,
-                    switchInCurve: InfMotion.emphasized,
-                    switchOutCurve: Curves.easeIn,
-                    child: _hotSection == HotSection.rank
-                        ? _HotRank(
-                            key: const ValueKey('rank'),
-                            tab: _rankTab,
-                            pager: _rankPager,
-                            onSelect: _selectRankTab,
-                            scroll: _rankScroll,
-                            refreshKey: _rankRefreshKey,
-                          )
-                        : AnimatedBuilder(
-                            key: const ValueKey('search'),
-                            animation: Prefs.instance.hotBoardsNotifier,
-                            builder: (context, _) => _HotBoard(
-                              board: shownBoard(_board),
-                              onSelect: _selectBoard,
-                              scroll: _boardScroll,
-                              refreshKey: _boardRefreshKey,
-                            ),
+                  // Swapped, not cross-faded: 热搜's and 榜单's bars are different rows, and fading
+                  // one into the other fades the capsule through paper, which reads as a flash.
+                  child: _hotSection == HotSection.rank
+                      ? _HotRank(
+                          tab: _rankTab,
+                          pager: _rankPager,
+                          onSelect: _selectRankTab,
+                          scroll: _rankScroll,
+                          refreshKey: _rankRefreshKey,
+                        )
+                      : AnimatedBuilder(
+                          animation: Prefs.instance.hotBoardsNotifier,
+                          builder: (context, _) => _HotBoard(
+                            board: shownBoard(_board),
+                            onSelect: _selectBoard,
+                            scroll: _boardScroll,
+                            refreshKey: _boardRefreshKey,
                           ),
-                  ),
+                        ),
                 ),
               ),
             ],
@@ -929,7 +924,6 @@ class _BoardUpdated extends StatelessWidget {
 /// posts they rank. Each tab is its own list, so switching tabs starts where that tab starts.
 class _HotRank extends StatelessWidget {
   const _HotRank({
-    super.key,
     required this.tab,
     required this.pager,
     required this.onSelect,

@@ -189,5 +189,45 @@ void main() {
       expect(find.text('点赞'), findsOneWidget);
       expect(find.text('投诉'), findsOneWidget);
     });
+
+    testWidgets('a reply draws its picture under the text instead of a 查看图片 link', (tester) async {
+      // The floor page drew replies with imagesAsLinks, which turned every picture into a link to
+      // open; it now draws them the way the comment list does.
+      const picture = Media.image(
+        'https://wx1.sinaimg.cn/large/one.jpg',
+        previewUrl: 'https://wx1.sinaimg.cn/mw690/one.jpg',
+      );
+      final comment = Comment(
+        id: 'r1',
+        statusId: 's1',
+        author: const User(id: 'u2', screenName: '回复的人'),
+        text: '看图',
+        createdAt: DateTime(2026),
+        images: const [picture],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CommentTile(
+              comment: comment,
+              onOpenUser: (_) {},
+              onOpenTopic: (_) {},
+              onOpenUrl: (_) {},
+              onOpenFloor: () {},
+              onReply: (_) {},
+              onOpenImage: (_, _, _) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('查看图片'), findsNothing);
+      final drawn = tester.widgetList<SmartImage>(find.byType(SmartImage)).where(
+            (image) => image.url == picture.previewUrl,
+          );
+      expect(drawn, hasLength(1));
+    });
   });
 }
