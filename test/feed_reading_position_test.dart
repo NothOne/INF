@@ -188,16 +188,17 @@ void main() {
     expect(reading.markerId, 'a');
   });
 
-  test('toTop(id) and resumeAt(id, dy) update centerId and clear transient state', () {
+  test('toTop(id) updates centerId, keeps the read marker, and resumeAt(id, dy) restores the anchor', () {
     final reading = position();
     update(reading, [post('a'), post('b')], DateTime(1));
     update(reading, [post('n1'), post('a'), post('b')], DateTime(2));
     expect(reading.centerId, 'a');
+    expect(reading.markerId, 'a');
 
     reading.toTop('n1');
     expect(reading.centerId, 'n1');
     expect(reading.unread, 0);
-    expect(reading.markerId, isNull);
+    expect(reading.markerId, 'a', reason: 'pull-to-refresh still shows 上次看到这里 above the old head');
     expect(reading.canResume, isFalse);
 
     reading.canResume = true;
@@ -205,5 +206,23 @@ void main() {
     expect(reading.centerId, 'b');
     expect(reading.position, (id: 'b', dy: 24.0));
     expect(reading.canResume, isFalse);
+  });
+
+  test('the 上次读到 pill fades out as the reader scrolls up or down and then clears', () async {
+    await Prefs.instance.setFeedPosition('test-source', FeedPosition(id: 'deep', dy: 0));
+    final reading = position();
+    update(reading, [post('a'), post('b')], DateTime(1));
+    expect(reading.canResume, isTrue);
+    expect(reading.resumeOpacity, 1.0);
+
+    // Scrolling down halfway fades it to 0.5 without dismissing yet.
+    expect(reading.trackResumeScroll(FeedReadingPosition.resumeFadeDistance / 2), isFalse);
+    expect(reading.canResume, isTrue);
+    expect(reading.resumeOpacity, closeTo(0.5, 0.001));
+
+    // Scrolling back up also accumulates distance until it finishes fading out.
+    expect(reading.trackResumeScroll(-FeedReadingPosition.resumeFadeDistance / 2), isTrue);
+    expect(reading.canResume, isFalse);
+    expect(reading.resumeOpacity, 0.0);
   });
 }

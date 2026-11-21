@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../comment_store.dart';
+import '../container_route.dart';
 import '../entities.dart';
 import '../models.dart';
 import '../navigation.dart';
@@ -71,7 +73,21 @@ Widget buildStatusCard(
     },
     onToggleLike: onToggleLike,
     onRepost: (_) => openCompose(context, type: DraftType.repost, statusId: status.id),
-    onComment: (anchor) => showCommentSheet(context, anchor: anchor, status: status),
+    onComment: (anchor) {
+      final current = StatusStore.instance.apply(status);
+      if (detail) {
+        showCommentSheet(context, anchor: anchor, status: current);
+        return;
+      }
+      final hasComments = current.commentsCount > 0 || CommentStore.instance.pendingFor(current.id).isNotEmpty;
+      if (hasComments) {
+        if (current.isLongText) StatusStore.instance.longText(current.id).ignore();
+        ContainerOrigin.capture(anchor, radius: 18);
+        openStatus(context, statusId: current.id, seed: current, jumpToComments: true);
+      } else {
+        showCommentSheet(context, anchor: anchor, status: current);
+      }
+    },
     onLongImage: onLongImage,
   );
 }

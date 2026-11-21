@@ -45,7 +45,7 @@ void main() {
     final weiboCom = Endpoint.pathsOn(EndpointHost.weiboCom);
     final throughWeiboCom = {
       for (final source in sources.values)
-        for (final match in RegExp(r"_(?:get|post)WeiboCom\(\s*'([^']+)'").allMatches(source)) match.group(1)!,
+        for (final match in RegExp(r"_(?:get|post)WeiboCom(?:Form)?\(\s*'([^']+)'").allMatches(source)) match.group(1)!,
     };
     expect(throughWeiboCom, isNotEmpty);
     expect(throughWeiboCom.difference(weiboCom), isEmpty);
@@ -59,7 +59,10 @@ void main() {
       'https://weibo.com/ajax/': EndpointHost.weiboCom,
       'https://passport.weibo.com/': EndpointHost.passport,
       'https://m.s.weibo.com/': EndpointHost.msWeibo,
+      'https://ai.s.weibo.com/': EndpointHost.aiWeibo,
       'https://api.weibo.com/webim/': EndpointHost.apiWeibo,
+      'https://upload.api.weibo.com/': EndpointHost.uploadWeibo,
+      'https://up.video.weibocdn.com/': EndpointHost.videoUpload,
     };
     for (final path in literals) {
       if (!path.startsWith('https://')) continue;
@@ -147,7 +150,9 @@ void main() {
     // be sent at all — the rule that keeps a weibo.com request from picking up m.weibo.cn's
     // session, which this project has got wrong before.
     for (final endpoint in Endpoint.values) {
-      if (endpoint.host == EndpointHost.passport || endpoint.host == EndpointHost.msWeibo) {
+      if (endpoint.host == EndpointHost.passport ||
+          endpoint.host == EndpointHost.msWeibo ||
+          endpoint.host == EndpointHost.aiWeibo) {
         expect(endpoint.auth, isNot(EndpointAuth.user), reason: '${endpoint.name} is anonymous');
       }
     }

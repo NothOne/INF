@@ -181,6 +181,23 @@ class Native {
 
   static Future<void> keepScreenOn(bool on) => _call('keepScreenOn', {'on': on});
 
+  /// The device's city, coarsely, for the city picker: null when permission was refused, location is
+  /// off, or no fix came in [timeout]. Never asks for a street — the caller only needs the city.
+  static Future<({double lat, double lon})?> currentLocation({
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    try {
+      final value = await _channel
+          .invokeMethod<Map<Object?, Object?>>('currentLocation')
+          .timeout(timeout, onTimeout: () => null);
+      final lat = value?['lat'];
+      final lon = value?['lon'];
+      return lat is num && lon is num ? (lat: lat.toDouble(), lon: lon.toDouble()) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<double?> _number(String method) async {
     try {
       return await _channel.invokeMethod<double>(method).timeout(const Duration(seconds: 2), onTimeout: () => null);

@@ -1,16 +1,28 @@
 import 'package:flutter/material.dart';
 
+import '../api.dart';
 import '../chrome.dart';
 import '../haptics.dart';
+import '../hot_search_store.dart';
 import '../models.dart';
 import '../motion.dart';
+import '../navigation.dart';
 import '../prefs.dart';
+import 'city_picker_sheet.dart';
 
 /// The board shown when [current] is no longer among the user's boards.
 HotBoard shownBoard(HotBoard current) {
   final boards = Prefs.instance.hotBoards;
   return boards.contains(current) ? current : boards.first;
 }
+
+/// A board's name as the bar and the editor write it: 我的热搜 / 热搜榜 / 同城榜 / 文娱榜 …
+String hotBoardTitle(HotBoard board) => switch (board) {
+      HotBoard.mine => '我的热搜',
+      HotBoard.realtime => '热搜榜',
+      HotBoard.city => '同城榜',
+      _ => '${board.label}榜',
+    };
 
 /// The user's boards as a row of chips: a long press drags one to a new place, the + at the end
 /// opens [showHotBoardEditor].
@@ -81,6 +93,43 @@ class HotBoardChips extends StatelessWidget {
   }
 }
 
+/// 热门榜单's six sub-tabs (小时榜 / 昨日 / 前日 / 周榜 / 男榜 / 女榜), drawn like the boards' chips.
+/// They are a fixed set, so this row is a plain scroll rather than a reorderable list.
+class HotRankChips extends StatelessWidget {
+  const HotRankChips({super.key, required this.current, required this.onSelect, this.floating = false});
+
+  final HotRankTab current;
+  final ValueChanged<HotRankTab> onSelect;
+
+  /// Inside a floating capsule, where an unselected chip is only its word.
+  final bool floating;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: floating ? 46 : 44,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: EdgeInsets.only(left: floating ? 5 : 12, right: floating ? 5 : 12),
+        children: [
+          for (final tab in HotRankTab.defaults)
+            Center(
+              child: Padding(
+                padding: EdgeInsets.only(right: floating ? 2 : 6),
+                child: _BoardChip(
+                  label: tab.title,
+                  selected: tab == current,
+                  floating: floating,
+                  onTap: () => onSelect(tab),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _BoardChip extends StatelessWidget {
   const _BoardChip({required this.label, required this.selected, required this.onTap, this.floating = false});
 
@@ -116,11 +165,129 @@ class _BoardChip extends StatelessWidget {
   }
 }
 
+/// The city 同城微博 and 同城热搜 are drawn for, with the way to change it: the name in words and a
+/// compact 切换城市 button, on one line. It sits above both lists so the reader can tell which place
+/// they are reading about and move somewhere else without hunting through a menu — including when
+/// the list below is empty because no city has been chosen or the fix failed.
+class CityBannerBar extends StatelessWidget {
+  const CityBannerBar({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    return AnimatedBuilder(
+      animation: Prefs.instance.cityNotifier,
+      builder: (context, _) {
+        final city = Prefs.instance.cityChoice;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(4, 8, 4, 6),
+          child: Row(
+            children: [
+              Icon(Icons.location_city_rounded, size: 17, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  city == null ? '未定位城市' : '当前城市：${city.name}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: text.labelLarge?.copyWith(color: scheme.onSurfaceVariant),
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton.icon(
+                onPressed: () => CityPrompt.pick(context),
+                icon: const Icon(Icons.swap_horiz_rounded, size: 17),
+                label: const Text('切换城市'),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  minimumSize: const Size(0, 32),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// 同城 with no city to draw — no pick yet and location refused or unavailable: the way to set one,
+/// in words that say what it is for. Shared by the home page and the search page.
+class CityPrompt extends StatelessWidget {
+  const CityPrompt({super.key});
+
+  static Future<void> pick(BuildContext context) async {
+    Haptic.selection.play();
+    final picked = await showCityPickerSheet(
+      context,
+      current: Prefs.instance.cityChoice,
+      onLocate: () => WeiboApi.instance.locateCity(),
+    );
+    // The sheet already writes the city a locate found; a pick is written here for the boards to
+    // hear. Writing the same city again is a no-op, so a locate that answered 北京 does not reload
+    // 同城 a second time.
+    if (picked != null) await Prefs.instance.setCityChoice(picked);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.location_city_rounded, size: 38, color: scheme.onSurfaceVariant.withValues(alpha: 0.45)),
+          const SizedBox(height: 10),
+          Text(
+            '设置城市，发现更多同城热点',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 14),
+          FilledButton.tonal(onPressed: () => pick(context), child: const Text('选择城市')),
+        ],
+      ),
+    );
+  }
+}
+
+/// 我的热搜 without a signed-in weibo.com cookie: what the board is and how to get it, instead of the
+/// parse error an answer meant for nobody used to raise.
+class HotBoardLoginPrompt extends StatelessWidget {
+  const HotBoardLoginPrompt({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.person_outline_rounded, size: 38, color: scheme.onSurfaceVariant.withValues(alpha: 0.45)),
+          const SizedBox(height: 10),
+          Text(
+            HotSearchStore.mineNeedsLogin,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 14),
+          FilledButton.tonal(onPressed: () => openLogin(context), child: const Text('登录微博')),
+        ],
+      ),
+    );
+  }
+}
+
 /// Which boards show and in what order. A tap on a shown board also switches to it.
 Future<void> showHotBoardEditor(BuildContext context, {HotBoard? current, ValueChanged<HotBoard>? onSelect}) {
   return showActionSheet<void>(
     context: context,
     isScrollControlled: true,
+    // Solid in every style: the list is dragged in, and a frosted sheet re-renders what is under it
+    // on every frame of the drag.
+    frosted: false,
     builder: (sheetContext) => _HotBoardEditor(
       current: current,
       onSelect: onSelect == null
@@ -192,7 +359,7 @@ class _HotBoardEditor extends StatelessWidget {
                           tooltip: '移除',
                         ),
                         title: Text(
-                          board == HotBoard.realtime ? '热搜榜' : '${board.label}榜',
+                          hotBoardTitle(board),
                           style: TextStyle(fontWeight: board == current ? FontWeight.w700 : null),
                         ),
                         selected: board == current,

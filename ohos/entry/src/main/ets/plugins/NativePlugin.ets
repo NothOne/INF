@@ -1,7 +1,8 @@
-import { UIAbility, Want, common } from '@kit.AbilityKit';
+import { UIAbility, Want, common, abilityAccessCtrl, PermissionRequestResult, Permissions } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { audio } from '@kit.AudioKit';
 import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
+import { geoLocationManager } from '@kit.LocationKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { connection } from '@kit.NetworkKit';
 import { vibrator } from '@kit.SensorServiceKit';
@@ -18,6 +19,8 @@ import Log from '@ohos/flutter_ohos/src/main/ets/util/Log';
 
 const TAG = 'NativePlugin';
 const DEFAULT_URL = 'https://m.weibo.cn/';
+const APPROXIMATELY_LOCATION: Permissions = 'ohos.permission.APPROXIMATELY_LOCATION';
+const LOCATION_TIMEOUT_MS: number = 4000;
 
 /** Session cookies to expire on sign-out, by host and the parent domain they may be set on. */
 const AUTH_HOSTS: string[][] = [
@@ -215,6 +218,9 @@ export default class NativePlugin implements FlutterPlugin, AbilityAware, Method
       case 'haptic':
         result.success(await this.haptic(this.str(call, 'kind')));
         break;
+      case 'currentLocation':
+        result.success(await this.currentLocation());
+        break;
       case 'share':
         await this.share(this.str(call, 'text'), this.str(call, 'path'), this.str(call, 'mime'));
         result.success(true);
@@ -317,6 +323,36 @@ export default class NativePlugin implements FlutterPlugin, AbilityAware, Method
       }
     }
     return false;
+  }
+
+  /**
+   * The device's city, coarsely: LOW_POWER asks for a network fix, not GPS. A refusal answers null
+   * as well — the picker offers the manual list either way.
+   */
+  private async currentLocation(): Promise<Map<string, Object> | null> {
+    try {
+      const granted: PermissionRequestResult = await abilityAccessCtrl.createAtManager()
+        .requestPermissionsFromUser(this.context(), [APPROXIMATELY_LOCATION]);
+      if (granted.authResults.length === 0 || granted.authResults[0] !== 0) return null;
+      const request: geoLocationManager.CurrentLocationRequest = {
+        priority: geoLocationManager.LocationRequestPriority.LOW_POWER,
+        scenario: geoLocationManager.LocationRequestScenario.UNSET,
+        timeoutMs: LOCATION_TIMEOUT_MS,
+      };
+      return NativePlugin.coordinates(await geoLocationManager.getCurrentLocation(request));
+    } catch (error) {
+      // No fix in time, or the location switch is off: what the device last knew still names a city.
+      try {
+        return NativePlugin.coordinates(geoLocationManager.getLastLocation());
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
+  /** The two numbers Dart reads; anything else the system reports about the fix is not needed. */
+  private static coordinates(location: geoLocationManager.Location): Map<string, Object> {
+    return new Map<string, Object>([['lat', location.latitude], ['lon', location.longitude]]);
   }
 
   private async share(text: string | null, path: string | null, mime: string | null): Promise<void> {

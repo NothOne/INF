@@ -23,6 +23,7 @@ import '../features/message/chat_page.dart';
 import '../features/message/chat_search_page.dart';
 import '../features/message/group_info_page.dart';
 import '../features/message/group_members_page.dart';
+import '../features/message/group_notice_page.dart';
 import '../features/relations/relations_page.dart';
 import '../features/search/search_page.dart';
 import '../features/settings/settings_page.dart';
@@ -95,10 +96,15 @@ Future<void> openStatus(
   BuildContext context, {
   required String statusId,
   Status? seed,
+  bool jumpToComments = false,
 }) {
   // Lists pass the post they show, also when the tap was on the original it reposts.
   final matching = seed?.id == statusId ? seed : (seed?.repostOf?.id == statusId ? seed?.repostOf : null);
-  return pushInf(context, StatusDetailPage(statusId: statusId, seed: matching), pane: 'status:$statusId');
+  return pushInf(
+    context,
+    StatusDetailPage(statusId: statusId, seed: matching, jumpToComments: jumpToComments),
+    pane: 'status:$statusId',
+  );
 }
 
 /// The replies under one comment of a post.
@@ -211,8 +217,20 @@ Future<void> openGroupMembers(
   required String gid,
   required String name,
   GroupInfo? info,
+  List<GroupMember>? initialMembers,
 }) =>
-    pushInf(context, GroupMembersPage(gid: gid, name: name, info: info));
+    pushInf(
+      context,
+      GroupMembersPage(gid: gid, name: name, info: info, initialMembers: initialMembers),
+    );
+
+/// Full group announcement viewer (and editor for owners/admins); returns updated [GroupInfo].
+Future<GroupInfo?> openGroupNotice(
+  BuildContext context, {
+  required GroupInfo info,
+  bool canEdit = false,
+}) =>
+    pushInf<GroupInfo>(context, GroupNoticePage(info: info, canEdit: canEdit));
 
 Future<void> openChatSearch(
   BuildContext context, {

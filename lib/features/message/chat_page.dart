@@ -3,24 +3,26 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../core/api.dart';
 import '../../core/error_text.dart';
+import '../../core/group_chat_api.dart';
 import '../../core/layout.dart';
-import '../../core/link_preview.dart';
 import '../../core/look.dart';
 import '../../core/message_sender.dart';
 import '../../core/models.dart';
 import '../../core/navigation.dart';
-import 'chat_link_sheet.dart';
 import '../../core/parse.dart';
 import '../../core/session.dart';
 import '../../core/temp_files.dart';
+import '../../core/weibo_com_session.dart';
 import '../../core/widgets/avatar.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/mention_picker.dart';
 import '../../core/widgets/rich_text.dart';
-import '../../core/widgets/smart_image.dart';
+import 'chat_cards.dart';
+import 'chat_link_sheet.dart';
 
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key, required this.uid, this.name, this.avatar, this.group = false});
@@ -39,7 +41,7 @@ class ChatPage extends StatefulWidget {
 class _ChatPageState extends State<ChatPage> {
   /// The last messages seen per conversation, so reopening one paints them at once.
   /// Keyed with the signed-in account, capped by LRU, and cleared on sign-out/account switch.
-  static final _recent = <String, ({List<DirectMessage> messages, String? cursor, bool hasMore})>{};
+  static final _recent = <String, ({List<DirectMessage> messages, String? cursor, bool hasMore, bool webim})>{};
   static const _recentKept = 20;
   static bool _resetRegistered = false;
 
@@ -59,15 +61,17 @@ class _ChatPageState extends State<ChatPage> {
   Object? _error;
   User? _peer;
   String? _selfId;
+  bool _useWebim = false;
 
-  /// The group's title as its message pages spell it, `群名(人数)`: where m.weibo.cn keeps the name
-  /// and the member count. Null until a page has come back.
+  /// The group's title as m.weibo.cn spells it (`群名(人数)`), or full [GroupInfo] from webim.
   String? _groupTitle;
+  GroupInfo? _groupInfo;
 
   bool _loading = true;
   bool _loadingOlder = false;
   bool _hasMore = true;
   bool _sending = false;
+  double? _uploadProgress;
   final EmojiKeyboard _emoji = EmojiKeyboard();
   Timer? _poll;
 
@@ -83,6 +87,7 @@ class _ChatPageState extends State<ChatPage> {
       _messages = recent.messages;
       _cursor = recent.cursor;
       _hasMore = recent.hasMore;
+      _useWebim = recent.webim;
       _loading = false;
       _loadLatest(quiet: true);
     } else {
@@ -91,7 +96,11 @@ class _ChatPageState extends State<ChatPage> {
     _poll = Timer.periodic(const Duration(seconds: 20), (_) {
       if (_scroll.hasClients && _atBottom && !_loading) _loadLatest(quiet: true, scroll: false);
     });
-    if (!widget.group && (widget.name == null || widget.name!.isEmpty)) _loadPeer();
+    if (!widget.group && (widget.name == null || widget.name!.isEmpty)) {
+      _loadPeer();
+    } else if (widget.group) {
+      _loadGroupMeta();
+    }
   }
 
   @override
@@ -113,7 +122,7 @@ class _ChatPageState extends State<ChatPage> {
     _ensureResetHook();
     final key = _key;
     _recent.remove(key);
-    _recent[key] = (messages: _messages, cursor: _cursor, hasMore: _hasMore);
+    _recent[key] = (messages: _messages, cursor: _cursor, hasMore: _hasMore, webim: _useWebim);
     if (_recent.length > _recentKept) _recent.remove(_recent.keys.first);
   }
 
@@ -135,13 +144,43 @@ class _ChatPageState extends State<ChatPage> {
     } catch (_) {}
   }
 
+  Future<void> _loadGroupMeta() async {
+    try {
+      final (cookie, _) = await WeiboComSession.instance.cookie();
+      if (!WeiboComSession.hasAuth(cookie)) return;
+      final info = await GroupChatApi.instance.groupInfo(widget.uid);
+      if (mounted) setState(() => _groupInfo = info);
+    } catch (_) {}
+  }
+
   Future<void> _loadLatest({bool initial = false, bool quiet = false, bool scroll = true}) async {
     if (!quiet && mounted) setState(() => _loading = initial);
     try {
       if (widget.group) {
+        final (cookie, _) = await WeiboComSession.instance.cookie();
+        if (WeiboComSession.hasAuth(cookie)) {
+          try {
+            final page = await GroupChatApi.instance.groupMessages(widget.uid);
+            if (!mounted) return;
+            setState(() {
+              _useWebim = true;
+              _messages = page.items.reversed.toList();
+              _cursor = page.nextCursor;
+              _hasMore = page.nextCursor != null;
+              _loading = false;
+              _error = null;
+            });
+            _remember();
+            if (scroll && !initial) _scrollToBottom();
+            return;
+          } catch (_) {
+            // Fall back to m.weibo.cn when webim rejects or is unreachable.
+          }
+        }
         final page = await WeiboApi.instance.groupChatPage(widget.uid, null);
         if (!mounted) return;
         setState(() {
+          _useWebim = false;
           _messages = page.messages.items.reversed.toList();
           _cursor = page.messages.nextCursor;
           _hasMore = page.messages.nextCursor != null;
@@ -176,10 +215,21 @@ class _ChatPageState extends State<ChatPage> {
     if (_loadingOlder || !_hasMore || _cursor == null) return;
     setState(() => _loadingOlder = true);
     try {
-      if (widget.group) {
+      if (widget.group && _useWebim) {
+        final page = await GroupChatApi.instance.groupMessages(widget.uid, maxMid: _cursor);
+        if (!mounted) return;
+        final seen = {for (final m in _messages) m.id};
+        final older = page.items.reversed.where((m) => seen.add(m.id)).toList();
+        setState(() {
+          _messages = [...older, ..._messages];
+          _cursor = page.nextCursor;
+          _hasMore = page.nextCursor != null && older.isNotEmpty;
+        });
+      } else if (widget.group) {
         final page = await WeiboApi.instance.groupChatPage(widget.uid, _cursor);
         if (!mounted) return;
-        final older = page.messages.items.reversed.toList();
+        final seen = {for (final m in _messages) m.id};
+        final older = page.messages.items.reversed.where((m) => seen.add(m.id)).toList();
         setState(() {
           _messages = [...older, ..._messages];
           _cursor = page.messages.nextCursor;
@@ -189,7 +239,8 @@ class _ChatPageState extends State<ChatPage> {
       } else {
         final page = await WeiboApi.instance.chat(widget.uid, _cursor);
         if (!mounted) return;
-        final older = page.items.reversed.toList();
+        final seen = {for (final m in _messages) m.id};
+        final older = page.items.reversed.where((m) => seen.add(m.id)).toList();
         setState(() {
           _messages = [...older, ..._messages];
           _cursor = page.nextCursor;
@@ -246,15 +297,87 @@ class _ChatPageState extends State<ChatPage> {
     if (_sending) return;
     final picked = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 90);
     if (picked == null) return;
-    setState(() => _sending = true);
+    setState(() {
+      _sending = true;
+      _uploadProgress = 0;
+    });
     final file = await TempFiles.file('chat-${DateTime.now().millisecondsSinceEpoch}.jpg');
     await File(picked.path).copy(file.path);
     // The sender deletes this copy once the upload has taken it, whatever the outcome.
-    final failure = await MessageSender.image(ChatTarget(widget.uid, widget.group), file);
+    final failure = await MessageSender.image(
+      ChatTarget(widget.uid, widget.group),
+      file,
+      onProgress: (progress) {
+        if (mounted) setState(() => _uploadProgress = progress);
+      },
+    );
     if (failure == null) await _loadLatest(quiet: true);
     if (!mounted) return;
-    setState(() => _sending = false);
+    setState(() {
+      _sending = false;
+      _uploadProgress = null;
+    });
     showMessage(context, failure);
+  }
+
+  Future<void> _sendVideo() async {
+    if (_sending || !widget.group) return;
+    final picked = await _picker.pickVideo(
+      source: ImageSource.gallery,
+      maxDuration: const Duration(minutes: 5),
+    );
+    if (picked == null) return;
+    setState(() {
+      _sending = true;
+      _uploadProgress = 0;
+    });
+    final file = await TempFiles.file('chat-video-${DateTime.now().millisecondsSinceEpoch}.mp4');
+    await File(picked.path).copy(file.path);
+
+    var width = 0;
+    var height = 0;
+    var durationSec = 0;
+    VideoPlayerController? probe;
+    try {
+      probe = VideoPlayerController.file(file);
+      await probe.initialize();
+      width = probe.value.size.width.round();
+      height = probe.value.size.height.round();
+      durationSec = probe.value.duration.inSeconds;
+    } catch (_) {
+    } finally {
+      await probe?.dispose();
+    }
+
+    final failure = await MessageSender.video(
+      ChatTarget(widget.uid, widget.group),
+      file,
+      width: width,
+      height: height,
+      durationSec: durationSec,
+      onProgress: (progress) {
+        if (mounted) setState(() => _uploadProgress = progress);
+      },
+    );
+    if (failure == null) await _loadLatest(quiet: true);
+    if (!mounted) return;
+    setState(() {
+      _sending = false;
+      _uploadProgress = null;
+    });
+    showMessage(context, failure);
+  }
+
+  void _openChatImage(DirectMessage tapped) {
+    final imageMessages = _messages.where((m) => m.media != null && !m.media!.isVideo).toList(growable: false);
+    final idx = imageMessages.indexWhere((m) => m.id == tapped.id);
+    if (idx < 0) return;
+    openImage(
+      context,
+      media: [for (final m in imageMessages) m.media!.toMedia()],
+      index: idx,
+      heroTag: 'chat:${tapped.id}',
+    );
   }
 
   Future<void> _openGroupInfo() async {
@@ -267,12 +390,14 @@ class _ChatPageState extends State<ChatPage> {
     if (left == true && mounted) Navigator.of(context).pop();
   }
 
-  /// The count the group's message title carries, for the header before the real answer arrives.
-  int get _memberCount => _groupTitle == null ? 0 : splitGroupTitle(_groupTitle!).count;
+  /// The count the group's message title or webim info carries.
+  int get _memberCount =>
+      (_groupInfo?.memberCount ?? 0) > 0 ? _groupInfo!.memberCount : (_groupTitle == null ? 0 : splitGroupTitle(_groupTitle!).count);
 
   /// The group's name with its member count stripped off, for the top bar.
   String get _title {
     if (widget.group) {
+      if (_groupInfo != null && _groupInfo!.name.isNotEmpty) return _groupInfo!.name;
       final title = _groupTitle;
       final name = title == null ? null : splitGroupTitle(title).name;
       return name?.isNotEmpty == true ? name! : (widget.name ?? '群聊');
@@ -319,11 +444,14 @@ class _ChatPageState extends State<ChatPage> {
             controller: _text,
             focus: _focus,
             sending: _sending,
+            uploadProgress: _uploadProgress,
+            allowVideo: widget.group,
             emojiOpen: _emoji.open,
             emojiVisible: _emoji.boardVisible,
             inset: _emoji.insetFor(context),
             onEmoji: () => _emoji.toggle(context, _focus),
             onPickImage: _sendImage,
+            onPickVideo: _sendVideo,
             onSend: _send,
             onPickEmoji: (code) {
               _text.text += code;
@@ -398,6 +526,7 @@ class _ChatPageState extends State<ChatPage> {
                 onOpenUser: (uid) => openUser(context, uid),
                 onOpenTopic: (name) => openTopic(context, name),
                 onOpenUrl: (url) => openChatLink(context, url),
+                onOpenImage: () => _openChatImage(message),
               ),
             ],
           );
@@ -417,6 +546,7 @@ class _Bubble extends StatelessWidget {
     required this.onOpenUser,
     required this.onOpenTopic,
     required this.onOpenUrl,
+    required this.onOpenImage,
   });
 
   final DirectMessage message;
@@ -427,10 +557,18 @@ class _Bubble extends StatelessWidget {
   final ValueChanged<String> onOpenUser;
   final ValueChanged<String> onOpenTopic;
   final ValueChanged<String> onOpenUrl;
+  final VoidCallback onOpenImage;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final links = _linksForMessage(message);
+    final trimmed = message.displayText.trim();
+    final isBareSingleLink = message.media == null &&
+        links.length == 1 &&
+        (trimmed == links.first.url || trimmed == links.first.meta?.shortUrl);
+    final showTextBubble = message.hasTextBesideMedia && !isBareSingleLink;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
       child: Row(
@@ -459,33 +597,47 @@ class _Bubble extends StatelessWidget {
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
                     ),
                   ),
-                Container(
-                  constraints: const BoxConstraints(maxWidth: 290),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: mine ? scheme.primaryContainer : scheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.only(
-                      topLeft: const Radius.circular(14),
-                      topRight: const Radius.circular(14),
-                      bottomLeft: Radius.circular(mine ? 14 : 4),
-                      bottomRight: Radius.circular(mine ? 4 : 14),
+                if (message.media != null)
+                  ChatMediaBubble(
+                    messageId: message.id,
+                    media: message.media!,
+                    onOpenImage: onOpenImage,
+                  ),
+                if (showTextBubble)
+                  Padding(
+                    padding: EdgeInsets.only(top: message.media != null ? 5 : 0),
+                    child: Container(
+                      constraints: const BoxConstraints(maxWidth: 290),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: mine ? scheme.primaryContainer : scheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.only(
+                          topLeft: const Radius.circular(14),
+                          topRight: const Radius.circular(14),
+                          bottomLeft: Radius.circular(mine ? 14 : 4),
+                          bottomRight: Radius.circular(mine ? 4 : 14),
+                        ),
+                      ),
+                      child: RichStatusText(
+                        text: message.displayText,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: mine ? scheme.onPrimaryContainer : scheme.onSurface,
+                            ),
+                        linkColor: mine ? scheme.onPrimaryContainer : null,
+                        onMention: onOpenUser,
+                        onTopic: onOpenTopic,
+                        onUrl: onOpenUrl,
+                      ),
                     ),
                   ),
-                  child: RichStatusText(
-                    text: message.displayText,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: mine ? scheme.onPrimaryContainer : scheme.onSurface,
-                        ),
-                    linkColor: mine ? scheme.onPrimaryContainer : null,
-                    onMention: onOpenUser,
-                    onTopic: onOpenTopic,
-                    onUrl: onOpenUrl,
-                  ),
-                ),
-                for (final url in _linksIn(message.displayText).take(2))
+                for (final entry in links)
                   Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: _LinkPreviewCard(url: url, onTap: () => onOpenUrl(url)),
+                    padding: EdgeInsets.only(top: (showTextBubble || message.media != null) ? 5 : 0),
+                    child: ChatLinkCard(
+                      url: entry.url,
+                      meta: entry.meta,
+                      onOpenUrl: onOpenUrl,
+                    ),
                   ),
               ],
             ),
@@ -505,96 +657,27 @@ Iterable<String> _linksIn(String text) => _linkPattern
     .where((url) => !(Uri.tryParse(url)?.host.endsWith('sinaimg.cn') ?? true))
     .toSet();
 
-/// What a link in a message points at, under the bubble: a post's author and text, or a page's
-/// title, description and site.
-class _LinkPreviewCard extends StatelessWidget {
-  const _LinkPreviewCard({required this.url, required this.onTap});
-
-  final String url;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final text = Theme.of(context).textTheme;
-    return FutureBuilder<LinkPreview?>(
-      future: LinkPreviews.instance.of(url),
-      builder: (context, snapshot) {
-        final preview = snapshot.data;
-        final loading = snapshot.connectionState != ConnectionState.done;
-        final title = preview?.title ?? (loading ? '正在读取链接…' : null);
-        final site = preview?.site ?? Uri.tryParse(url)?.host ?? '';
-        final picture = preview?.imageUrl;
-        return Container(
-          constraints: const BoxConstraints(maxWidth: 290),
-          child: Material(
-            color: scheme.surfaceContainerLow,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-              side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.6)),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              onTap: onTap,
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (title != null)
-                            Text(
-                              title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: text.bodyMedium?.copyWith(
-                                fontWeight: FontWeight.w600,
-                                color: loading ? scheme.onSurfaceVariant : scheme.onSurface,
-                              ),
-                            ),
-                          if (preview?.description != null) ...[
-                            const SizedBox(height: 2),
-                            Text(
-                              preview!.description!,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-                            ),
-                          ],
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              Icon(Icons.link_rounded, size: 14, color: scheme.primary),
-                              const SizedBox(width: 3),
-                              Flexible(
-                                child: Text(
-                                  site,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: text.labelSmall?.copyWith(color: scheme.primary),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (picture != null) ...[
-                      const SizedBox(width: 10),
-                      SmartImage(url: picture, width: 56, height: 56, radius: 8),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
+/// Combines inline `url_objects` metadata with any raw URLs in the message text, deduplicated and
+/// capped at 2 previews per bubble.
+List<({String url, ChatLinkMeta? meta})> _linksForMessage(DirectMessage message) {
+  final result = <({String url, ChatLinkMeta? meta})>[];
+  final seen = <String>{};
+  for (final meta in message.links) {
+    final target = meta.targetUrl;
+    if (target.isEmpty || (Uri.tryParse(target)?.host.endsWith('sinaimg.cn') ?? false)) continue;
+    final key = meta.longUrl ?? meta.shortUrl;
+    if (key.isEmpty || !seen.add(key)) continue;
+    if (meta.shortUrl.isNotEmpty) seen.add(meta.shortUrl);
+    result.add((url: target, meta: meta));
+    if (result.length >= 2) return result;
   }
+  for (final url in _linksIn(message.displayText)) {
+    if (seen.add(url)) {
+      result.add((url: url, meta: null));
+      if (result.length >= 2) return result;
+    }
+  }
+  return result;
 }
 
 class _InputBar extends StatelessWidget {
@@ -602,11 +685,14 @@ class _InputBar extends StatelessWidget {
     required this.controller,
     required this.focus,
     required this.sending,
+    required this.uploadProgress,
+    required this.allowVideo,
     required this.emojiOpen,
     required this.emojiVisible,
     required this.inset,
     required this.onEmoji,
     required this.onPickImage,
+    required this.onPickVideo,
     required this.onSend,
     required this.onPickEmoji,
   });
@@ -614,11 +700,14 @@ class _InputBar extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focus;
   final bool sending;
+  final double? uploadProgress;
+  final bool allowVideo;
   final bool emojiOpen;
   final bool emojiVisible;
   final double inset;
   final VoidCallback onEmoji;
   final VoidCallback onPickImage;
+  final VoidCallback onPickVideo;
   final VoidCallback onSend;
   final ValueChanged<String> onPickEmoji;
 
@@ -627,56 +716,74 @@ class _InputBar extends StatelessWidget {
     final column = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (uploadProgress != null)
+          LinearProgressIndicator(
+            value: uploadProgress! > 0 ? uploadProgress : null,
+            minHeight: 2.5,
+          ),
         SafeArea(
           top: false,
           bottom: inset == 0,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(2, 5, 8, 5),
             child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                IconButton(
+                  onPressed: onEmoji,
+                  tooltip: '表情',
+                  iconSize: 21,
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(emojiOpen ? Icons.keyboard_rounded : Icons.emoji_emotions_outlined),
+                ),
+                IconButton(
+                  onPressed: sending ? null : onPickImage,
+                  tooltip: '发送图片',
+                  iconSize: 21,
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.image_outlined),
+                ),
+                if (allowVideo)
                   IconButton(
-                    onPressed: onEmoji,
-                    iconSize: 21,
-                    icon: Icon(emojiOpen ? Icons.keyboard_rounded : Icons.emoji_emotions_outlined),
+                    onPressed: sending ? null : onPickVideo,
+                    tooltip: '发送视频',
+                    iconSize: 22,
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.videocam_outlined),
                   ),
-                  IconButton(
-                    onPressed: sending ? null : onPickImage,
-                    iconSize: 21,
-                    icon: const Icon(Icons.image_outlined),
-                  ),
-                  Expanded(
-                    child: TextField(
-                      controller: controller,
-                      focusNode: focus,
-                      minLines: 1,
-                      maxLines: 4,
-                      textInputAction: TextInputAction.newline,
-                      decoration: const InputDecoration(
-                        hintText: '发私信',
-                        contentPadding: EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-                      ),
+                const SizedBox(width: 2),
+                Expanded(
+                  child: TextField(
+                    controller: controller,
+                    focusNode: focus,
+                    minLines: 1,
+                    maxLines: 4,
+                    textInputAction: TextInputAction.newline,
+                    decoration: const InputDecoration(
+                      hintText: '发私信',
+                      contentPadding: EdgeInsets.symmetric(horizontal: 13, vertical: 9),
                     ),
                   ),
-                  const SizedBox(width: 5),
-                  if (sending)
-                    const Padding(
-                      padding: EdgeInsets.all(10),
-                      child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
-                    )
-                  else
-                    IconButton.filled(
-                      onPressed: controller.text.trim().isEmpty ? null : onSend,
-                      style: IconButton.styleFrom(
-                        minimumSize: const Size(38, 38),
-                        padding: EdgeInsets.zero,
-                      ),
-                      icon: const Icon(Icons.send_rounded, size: 19),
+                ),
+                const SizedBox(width: 5),
+                if (sending)
+                  const Padding(
+                    padding: EdgeInsets.all(10),
+                    child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                  )
+                else
+                  IconButton.filled(
+                    onPressed: controller.text.trim().isEmpty ? null : onSend,
+                    style: IconButton.styleFrom(
+                      minimumSize: const Size(38, 38),
+                      padding: EdgeInsets.zero,
                     ),
-                ],
-              ),
+                    icon: const Icon(Icons.send_rounded, size: 19),
+                  ),
+              ],
             ),
           ),
+        ),
         EmojiKeyboardSlot(visible: emojiVisible, height: inset, onPick: onPickEmoji),
       ],
     );

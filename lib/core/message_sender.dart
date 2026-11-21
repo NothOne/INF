@@ -2,14 +2,16 @@ import 'dart:io';
 
 import 'api.dart';
 import 'failure.dart';
+import 'group_chat_api.dart';
 import 'haptics.dart';
 import 'models.dart';
 import 'temp_files.dart';
+import 'weibo_com_session.dart';
 
 /// Sending a message, in one place.
 ///
-/// Two screens send messages — the chat page (文字 and 图片) and the 分享 sheet's "send this post to
-/// someone" row — and each used to call `sendMessage` / `sendGroupMessage` / `uploadChatImage` /
+/// Two screens send messages — the chat page (文字, 图片, 视频) and the 分享 sheet's "send this post
+/// to someone" row — and each used to call `sendMessage` / `sendGroupMessage` / `uploadChatImage` /
 /// `sendChatImage` itself, decide its own failure text and pick its own temp-file handling. That is
 /// the same shape of bug the comment path had: four call sites, four slightly different answers.
 ///
@@ -38,11 +40,22 @@ class MessageSender {
 
   /// Uploads [file] and sends it as a picture, then removes the copy it was given.
   ///
-  /// The upload and the send are two requests and both can fail; the picture is only deleted after
-  /// both, and also when they fail, because the caller's copy is a scratch file that nothing else
-  /// refers to.
-  static Future<String?> image(ChatTarget target, File file) async {
+  /// For group chats with a weibo.com session, prefers `api.weibo.com/webim/uploadx.json` so the
+  /// resulting message carries the full MSS attachment; falls back to m.weibo.cn otherwise.
+  static Future<String?> image(
+    ChatTarget target,
+    File file, {
+    void Function(double progress)? onProgress,
+  }) async {
     try {
+      if (target.isGroup) {
+        final (cookie, _) = await WeiboComSession.instance.cookie();
+        if (WeiboComSession.hasAuth(cookie)) {
+          await GroupChatApi.instance.uploadAndSendImage(target.id, file, onProgress: onProgress);
+          Haptic.success.play();
+          return null;
+        }
+      }
       final fids = await WeiboApi.instance.uploadChatImage(file, target);
       await WeiboApi.instance.sendChatImage(target, fids);
       Haptic.success.play();
@@ -50,6 +63,34 @@ class MessageSender {
     } catch (error) {
       Haptic.error.play();
       return _failure(error, '图片发送失败');
+    } finally {
+      await TempFiles.delete(file.path);
+    }
+  }
+
+  /// Uploads [file] and sends it as a video in a group chat, then removes the temporary copy.
+  static Future<String?> video(
+    ChatTarget target,
+    File file, {
+    int width = 0,
+    int height = 0,
+    int durationSec = 0,
+    void Function(double progress)? onProgress,
+  }) async {
+    try {
+      await GroupChatApi.instance.uploadAndSendVideo(
+        target.id,
+        file,
+        width: width,
+        height: height,
+        durationSec: durationSec,
+        onProgress: onProgress,
+      );
+      Haptic.success.play();
+      return null;
+    } catch (error) {
+      Haptic.error.play();
+      return _failure(error, '视频发送失败');
     } finally {
       await TempFiles.delete(file.path);
     }

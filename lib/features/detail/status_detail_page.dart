@@ -14,6 +14,7 @@ import '../../core/status_store.dart';
 import '../../core/widgets/comment_sheet.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/detail_bottom_bar.dart';
+import '../../core/widgets/refresh.dart';
 import '../../core/widgets/share_sheet.dart';
 import '../../core/widgets/status_card_host.dart';
 import '../../core/widgets/status_menu_route.dart';
@@ -33,10 +34,15 @@ class StatusDetailPage extends StatefulWidget {
     super.key,
     required this.statusId,
     this.seed,
+    this.jumpToComments = false,
   });
 
   final String statusId;
   final Status? seed;
+
+  /// When opened from a feed card's comment button on a post that already has comments, scroll
+  /// straight to the comment header so the discussion shows first.
+  final bool jumpToComments;
 
   @override
   State<StatusDetailPage> createState() => _StatusDetailPageState();
@@ -58,6 +64,10 @@ class _StatusDetailPageState extends State<StatusDetailPage> {
 
   late PagingController<Comment> _comments;
   late final PagingController<Status> _reposts;
+  final ScrollController _outerScroll = ScrollController();
+  final GlobalKey _postKey = GlobalKey();
+  bool _jumpScheduled = false;
+  bool _jumpedToComments = false;
   CommentSort _sort = CommentSort.hot;
   bool _showingReposts = false;
   bool _repostsStarted = false;
@@ -114,9 +124,24 @@ class _StatusDetailPageState extends State<StatusDetailPage> {
       animation.removeStatusListener(listener);
     }
     _waiting.clear();
+    _outerScroll.dispose();
     _comments.dispose();
     _reposts.dispose();
     super.dispose();
+  }
+
+  void _scheduleJumpToComments() {
+    if (!widget.jumpToComments || _jumpedToComments || _jumpScheduled) return;
+    _jumpScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _jumpScheduled = false;
+      if (!mounted || _jumpedToComments) return;
+      final box = _postKey.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.hasSize || !_outerScroll.hasClients) return;
+      _jumpedToComments = true;
+      final target = (box.size.height + 8.0).clamp(0.0, _outerScroll.position.maxScrollExtent);
+      if (target > 0) _outerScroll.jumpTo(target);
+    });
   }
 
   /// The post with its whole text on it, filed back into [Entities] so the truncated card in the
@@ -338,73 +363,103 @@ class _StatusDetailPageState extends State<StatusDetailPage> {
     );
   }
 
+  /// The post is asked for beside the active list, and its answer updates the header in place so
+  /// counts and text stay in sync with fresh comments or reposts.
+  Future<Object?> _refreshDetail() async {
+    final status = _status;
+    final listRefresh = _showingReposts ? _reposts.refresh() : _comments.refresh();
+    if (status == null) return listRefresh;
+    // Fetch the post alongside the list without letting a transient status error fail the pull.
+    final statusFetch = WeiboApi.instance.status(status.id).then<Status?>((value) => value, onError: (_, _) => null);
+    final results = await Future.wait<Object?>([listRefresh, statusFetch]);
+    if (!mounted) return results.first;
+    final fresh = results[1] as Status?;
+    if (fresh != null) {
+      StatusStore.instance.remember(fresh, notify: true);
+      // The comments refresh has already settled what its own page contains (see `_commentsPager`);
+      // this covers a pull made on the repost tab, where no comment page was fetched at all.
+      if (_showingReposts) CommentStore.instance.settle(fresh.id);
+      setState(() => _status = _withLongText(fresh, notify: true));
+    }
+    return results.first;
+  }
+
   /// The post, then the two tabs, then whichever list is showing.
   ///
   /// One NestedScrollView: the post and the tabs are the header, so they scroll away and the list
-  /// underneath is the only thing that pages.
+  /// underneath is the only thing that pages. The indicator wraps the NestedScrollView so pulling
+  /// either the post header or the discussion list past the top refreshes both.
   Widget _post(BuildContext context, Status status) {
+    _scheduleJumpToComments();
     final scheme = Theme.of(context).colorScheme;
     final sides = EdgeInsets.symmetric(horizontal: contentGutter(context));
     final divider = InfChrome.of(context).fill(scheme, scheme.surfaceContainerHigh, 0.55);
-    return NestedScrollView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      headerSliverBuilder: (context, _) => [
-        SliverPadding(
-          padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top).add(sides),
-          sliver: SliverToBoxAdapter(
-            child: buildStatusCard(
-              context,
-              status,
-              heroScope: status.id,
-              detail: true,
-              saveAllButton: true,
-              detailStatusId: status.id,
-              onToggleLike: _toggleLike,
-              onLongImage: () => openLongImage(context, status),
+    return InfRefreshIndicator(
+      notificationPredicate: nestedScrollRefreshPredicate,
+      onRefresh: _refreshDetail,
+      child: NestedScrollView(
+        controller: _outerScroll,
+        physics: const AlwaysScrollableScrollPhysics(),
+        headerSliverBuilder: (context, _) => [
+          SliverPadding(
+            padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top).add(sides),
+            sliver: SliverToBoxAdapter(
+              child: KeyedSubtree(
+                key: _postKey,
+                child: buildStatusCard(
+                  context,
+                  status,
+                  heroScope: status.id,
+                  detail: true,
+                  saveAllButton: true,
+                  detailStatusId: status.id,
+                  onToggleLike: _toggleLike,
+                  onLongImage: () => openLongImage(context, status),
+                ),
+              ),
             ),
           ),
-        ),
-        SliverPadding(
-          padding: sides,
-          sliver: SliverToBoxAdapter(child: Container(height: 8, color: divider)),
-        ),
-        SliverPadding(
-          padding: sides,
-          sliver: SliverToBoxAdapter(
-            child: DiscussionSwitch(
-              reposts: status.repostsCount,
-              comments: status.commentsCount,
-              showingReposts: _showingReposts,
-              onShowReposts: () => _showReposts(true),
-              onShowComments: () => _showReposts(false),
+          SliverPadding(
+            padding: sides,
+            sliver: SliverToBoxAdapter(child: Container(height: 8, color: divider)),
+          ),
+          SliverPadding(
+            padding: sides,
+            sliver: SliverToBoxAdapter(
+              child: DiscussionSwitch(
+                reposts: status.repostsCount,
+                comments: status.commentsCount,
+                showingReposts: _showingReposts,
+                onShowReposts: () => _showReposts(true),
+                onShowComments: () => _showReposts(false),
+              ),
             ),
           ),
-        ),
-        SliverPadding(
-          padding: sides,
-          sliver: SliverToBoxAdapter(
-            // Kept in the header while hidden, so the sliver count does not change under a
-            // NestedScrollView that is already scrolled into it.
-            child: _showingReposts
-                ? const SizedBox.shrink()
-                : CommentSortBar(
-                    byTime: _sort == CommentSort.time,
-                    onSort: (byTime) => _setSort(byTime ? CommentSort.time : CommentSort.hot),
-                  ),
+          SliverPadding(
+            padding: sides,
+            sliver: SliverToBoxAdapter(
+              // Kept in the header while hidden, so the sliver count does not change under a
+              // NestedScrollView that is already scrolled into it.
+              child: _showingReposts
+                  ? const SizedBox.shrink()
+                  : CommentSortBar(
+                      byTime: _sort == CommentSort.time,
+                      onSort: (byTime) => _setSort(byTime ? CommentSort.time : CommentSort.hot),
+                    ),
+            ),
           ),
+        ],
+        body: DiscussionLists(
+          status: status,
+          comments: _comments,
+          reposts: _reposts,
+          byTime: _sort == CommentSort.time,
+          onSort: (byTime) => _setSort(byTime ? CommentSort.time : CommentSort.hot),
+          showingReposts: _showingReposts,
+          onShowReposts: () => _showReposts(true),
+          onShowComments: () => _showReposts(false),
+          onComment: _comment,
         ),
-      ],
-      body: DiscussionLists(
-        status: status,
-        comments: _comments,
-        reposts: _reposts,
-        byTime: _sort == CommentSort.time,
-        onSort: (byTime) => _setSort(byTime ? CommentSort.time : CommentSort.hot),
-        showingReposts: _showingReposts,
-        onShowReposts: () => _showReposts(true),
-        onShowComments: () => _showReposts(false),
-        onComment: _comment,
-        onStatusRefreshed: (fresh) => setState(() => _status = _withLongText(fresh, notify: true)),
       ),
     );
   }

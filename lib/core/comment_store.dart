@@ -9,6 +9,7 @@ import 'models.dart';
 import 'session.dart';
 import 'status_store.dart';
 import 'temp_files.dart';
+import 'weibo_com_session.dart';
 
 /// Comments this device has sent, and the one place a comment or a reply is sent from.
 ///
@@ -75,22 +76,34 @@ class CommentStore extends ChangeNotifier {
     String? rootId,
     String? replyToId,
     String? replyToName,
+    String? replyToText,
     String? picturePath,
     bool crossPost = false,
     bool countOnPost = true,
   }) async {
     final content = text.trim();
     if (content.isEmpty) return null;
-    // The repost endpoint does not accept pictures; never drop an attached image by cross-posting.
-    final doCrossPost = rootId == null && crossPost && picturePath == null;
+    final (weiboCookie, _) = await WeiboComSession.instance.cookie();
+    final hasWeiboCom = WeiboComSession.hasAuth(weiboCookie);
+    // Top-level 同时转发 goes through weibo.com's `normal_repost` (which supports `pic_id` +
+    // `is_comment=1`), or m.weibo.cn's `repost` when there is no picture.
+    final doTopCrossPost = rootId == null && crossPost && (picturePath == null || hasWeiboCom);
+    // Replying to a comment or floor reply with 同时转发 posts the reply in the thread first
+    // (the repost endpoint has no `cid`/`reply` fields), then forwards the post with `is_comment=0`.
+    final doReplyCrossPost = rootId != null && crossPost;
     try {
       String? picId;
       if (picturePath != null) {
         picId = await WeiboApi.instance.uploadCommentImage(status.id, File(picturePath));
       }
       Comment? created;
-      if (doCrossPost) {
-        await WeiboApi.instance.repost(status.id, content, true);
+      if (doTopCrossPost) {
+        await WeiboApi.instance.repost(
+          status.id,
+          content,
+          true,
+          picIds: picId == null ? const [] : [picId],
+        );
       } else if (rootId == null) {
         created = await WeiboApi.instance.comment(status.id, content, picId: picId);
       } else {
@@ -101,13 +114,27 @@ class CommentStore extends ChangeNotifier {
           replyToId: replyToId ?? rootId,
           picId: picId,
         );
+        if (doReplyCrossPost) {
+          final quoted = (replyToName != null && replyToName.isNotEmpty)
+              ? (replyToText != null && replyToText.trim().isNotEmpty
+                  ? '//@$replyToName:${replyToText.trim()}'
+                  : '//@$replyToName')
+              : '';
+          final repostText = quoted.isEmpty ? content : '$content $quoted';
+          await WeiboApi.instance.repost(
+            status.id,
+            repostText,
+            false,
+            picIds: (picId != null && hasWeiboCom) ? [picId] : const [],
+          );
+        }
       }
       if (picturePath != null) await TempFiles.delete(picturePath);
       // Raised in the store, not on whatever copy of the post the caller holds: the card in the
       // list behind this page reads the same value.
       if (countOnPost) {
         StatusStore.instance.addComment(status);
-        if (doCrossPost) StatusStore.instance.addRepost(status);
+        if (doTopCrossPost || doReplyCrossPost) StatusStore.instance.addRepost(status);
       }
       if (rootId == null) {
         if (created != null) {

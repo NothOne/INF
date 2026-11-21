@@ -304,6 +304,16 @@ class Status {
       );
 }
 
+/// A badge Weibo draws beside a commenter's name: 铁粉 / 金粉 / 钻粉 (`loyal_fans`), 博主 (`blogger`), etc.
+/// [aspect] is width / height as Weibo sends it in `length` (typically `1.33` or `2.3`).
+class CommentBadge {
+  final String url;
+  final double aspect;
+  final String name;
+
+  const CommentBadge({required this.url, this.aspect = 1.33, this.name = ''});
+}
+
 class Comment {
   final String id;
   final String statusId;
@@ -317,6 +327,7 @@ class Comment {
   final List<Comment> replies;
   final int repliesCount;
   final List<Media> images;
+  final List<CommentBadge> badges;
 
   const Comment({
     required this.id,
@@ -331,6 +342,7 @@ class Comment {
     this.replies = const [],
     this.repliesCount = 0,
     this.images = const [],
+    this.badges = const [],
   });
 
   Comment copyWith({bool? liked, int? likesCount, int? repliesCount}) => Comment(
@@ -346,6 +358,7 @@ class Comment {
         replies: replies,
         repliesCount: repliesCount ?? this.repliesCount,
         images: images,
+        badges: badges,
       );
 }
 
@@ -402,6 +415,101 @@ class Conversation {
   bool get isGroup => groupId != null;
 }
 
+/// Media attached to a direct or group chat message (picture, GIF, Live Photo, or video).
+class ChatMedia {
+  final MediaKind kind;
+  final String? fid;
+  final String url;
+  final String? thumbnailUrl;
+  final String? liveVideoUrl;
+  final String? coverFid;
+  final int? width;
+  final int? height;
+  final int? durationSec;
+  final bool isGif;
+
+  const ChatMedia({
+    required this.kind,
+    this.fid,
+    required this.url,
+    this.thumbnailUrl,
+    this.liveVideoUrl,
+    this.coverFid,
+    this.width,
+    this.height,
+    this.durationSec,
+    this.isGif = false,
+  });
+
+  bool get isVideo => kind == MediaKind.video;
+  bool get isLive => liveVideoUrl != null && liveVideoUrl!.isNotEmpty;
+  double? get aspectRatio => (width != null && height != null && width! > 0 && height! > 0) ? width! / height! : null;
+
+  Media toMedia() => kind == MediaKind.video
+      ? Media.video(
+          url,
+          previewUrl: thumbnailUrl ?? '',
+          durationMs: (durationSec ?? 0) * 1000,
+        )
+      : Media.image(
+          url,
+          previewUrl: thumbnailUrl ?? url,
+          width: width ?? 0,
+          height: height ?? 0,
+          liveUrl: liveVideoUrl,
+        );
+}
+
+/// Inline metadata carried by `url_objects` on webim chat messages.
+class ChatLinkMeta {
+  final String shortUrl;
+  final String? longUrl;
+  final String? title;
+  final String? description;
+  final String? imageUrl;
+  final String? site;
+  final Status? status;
+  final User? user;
+
+  const ChatLinkMeta({
+    required this.shortUrl,
+    this.longUrl,
+    this.title,
+    this.description,
+    this.imageUrl,
+    this.site,
+    this.status,
+    this.user,
+  });
+
+  String get targetUrl => (longUrl != null && longUrl!.isNotEmpty) ? longUrl! : shortUrl;
+}
+
+/// Metadata answered by `upload.api.weibo.com/2/mss/meta_query.json` for a chat attachment `fid`.
+class ChatMediaMeta {
+  final String fid;
+  final String? extension;
+  final String? thumbnail240;
+  final String? thumbnail600;
+  final int? width;
+  final int? height;
+  final int? durationSec;
+
+  const ChatMediaMeta({
+    required this.fid,
+    this.extension,
+    this.thumbnail240,
+    this.thumbnail600,
+    this.width,
+    this.height,
+    this.durationSec,
+  });
+
+  bool get isVideo => extension?.toLowerCase() == 'mp4';
+  bool get isGif => extension?.toLowerCase() == 'gif';
+  double? get aspectRatio => (width != null && height != null && width! > 0 && height! > 0) ? width! / height! : null;
+}
+
 class DirectMessage {
   final String id;
   final String senderId;
@@ -410,6 +518,8 @@ class DirectMessage {
   final String? senderName;
   final String? senderAvatar;
   final int mediaType;
+  final ChatMedia? media;
+  final List<ChatLinkMeta> links;
 
   const DirectMessage({
     required this.id,
@@ -419,9 +529,25 @@ class DirectMessage {
     this.senderName,
     this.senderAvatar,
     this.mediaType = 0,
+    this.media,
+    this.links = const [],
   });
 
-  String get displayText => mediaType == 1 ? (text.isEmpty ? '[图片]' : text) : text;
+  static const _mediaPlaceholders = {'分享图片', '分享视频', '[图片]', '[视频]', '[动画表情]', '图片', '视频'};
+
+  String get displayText {
+    if (text.isNotEmpty) return text;
+    if (mediaType == 1 || (media != null && !media!.isVideo)) return '[图片]';
+    if (mediaType == 10 || (media != null && media!.isVideo)) return '[视频]';
+    return text;
+  }
+
+  /// Whether the text bubble itself carries words beyond a bare media placeholder.
+  bool get hasTextBesideMedia {
+    if (media == null) return true;
+    final trimmed = text.trim();
+    return trimmed.isNotEmpty && !_mediaPlaceholders.contains(trimmed);
+  }
 }
 
 class ChatTarget {
@@ -432,12 +558,14 @@ class ChatTarget {
 
 /// A group chat, as weibo.com's webim describes it.
 ///
-/// This comes from `api.weibo.com/webim/groupchat/query.json?id=`, not from m.weibo.cn — the phone
-/// site has no group description of its own. The announcement rides in the same answer, which is why
-/// there is no separate request for it.
+/// This comes from `api.weibo.com/webim/groupchat/query.json?id=` and `query_group.json?id=`, not
+/// from m.weibo.cn — the phone site has no group description of its own. The announcement rides in
+/// `bulletin`, which is why there is no separate announcement-read endpoint.
 class GroupInfo {
   final String gid;
   final String name;
+  final String? avatarUrl;
+  final String? summary;
   final int memberCount;
 
   /// The size the group is allowed to grow to, for "828 / 1000" in the header.
@@ -451,6 +579,12 @@ class GroupInfo {
   /// The announcement, or null when the group has none.
   final String? notice;
 
+  /// Optional link attached to the group announcement (`bulletin.scheme`).
+  final String? noticeScheme;
+
+  /// Announcement publish time (Unix seconds), when carried by `bulletin.time`.
+  final int? noticeTime;
+
   /// Seconds since the epoch, or null when the answer did not carry it.
   final int? createdAt;
 
@@ -460,11 +594,15 @@ class GroupInfo {
   const GroupInfo({
     required this.gid,
     required this.name,
+    this.avatarUrl,
+    this.summary,
     this.memberCount = 0,
     this.maxMembers = 0,
     this.ownerId = '',
     this.adminIds = const {},
     this.notice,
+    this.noticeScheme,
+    this.noticeTime,
     this.createdAt,
     this.place,
   });
@@ -472,18 +610,79 @@ class GroupInfo {
   bool isOwner(String? uid) => uid != null && uid == ownerId;
 
   bool isAdmin(String? uid) => uid != null && (adminIds.contains(uid) || isOwner(uid));
+
+  GroupInfo copyWith({
+    String? name,
+    String? avatarUrl,
+    String? summary,
+    int? memberCount,
+    int? maxMembers,
+    String? ownerId,
+    Set<String>? adminIds,
+    String? notice,
+    bool clearNotice = false,
+    String? noticeScheme,
+    bool clearNoticeScheme = false,
+    int? noticeTime,
+    bool clearNoticeTime = false,
+    int? createdAt,
+    String? place,
+  }) =>
+      GroupInfo(
+        gid: gid,
+        name: name ?? this.name,
+        avatarUrl: avatarUrl ?? this.avatarUrl,
+        summary: summary ?? this.summary,
+        memberCount: memberCount ?? this.memberCount,
+        maxMembers: maxMembers ?? this.maxMembers,
+        ownerId: ownerId ?? this.ownerId,
+        adminIds: adminIds ?? this.adminIds,
+        notice: clearNotice ? null : (notice ?? this.notice),
+        noticeScheme: clearNoticeScheme ? null : (noticeScheme ?? this.noticeScheme),
+        noticeTime: clearNoticeTime ? null : (noticeTime ?? this.noticeTime),
+        createdAt: createdAt ?? this.createdAt,
+        place: place ?? this.place,
+      );
+
+  static String? _longer(String? a, String? b) {
+    final first = a?.trim() ?? '';
+    final second = b?.trim() ?? '';
+    if (first.isEmpty) return second.isEmpty ? null : second;
+    if (second.isEmpty) return first;
+    return second.length > first.length ? second : first;
+  }
+
+  /// Combines `groupchat/query.json` and `query_group.json`, keeping whichever endpoint carries
+  /// the fuller announcement/summary and filling in any fields missing on `this`.
+  GroupInfo mergeWith(GroupInfo other) => GroupInfo(
+        gid: gid,
+        name: name.isNotEmpty ? name : other.name,
+        avatarUrl: (avatarUrl?.isNotEmpty ?? false) ? avatarUrl : other.avatarUrl,
+        summary: _longer(summary, other.summary),
+        memberCount: math.max(memberCount, other.memberCount),
+        maxMembers: math.max(maxMembers, other.maxMembers),
+        ownerId: ownerId.isNotEmpty ? ownerId : other.ownerId,
+        adminIds: adminIds.isNotEmpty ? adminIds : other.adminIds,
+        notice: _longer(notice, other.notice),
+        noticeScheme: (noticeScheme?.isNotEmpty ?? false) ? noticeScheme : other.noticeScheme,
+        noticeTime: noticeTime ?? other.noticeTime,
+        createdAt: createdAt ?? other.createdAt,
+        place: (place?.isNotEmpty ?? false) ? place : other.place,
+      );
 }
 
 /// One person in a group chat.
 ///
-/// `level` is the group's own activity rank, which the web client shows beside the name; `jp` is the
-/// pinyin the member list sorts by.
+/// `level` is the group's own activity rank, which the web client shows beside the name; `jp` /
+/// `qp` are the pinyin initials and full spelling the member list sorts and searches by.
 class GroupMember {
   final String uid;
   final String screenName;
   final String avatarUrl;
   final bool verified;
   final int level;
+  final String jp;
+  final String qp;
 
   const GroupMember({
     required this.uid,
@@ -491,6 +690,8 @@ class GroupMember {
     required this.avatarUrl,
     this.verified = false,
     this.level = 0,
+    this.jp = '',
+    this.qp = '',
   });
 
   User toUser() => User(id: uid, screenName: screenName, avatarUrl: avatarUrl, verified: verified);
@@ -564,9 +765,14 @@ class HotSearch {
     this.board = HotBoard.realtime,
   });
 
-  /// 热搜第3, 文娱榜第3 …
+  /// 热搜第3, 文娱榜第3, 我的热搜第3, 同城榜第3 …
   String get rankText {
-    final name = board == HotBoard.realtime ? '热搜' : '${board.label}榜';
+    final name = switch (board) {
+      HotBoard.realtime => '热搜',
+      HotBoard.mine => '我的热搜',
+      HotBoard.city => '同城榜',
+      _ => '${board.label}榜',
+    };
     if (pinned) return '$name置顶';
     return rank == null ? name : '$name第$rank';
   }
@@ -590,23 +796,157 @@ class SearchSuggestions {
   bool get isEmpty => words.isEmpty && users.isEmpty;
 }
 
-/// weibo.com's boards; [path] follows `ajax/statuses/`. All but the hot-search board refuse a
-/// request without at least a visitor cookie. weibo.com's 我的, 流量 and 飙升 boards need a
-/// weibo.com account or a 大V badge, so they are not here.
+/// The two top-level views under the home page's 热搜 tab, matching weibo.com's left nav:
+/// 微博热搜 ([search]) and 热门榜单 ([rank]).
+enum HotSection {
+  search('热搜'),
+  rank('榜单');
+
+  final String label;
+  const HotSection(this.label);
+
+  static HotSection named(String? name) =>
+      values.where((section) => section.name == name).firstOrNull ?? search;
+}
+
+/// weibo.com's hot-search sub-boards; [path] follows `ajax/statuses/`.
+/// [mine] requires a signed-in weibo.com cookie; [city] requires either a chosen `citycode` or
+/// device `lon`/`lat`. All other boards work with at least a visitor cookie.
 enum HotBoard {
+  mine('我的', 'mineBand', requiresAuth: true),
   realtime('热搜', 'hot_band'),
   entertainment('文娱', 'entertainment'),
   social('社会', 'social'),
   tech('科技', 'technology'),
   life('生活', 'life'),
   sport('体育', 'sport'),
-  acg('ACG', 'acg');
+  acg('ACG', 'acg'),
+  city('同城', 'city', requiresLocation: true);
 
   final String label;
   final String path;
-  const HotBoard(this.label, this.path);
+  final bool requiresAuth;
+  final bool requiresLocation;
+  const HotBoard(this.label, this.path, {this.requiresAuth = false, this.requiresLocation = false});
 
   static HotBoard? named(String name) => values.where((board) => board.name == name).firstOrNull;
+}
+
+/// One sub-tab of weibo.com's 热门榜单 (fetched via `feed/hottimeline`).
+class HotRankTab {
+  final String gid;
+  final String containerId;
+  final String title;
+
+  const HotRankTab({required this.gid, required this.containerId, required this.title});
+
+  static const hourly = HotRankTab(
+    gid: '1028039999',
+    containerId: '102803_ctg1_9999_-_ctg1_9999_home',
+    title: '小时榜',
+  );
+  static const yesterday = HotRankTab(
+    gid: '1028038899',
+    containerId: '102803_ctg1_8899_-_ctg1_8899',
+    title: '昨日',
+  );
+  static const dayBeforeYesterday = HotRankTab(
+    gid: '1028038799',
+    containerId: '102803_ctg1_8799_-_ctg1_8799',
+    title: '前日',
+  );
+  static const weekly = HotRankTab(
+    gid: '1028038698',
+    containerId: '102803_ctg1_8698_-_ctg1_8698',
+    title: '周榜',
+  );
+  static const male = HotRankTab(
+    gid: '1028038998',
+    containerId: '102803_ctg1_8998_-_ctg1_8998',
+    title: '男榜',
+  );
+  static const female = HotRankTab(
+    gid: '1028038997',
+    containerId: '102803_ctg1_8997_-_ctg1_8997',
+    title: '女榜',
+  );
+
+  static const defaults = [hourly, yesterday, dayBeforeYesterday, weekly, male, female];
+
+  static HotRankTab byGid(String? gid) => defaults.where((tab) => tab.gid == gid).firstOrNull ?? hourly;
+
+  @override
+  bool operator ==(Object other) => other is HotRankTab && other.gid == gid;
+
+  @override
+  int get hashCode => gid.hashCode;
+}
+
+/// A city chosen manually or resolved from device coordinates, shared by 同城微博 and 同城热搜.
+class CityChoice {
+  final String code;
+  final String name;
+  final double? lon;
+  final double? lat;
+
+  /// True when explicitly picked by the user rather than auto-located.
+  final bool manual;
+
+  const CityChoice({
+    required this.code,
+    required this.name,
+    this.lon,
+    this.lat,
+    this.manual = false,
+  });
+
+  bool get hasCoordinates => lon != null && lat != null;
+
+  Map<String, dynamic> toJson() => {
+        'code': code,
+        'name': name,
+        if (lon != null) 'lon': lon,
+        if (lat != null) 'lat': lat,
+        'manual': manual,
+      };
+
+  static CityChoice? fromJson(Map<String, dynamic>? json) {
+    final code = json?['code'];
+    final name = json?['name'];
+    if (code is! String || name is! String || code.isEmpty || name.isEmpty) return null;
+    final lon = json?['lon'];
+    final lat = json?['lat'];
+    return CityChoice(
+      code: code,
+      name: name,
+      lon: lon is num ? lon.toDouble() : null,
+      lat: lat is num ? lat.toDouble() : null,
+      manual: json?['manual'] == true,
+    );
+  }
+
+  /// weibo.com's built-in hot city shortcuts (matching `HOT_CITY_CODES` in weibo-pro-next).
+  static const hotCities = [
+    CityChoice(code: '800861100', name: '北京', manual: true),
+    CityChoice(code: '800863100', name: '上海', manual: true),
+    CityChoice(code: '800864401', name: '广州', manual: true),
+    CityChoice(code: '800864403', name: '深圳', manual: true),
+    CityChoice(code: '800863301', name: '杭州', manual: true),
+    CityChoice(code: '800863201', name: '南京', manual: true),
+    CityChoice(code: '800865101', name: '成都', manual: true),
+    CityChoice(code: '800864201', name: '武汉', manual: true),
+    CityChoice(code: '800866101', name: '西安', manual: true),
+    CityChoice(code: '800864301', name: '长沙', manual: true),
+    CityChoice(code: '800863401', name: '合肥', manual: true),
+    CityChoice(code: '800864101', name: '郑州', manual: true),
+  ];
+
+  @override
+  bool operator ==(Object other) =>
+      other is CityChoice && other.code == code && other.name == name && other.manual == manual;
+
+  @override
+  int get hashCode => Object.hash(code, name, manual);
 }
 
 /// One of the 推荐 page's channels. [personal] is 热门 as m.weibo.cn draws it for the signed-in
@@ -648,16 +988,124 @@ class RecommendChannel {
   }
 }
 
-/// The streams m.weibo.cn's search container offers for one query; [type] goes into its id.
+/// The tabs a topic / hot-search page shows, matching weibo.com / s.weibo.com's order.
+/// [ai] is 微博智搜 (`ai.s.weibo.com/api/wis/show.json`, `type == 0`); the rest are m.weibo.cn
+/// search containers (`100103type=<type>&q=…`).
 enum HotTopicTab {
   all('综合', 1),
+  ai('智搜', 0),
   realtime('实时', 61),
   hot('热门', 60),
-  video('视频', 64);
+  video('视频', 64),
+  picture('图片', 63);
 
   final String label;
   final int type;
   const HotTopicTab(this.label, this.type);
+
+  bool get isAi => this == ai;
+}
+
+/// One cited post or article attached to a 微博智搜 (`ai.s.weibo.com`) paragraph.
+class AiSearchQuote {
+  final String name;
+  final String scheme;
+  final String? label;
+
+  const AiSearchQuote({required this.name, required this.scheme, this.label});
+}
+
+/// One media thumbnail inside a 微博智搜 `mediablock`.
+class AiSearchMedia {
+  final String imageUrl;
+  final String? scheme;
+  final String? statusId;
+
+  const AiSearchMedia({required this.imageUrl, this.scheme, this.statusId});
+}
+
+enum AiSearchBlockKind { heading, paragraph, bullet, media }
+
+/// One rendered block of a 微博智搜 answer.
+class AiSearchBlock {
+  final AiSearchBlockKind kind;
+  final String text;
+  final int level;
+  final List<AiSearchQuote> quotes;
+  final List<AiSearchMedia> media;
+
+  const AiSearchBlock({
+    required this.kind,
+    this.text = '',
+    this.level = 0,
+    this.quotes = const [],
+    this.media = const [],
+  });
+}
+
+/// Parsed answer from `ai.s.weibo.com/api/wis/show.json`.
+/// [status] `1` means still generating (caller polls with incremented `loop_num`); `2` means done.
+class AiSearchResult {
+  final String query;
+  final int status;
+  final String? model;
+  final String? thinking;
+  final List<AiSearchBlock> blocks;
+  final List<String> linkList;
+
+  const AiSearchResult({
+    required this.query,
+    required this.status,
+    this.model,
+    this.thinking,
+    this.blocks = const [],
+    this.linkList = const [],
+  });
+
+  bool get isGenerating => status == 1;
+  bool get isDone => status == 2 || (status != 1 && blocks.isNotEmpty);
+}
+
+/// Who may see a published post or repost, using weibo.com's `visible` integer codes.
+enum PostVisibility {
+  public('公开', '所有人可见', 0),
+  fans('粉丝可见', '仅粉丝可见', 10),
+  friends('好友圈', '仅好友圈可见', 6),
+  self('仅自己可见', '仅自己可见', 1);
+
+  final String label;
+  final String description;
+  final int code;
+  const PostVisibility(this.label, this.description, this.code);
+
+  static PostVisibility fromCode(int? code) =>
+      values.where((v) => v.code == code).firstOrNull ?? public;
+}
+
+/// Content declaration (`mblog_statement`) attached to an original post on weibo.com.
+enum ContentStatement {
+  none('无', '内容声明', 0),
+  original('内容为自主创作', '自主创作', 4),
+  repost('内容为转载', '转载', 3),
+  ai('内容由AI生成', 'AI生成', 1),
+  fiction('内容为虚构演绎', '虚构演绎', 2);
+
+  final String label;
+  final String shortLabel;
+  final int code;
+  const ContentStatement(this.label, this.shortLabel, this.code);
+
+  static ContentStatement fromCode(int? code) =>
+      values.where((s) => s.code == code).firstOrNull ?? none;
+}
+
+/// Result of uploading a video through weibo.com's multimedia pipeline, ready for `statuses/update`.
+class VideoUploadResult {
+  final String mediaId;
+  final String? coverPid;
+  final String? coverUrl;
+
+  const VideoUploadResult({required this.mediaId, this.coverPid, this.coverUrl});
 }
 
 /// How a search channel's results are drawn.
@@ -952,7 +1400,7 @@ class UserProfile {
   }
 }
 
-enum FeedKind { all, group, circle, private, liked, favorites, card }
+enum FeedKind { all, followingAll, special, group, circle, private, liked, favorites, card }
 
 class FeedSource {
   final FeedKind kind;
@@ -960,7 +1408,14 @@ class FeedSource {
   final String id;
   const FeedSource(this.kind, this.name, [this.id = '']);
 
-  static const all = FeedSource(FeedKind.all, '全部关注');
+  /// Chronological following feed (`m.weibo.cn/feed/friends`), matching weibo.com's 最新微博.
+  static const all = FeedSource(FeedKind.all, '最新');
+
+  /// Ranked/unread following feed (`weibo.com/ajax/feed/unreadfriendstimeline`), matching weibo.com's 全部关注.
+  static const followingAll = FeedSource(FeedKind.followingAll, '全部关注');
+
+  /// Special-follow group (`weibo.com/ajax/feed/groupstimeline`), id populated from `feed/allGroups`.
+  static const special = FeedSource(FeedKind.special, '特别关注');
   static const circle = FeedSource(FeedKind.circle, '好友圈');
   static const private = FeedSource(FeedKind.private, '悄悄关注');
   static const liked = FeedSource(FeedKind.liked, '我赞过的');
@@ -1012,7 +1467,10 @@ class Draft {
   final String text;
   final String? statusId;
   final List<String> images;
+  final String? videoPath;
   final bool crossPost;
+  final PostVisibility visibility;
+  final ContentStatement statement;
   final DraftState state;
   final String? error;
   final DateTime updatedAt;
@@ -1023,7 +1481,10 @@ class Draft {
     this.text = '',
     this.statusId,
     this.images = const [],
+    this.videoPath,
     this.crossPost = false,
+    this.visibility = PostVisibility.public,
+    this.statement = ContentStatement.none,
     this.state = DraftState.editing,
     this.error,
     required this.updatedAt,
@@ -1033,7 +1494,10 @@ class Draft {
     int? id,
     String? text,
     List<String>? images,
+    String? videoPath,
     bool? crossPost,
+    PostVisibility? visibility,
+    ContentStatement? statement,
     DraftState? state,
     String? error,
     DateTime? updatedAt,
@@ -1044,13 +1508,16 @@ class Draft {
         text: text ?? this.text,
         statusId: statusId,
         images: images ?? this.images,
+        videoPath: videoPath ?? this.videoPath,
         crossPost: crossPost ?? this.crossPost,
+        visibility: visibility ?? this.visibility,
+        statement: statement ?? this.statement,
         state: state ?? this.state,
         error: error ?? this.error,
         updatedAt: updatedAt ?? this.updatedAt,
       );
 
-  bool get isEmpty => text.trim().isEmpty && images.isEmpty;
+  bool get isEmpty => text.trim().isEmpty && images.isEmpty && (videoPath == null || videoPath!.isEmpty);
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -1058,7 +1525,10 @@ class Draft {
         'text': text,
         'statusId': statusId,
         'images': images,
+        if (videoPath != null) 'videoPath': videoPath,
         'crossPost': crossPost,
+        'visibility': visibility.code,
+        'statement': statement.code,
         'state': state.name,
         'error': error,
         'updatedAt': updatedAt.toIso8601String(),
@@ -1070,7 +1540,10 @@ class Draft {
         text: json['text'] as String? ?? '',
         statusId: json['statusId'] as String?,
         images: (json['images'] as List?)?.map((e) => e.toString()).toList() ?? const [],
+        videoPath: json['videoPath'] as String?,
         crossPost: json['crossPost'] == true,
+        visibility: PostVisibility.fromCode((json['visibility'] as num?)?.toInt()),
+        statement: ContentStatement.fromCode((json['statement'] as num?)?.toInt()),
         state: DraftState.values.where((s) => s.name == json['state']).firstOrNull ?? DraftState.editing,
         error: json['error'] as String?,
         updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ?? DateTime.now(),

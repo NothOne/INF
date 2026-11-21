@@ -15,6 +15,7 @@ import '../../core/paging.dart';
 import '../../core/pane.dart';
 import '../../core/parse.dart';
 import '../../core/prefs.dart';
+import '../../core/session.dart';
 import '../../core/shell_tabs.dart';
 import '../../core/status_store.dart';
 import '../../core/widgets/common.dart';
@@ -45,6 +46,7 @@ class FeedPageState extends State<FeedPage> {
   final ScrollController _scroll = ScrollController();
   final GlobalKey<InfRefreshIndicatorState> _refreshKey = GlobalKey<InfRefreshIndicatorState>();
   final GlobalKey<PopupMenuButtonState<FeedSource>> _pickerKey = GlobalKey<PopupMenuButtonState<FeedSource>>();
+  final GlobalKey<PopupMenuButtonState<HotSection>> _sectionPickerKey = GlobalKey<PopupMenuButtonState<HotSection>>();
   final PageController _pages = PageController();
   _HomePage _page = _HomePage.feed;
 
@@ -52,9 +54,19 @@ class FeedPageState extends State<FeedPage> {
   RecommendChannel _channel = Prefs.instance.recommendChannel;
   final ScrollController _hotScroll = ScrollController();
   final GlobalKey<InfRefreshIndicatorState> _hotRefreshKey = GlobalKey<InfRefreshIndicatorState>();
-  HotBoard _board = shownBoard(HotBoard.realtime);
+
+  /// The third page: 微博热搜 or 热门榜单, and within them the board or rank sub-tab last looked at.
+  HotSection _hotSection = Prefs.instance.hotSection;
+  HotBoard _board = shownBoard(Prefs.instance.hotBoard);
   final ScrollController _boardScroll = ScrollController();
   final GlobalKey<InfRefreshIndicatorState> _boardRefreshKey = GlobalKey<InfRefreshIndicatorState>();
+  HotRankTab _rankTab = Prefs.instance.hotRankTab;
+  PagingController<Status>? _rankPager;
+  final ScrollController _rankScroll = ScrollController();
+  final GlobalKey<InfRefreshIndicatorState> _rankRefreshKey = GlobalKey<InfRefreshIndicatorState>();
+
+  /// Whether the 推荐 page is showing 同城, which is drawn for a city rather than for everyone.
+  bool get _isLocal => _channel.gid == '1028032222' || _channel.containerId == '102803_2222';
 
   /// The bottom bar's home button: back to the top of the page shown, or refresh it when already
   /// there.
@@ -71,6 +83,16 @@ class FeedPageState extends State<FeedPage> {
         }
         await _hotPager?.refresh();
       case _HomePage.board:
+        if (_hotSection == HotSection.rank) {
+          if (await _toTop(_rankScroll)) return;
+          final indicator = _rankRefreshKey.currentState;
+          if (indicator != null) {
+            await indicator.show();
+            return;
+          }
+          await _rankPager?.refresh();
+          return;
+        }
         if (await _toTop(_boardScroll)) return;
         await _boardRefreshKey.currentState?.show();
     }
@@ -109,10 +131,17 @@ class FeedPageState extends State<FeedPage> {
     _controller.start();
     StatusStore.instance.feedRevision.addListener(_refreshFeed);
     Prefs.instance.hotBoardsNotifier.addListener(_onBoardsChanged);
+    Prefs.instance.cityNotifier.addListener(_onCityChanged);
+    Session.instance.addListener(_onSessionChanged);
+    // 我的热搜 is drawn by weibo.com for the account only. An account already known to be signed out
+    // opens on 热搜榜 rather than on a page whose one message would be 「登录后查看」.
+    if (Session.instance.state == SessionState.loggedOut && _board == HotBoard.mine) _board = HotBoard.realtime;
   }
 
   @override
   void dispose() {
+    Session.instance.removeListener(_onSessionChanged);
+    Prefs.instance.cityNotifier.removeListener(_onCityChanged);
     Prefs.instance.hotBoardsNotifier.removeListener(_onBoardsChanged);
     StatusStore.instance.feedRevision.removeListener(_refreshFeed);
     _controller.removeListener(_onController);
@@ -122,7 +151,35 @@ class FeedPageState extends State<FeedPage> {
     _hotPager?.dispose();
     _hotScroll.dispose();
     _boardScroll.dispose();
+    _rankPager?.dispose();
+    _rankScroll.dispose();
     super.dispose();
+  }
+
+  /// 我的热搜 answered 「登录后查看」 before the reader signed in. Signing in is the one thing that
+  /// can change that answer, so the board is asked for again when the session does. Signing out
+  /// takes the board away with the account, and the page moves to 热搜榜 rather than keeping a page
+  /// that can only say so.
+  void _onSessionChanged() {
+    if (!mounted) return;
+    final state = Session.instance.state;
+    if (state == SessionState.loggedIn) {
+      final board = shownBoard(_board);
+      if (board.requiresAuth) HotSearchStore.instance.load(board: board, force: true);
+      return;
+    }
+    if (state == SessionState.loggedOut && shownBoard(_board) == HotBoard.mine) {
+      setState(() => _board = HotBoard.realtime);
+    }
+  }
+
+  /// The chosen city is what 同城微博 and 同城热搜 are about. The 同城 board is the store's own to
+  /// reload (it hears the same notifier), so only the 推荐 page's 同城 channel is restarted here.
+  void _onCityChanged() {
+    if (!mounted || !_isLocal) return;
+    // The new pager has to reach the page through a rebuild: the list is built from the field, not
+    // from a listenable, so assigning it is not enough on its own.
+    setState(_startRecommend);
   }
 
   void _onBoardsChanged() {
@@ -132,7 +189,7 @@ class FeedPageState extends State<FeedPage> {
     if (_page == _HomePage.board) HotSearchStore.instance.load(board: next);
   }
 
-  /// A tap on the page already shown opens its picker: groups, channels or boards.
+  /// A tap on the page already shown opens its picker: groups, channels, sections or boards.
   void _selectPage(_HomePage page) {
     if (page == _page) {
       switch (page) {
@@ -141,7 +198,12 @@ class FeedPageState extends State<FeedPage> {
         case _HomePage.recommend:
           showRecommendChannels(context, current: _channel, onSelect: _selectChannel);
         case _HomePage.board:
-          showHotBoardEditor(context, current: _board, onSelect: _selectBoard);
+          // 热搜 and 榜单 have their own pickers: the section menu here, the board editor there.
+          if (_hotSection == HotSection.search) {
+            showHotBoardEditor(context, current: shownBoard(_board), onSelect: _selectBoard);
+          } else {
+            _sectionPickerKey.currentState?.showButtonMenu();
+          }
       }
       return;
     }
@@ -153,10 +215,15 @@ class FeedPageState extends State<FeedPage> {
     Haptic.selection.play();
     // Each home page has its own bar; swiping to one is not scrolling the page it left.
     showShellBars();
-    setState(() => _page = page);
-    if (page == _HomePage.recommend && _hotPager == null) _startRecommend();
-    if (page == _HomePage.board) {
-      _board = shownBoard(_board);
+    setState(() {
+      _page = page;
+      if (page == _HomePage.recommend && _hotPager == null) _startRecommend();
+      if (page == _HomePage.board) {
+        _board = shownBoard(_board);
+        if (_hotSection == HotSection.rank) _startRank();
+      }
+    });
+    if (page == _HomePage.board && _hotSection == HotSection.search) {
       HotSearchStore.instance.load(board: _board);
     }
   }
@@ -183,11 +250,49 @@ class FeedPageState extends State<FeedPage> {
     });
   }
 
+  void _selectSection(HotSection section) {
+    if (section == _hotSection) return;
+    Haptic.selection.play();
+    Prefs.instance.setHotSection(section);
+    setState(() {
+      _hotSection = section;
+      if (section == HotSection.rank) _startRank();
+    });
+    if (section == HotSection.search) HotSearchStore.instance.load(board: shownBoard(_board));
+  }
+
   void _selectBoard(HotBoard board) {
     if (board == _board) return;
     Haptic.selection.play();
+    Prefs.instance.setHotBoard(board);
     setState(() => _board = board);
     HotSearchStore.instance.load(board: board);
+  }
+
+  void _startRank() {
+    if (_rankPager != null) return;
+    _rankPager = PagingController<Status>(
+      fetch: (cursor) => WeiboApi.instance.hotRankFeed(_rankTab, cursor),
+      id: (status) => status.id,
+      remember: StatusStore.instance.remember,
+    )..refresh();
+  }
+
+  void _selectRankTab(HotRankTab tab) {
+    if (tab == _rankTab) return;
+    Haptic.selection.play();
+    Prefs.instance.setHotRankTab(tab);
+    if (_rankScroll.hasClients) _rankScroll.jumpTo(0);
+    final previous = _rankPager;
+    setState(() {
+      _rankTab = tab;
+      _rankPager = PagingController<Status>(
+        fetch: (cursor) => WeiboApi.instance.hotRankFeed(tab, cursor),
+        id: (status) => status.id,
+        remember: StatusStore.instance.remember,
+      )..refresh();
+    });
+    previous?.disposeDeferred();
   }
 
   void _refreshFeed() {
@@ -217,31 +322,28 @@ class FeedPageState extends State<FeedPage> {
             child: AppBar(
               centerTitle: true,
               titleSpacing: 0,
-              leadingWidth: 56,
+              leadingWidth: 48,
               leading: const SizedBox.shrink(),
-              title: _HomeTabs(
+              title: HomeTabs(
                 pages: _pages,
-                current: _page,
-                onSelect: _selectPage,
+                current: _page.index,
+                onSelect: (index) => _selectPage(_HomePage.values[index]),
                 feedLabel: _SourcePicker(
                   controller: _controller,
                   pickerKey: _pickerKey,
                   enabled: _page == _HomePage.feed,
                   onTapDisabled: () => _selectPage(_HomePage.feed),
                 ),
-                recommendLabel: _ArrowLabel(
+                recommendLabel: HomeTabLabel(
                   title: _channel.personal ? '推荐' : _channel.title,
                   active: _page == _HomePage.recommend,
                 ),
-                boardLabel: AnimatedBuilder(
-                  animation: Prefs.instance.hotBoardsNotifier,
-                  builder: (context, _) {
-                    final board = shownBoard(_board);
-                    return _ArrowLabel(
-                      title: board == HotBoard.realtime ? '热搜' : board.label,
-                      active: _page == _HomePage.board,
-                    );
-                  },
+                boardLabel: _SectionPicker(
+                  section: _hotSection,
+                  pickerKey: _sectionPickerKey,
+                  enabled: _page == _HomePage.board,
+                  onTapDisabled: () => _selectPage(_HomePage.board),
+                  onSelect: _selectSection,
                 ),
               ),
               actions: InfChrome.of(context).barActions(context, [
@@ -278,14 +380,29 @@ class FeedPageState extends State<FeedPage> {
                 child: _SwipeKeepsBars(
                   pages: _pages,
                   index: _HomePage.board.index,
-                  child: AnimatedBuilder(
-                    animation: Prefs.instance.hotBoardsNotifier,
-                    builder: (context, _) => _HotBoard(
-                      board: shownBoard(_board),
-                      onSelect: _selectBoard,
-                      scroll: _boardScroll,
-                      refreshKey: _boardRefreshKey,
-                    ),
+                  child: AnimatedSwitcher(
+                    duration: InfMotion.feedback,
+                    switchInCurve: InfMotion.emphasized,
+                    switchOutCurve: Curves.easeIn,
+                    child: _hotSection == HotSection.rank
+                        ? _HotRank(
+                            key: const ValueKey('rank'),
+                            tab: _rankTab,
+                            pager: _rankPager,
+                            onSelect: _selectRankTab,
+                            scroll: _rankScroll,
+                            refreshKey: _rankRefreshKey,
+                          )
+                        : AnimatedBuilder(
+                            key: const ValueKey('search'),
+                            animation: Prefs.instance.hotBoardsNotifier,
+                            builder: (context, _) => _HotBoard(
+                              board: shownBoard(_board),
+                              onSelect: _selectBoard,
+                              scroll: _boardScroll,
+                              refreshKey: _boardRefreshKey,
+                            ),
+                          ),
                   ),
                 ),
               ),
@@ -299,11 +416,14 @@ class FeedPageState extends State<FeedPage> {
   Widget _hotFeed() {
     final pager = _hotPager;
     if (pager == null) return const StatusListSkeleton();
+    final local = _isLocal;
     return PagedStatusList(
       key: PageStorageKey<String>('home-recommend-${_channel.key}'),
       pager: pager,
       controller: _hotScroll,
       refreshKey: _hotRefreshKey,
+      // 同城 is about a place the reader can change; the bar says which one and moves them.
+      header: local ? const CityBannerBar() : null,
       bottomInset: ShellLayout.clearance(context, 104),
       emptyText: '「${_channel.title}」暂时没有微博',
     );
@@ -400,7 +520,7 @@ class _SourcePicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final current = controller.source;
-    final title = current.kind == FeedKind.all ? '关注' : current.name;
+    final title = current.kind == FeedKind.all ? FeedSource.all.name : current.name;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: enabled ? null : onTapDisabled,
@@ -427,7 +547,7 @@ class _SourcePicker extends StatelessWidget {
           final entries = <PopupMenuEntry<FeedSource>>[];
           for (var index = 0; index < sources.length; index++) {
             final source = sources[index];
-            if (index > 0 && source.kind != FeedKind.group && sources[index - 1].kind == FeedKind.group) {
+            if (index > 0 && _blockOf(sources[index - 1]) != _blockOf(source)) {
               entries.add(const PopupMenuDivider());
             }
             entries.add(
@@ -451,9 +571,73 @@ class _SourcePicker extends StatelessWidget {
           }
           return entries;
         },
-        child: SizedBox(
-          width: _HomeTabs._slot,
-          child: Center(child: _ArrowLabel(title: title, active: enabled)),
+        // The bar's tabs give their labels room to tap; this one is inside the popup's own button,
+        // so it asks for the same minimum itself rather than shrinking to the words.
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 56, minHeight: 36),
+          child: Center(child: HomeTabLabel(title: title, active: enabled)),
+        ),
+      ),
+    );
+  }
+
+  /// The menu's three blocks, a divider between them: the system feeds, the groups the account made
+  /// (with 悄悄关注 after them), then 我赞过的 and 我的收藏.
+  static int _blockOf(FeedSource source) => switch (source.kind) {
+        FeedKind.all || FeedKind.followingAll || FeedKind.special || FeedKind.circle => 0,
+        FeedKind.group || FeedKind.private => 1,
+        FeedKind.liked || FeedKind.favorites || FeedKind.card => 2,
+      };
+}
+
+/// 微博热搜 or 热门榜单, picked from the bar's third tab. A plain popup menu rather than a sheet: two
+/// rows, and it opens and closes in the time a frosted sheet takes just to fade in.
+class _SectionPicker extends StatelessWidget {
+  const _SectionPicker({
+    required this.section,
+    required this.pickerKey,
+    required this.enabled,
+    required this.onTapDisabled,
+    required this.onSelect,
+  });
+
+  final HotSection section;
+  final GlobalKey<PopupMenuButtonState<HotSection>> pickerKey;
+
+  /// The menu only opens from the page it belongs to; elsewhere a tap goes back to it.
+  final bool enabled;
+  final VoidCallback onTapDisabled;
+  final ValueChanged<HotSection> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: enabled ? null : onTapDisabled,
+      child: PopupMenuButton<HotSection>(
+        key: pickerKey,
+        enabled: enabled,
+        tooltip: '切换热搜与榜单',
+        onSelected: onSelect,
+        position: PopupMenuPosition.under,
+        itemBuilder: (context) => [
+          for (final value in HotSection.values)
+            PopupMenuItem<HotSection>(
+              value: value,
+              child: Row(
+                children: [
+                  Expanded(child: Text(value.label)),
+                  if (value == section)
+                    Icon(Icons.check_rounded, size: 18, color: Theme.of(context).colorScheme.primary),
+                ],
+              ),
+            ),
+        ],
+        // The bar's tabs give their labels room to tap; this one is inside the popup's own button,
+        // so it asks for the same minimum itself rather than shrinking to the words.
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 56, minHeight: 36),
+          child: Center(child: HomeTabLabel(title: section.label, active: enabled)),
         ),
       ),
     );
@@ -461,40 +645,67 @@ class _SourcePicker extends StatelessWidget {
 }
 
 /// A home tab's title with the arrow that says a tap opens its picker, shown on the page in view.
-/// The arrow hangs off the label so the label stays centred in its slot.
-class _ArrowLabel extends StatelessWidget {
-  const _ArrowLabel({required this.title, required this.active});
+///
+/// The arrow takes room only while it is shown, so an unselected tab is nothing but its name and a
+/// bar of three fits the longest feed name (特别关注, 我赞过的 — four characters) beside 推荐 and 热搜
+/// on a 360dp phone. A four-character name is set a little smaller for the same reason, with its
+/// line box kept the same height so the underline below does not move.
+class HomeTabLabel extends StatelessWidget {
+  const HomeTabLabel({super.key, required this.title, required this.active});
 
   final String title;
   final bool active;
 
+  static const _long = 4;
+  static const _longSize = 16.5;
+
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      alignment: Alignment.center,
+    final long = title.runes.length >= _long;
+    final style = DefaultTextStyle.of(context).style;
+    // The same line box at either size, so a long name does not read as a smaller tab with more
+    // room above it and the underline below it never moves.
+    final height = long ? (style.fontSize ?? 18) * (style.height ?? 1.2) / _longSize : null;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 56),
-          child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center),
-        ),
-        Positioned(
-          right: -19,
-          child: AnimatedOpacity(
-            opacity: active ? 1 : 0.0,
-            duration: InfMotion.feedback,
-            child: const Icon(Icons.arrow_drop_down_rounded, size: 22),
+          constraints: BoxConstraints(maxWidth: long ? 88 : 72),
+          child: Text(
+            title,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: long ? style.copyWith(fontSize: _longSize, height: height) : null,
           ),
+        ),
+        // Laid out only while shown, so an unselected tab is no wider than its name; the size
+        // change itself is the animation, which is what lets the bar stay centred as it changes.
+        AnimatedSize(
+          duration: InfMotion.feedback,
+          curve: InfMotion.emphasized,
+          alignment: Alignment.centerLeft,
+          child: active
+              ? const Icon(Icons.arrow_drop_down_rounded, size: 22)
+              : const SizedBox(width: 0, height: 22),
         ),
       ],
     );
   }
 }
 
-/// 关注 · 推荐 · 热搜 in equal slots, 推荐 at the centre of the bar. Each label follows the swipe:
-/// it darkens and underlines as its page slides in, so dragging between pages reads on the bar too.
-class _HomeTabs extends StatelessWidget {
-  const _HomeTabs({
+/// The feed's name · 推荐 · 热搜, sized to their words rather than to a fixed slot, 推荐 in the
+/// middle. Each label follows the swipe: it darkens and underlines as its page slides in, so
+/// dragging between pages reads on the bar too.
+///
+/// The bar used to give every tab 76dp, which cut 特别关注 down to 特别…; intrinsic widths let the
+/// widest name have what it needs and leave the two short ones compact. The tabs keep a minimum so
+/// each is still a comfortable tap target, and the bar stays centred. [current] is the page shown,
+/// which is also the one whose label draws its arrow.
+class HomeTabs extends StatelessWidget {
+  const HomeTabs({
+    super.key,
     required this.pages,
     required this.current,
     required this.onSelect,
@@ -503,14 +714,16 @@ class _HomeTabs extends StatelessWidget {
     required this.boardLabel,
   });
 
-  final PageController pages;
-  final _HomePage current;
-  final ValueChanged<_HomePage> onSelect;
+  /// Drives the colour and the underline between pages; null stands still on [current].
+  final PageController? pages;
+  final int current;
+  final ValueChanged<int> onSelect;
   final Widget feedLabel;
   final Widget recommendLabel;
   final Widget boardLabel;
 
-  static const _slot = 76.0;
+  /// The narrowest a tab may be: two characters plus the room an arrow needs on the selected one.
+  static const _minSlot = 52.0;
 
   @override
   Widget build(BuildContext context) {
@@ -520,20 +733,17 @@ class _HomeTabs extends StatelessWidget {
       fontWeight: FontWeight.w700,
       height: 1.2,
     );
-    return AnimatedBuilder(
-      animation: pages,
-      builder: (context, _) {
-        final position = pages.hasClients && pages.position.haveDimensions
-            ? (pages.page ?? current.index.toDouble())
-            : current.index.toDouble();
-        Widget tab(_HomePage page, Widget label) {
-          final t = (1 - (position - page.index).abs()).clamp(0.0, 1.0);
-          final color = Color.lerp(scheme.onSurfaceVariant.withValues(alpha: 0.8), scheme.onSurface, t)!;
-          return GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: page == _HomePage.feed ? null : () => onSelect(page),
-            child: SizedBox(
-              width: _slot,
+    Widget tabs(double position) {
+      Widget tab(int index, Widget label) {
+        final t = (1 - (position - index).abs()).clamp(0.0, 1.0);
+        final color = Color.lerp(scheme.onSurfaceVariant.withValues(alpha: 0.8), scheme.onSurface, t)!;
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: index == 0 ? null : () => onSelect(index),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: _minSlot),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -553,17 +763,27 @@ class _HomeTabs extends StatelessWidget {
                 ],
               ),
             ),
-          );
-        }
-
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            tab(_HomePage.feed, feedLabel),
-            tab(_HomePage.recommend, recommendLabel),
-            tab(_HomePage.board, boardLabel),
-          ],
+          ),
         );
+      }
+
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          tab(0, feedLabel),
+          tab(1, recommendLabel),
+          tab(2, boardLabel),
+        ],
+      );
+    }
+
+    final controller = pages;
+    if (controller == null) return tabs(current.toDouble());
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        final settled = controller.hasClients && controller.position.haveDimensions;
+        return tabs(settled ? (controller.page ?? current.toDouble()) : current.toDouble());
       },
     );
   }
@@ -599,17 +819,23 @@ class _HotBoard extends StatelessWidget {
         final store = HotSearchStore.instance;
         final entries = store.entriesOf(board);
         final at = store.loadedAtOf(board);
+        // 同城 is about a city, so it carries the bar that says which one and can change it — above
+        // the entries, and also above the states that have none, since an empty 同城 is usually an
+        // empty city rather than an empty board.
+        final banner = board == HotBoard.city;
+        final headerCount = banner ? 2 : 1;
         final Widget list;
         if (entries == null) {
+          final error = store.errorOf(board);
           list = StateSwitcher(
-            child: store.errorOf(board) != null
-                ? Center(
+            child: error != null
+                ? (store.needsLoginOf(board) ? const HotBoardLoginPrompt() : Center(
                     key: const ValueKey('error'),
                     child: ErrorRetry(
-                      message: store.errorOf(board),
+                      message: error,
                       onRetry: () => store.load(board: board, force: true),
                     ),
-                  )
+                  ))
                 : const RowListSkeleton(key: ValueKey('loading')),
           );
         } else {
@@ -626,16 +852,20 @@ class _HotBoard extends StatelessWidget {
                 left: gutter,
                 right: gutter,
               ),
-              itemCount: entries.isEmpty ? 1 : entries.length + 1,
+              itemCount: entries.isEmpty ? headerCount : entries.length + headerCount,
               itemBuilder: (context, index) {
+                if (banner && index == 0) return const CityBannerBar();
+                final slot = index - (banner ? 1 : 0);
                 if (entries.isEmpty) {
-                  return const Padding(
-                    padding: EdgeInsets.only(top: 120),
-                    child: EmptyHint(text: '这个榜单暂时是空的', icon: Icons.local_fire_department_outlined),
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 100),
+                    child: board == HotBoard.city
+                        ? const CityPrompt()
+                        : const EmptyHint(text: '这个榜单暂时是空的', icon: Icons.local_fire_department_outlined),
                   );
                 }
-                if (index == 0) return _BoardUpdated(at: at);
-                final entry = entries[index - 1];
+                if (slot == 0) return _BoardUpdated(at: at);
+                final entry = entries[slot - 1];
                 return HotSearchRow(
                   entry: entry,
                   detailed: true,
@@ -695,6 +925,78 @@ class _BoardUpdated extends StatelessWidget {
   }
 }
 
+/// 热门榜单 as a home page: the six sub-tabs behind the same chips capsule the boards use, and the
+/// posts they rank. Each tab is its own list, so switching tabs starts where that tab starts.
+class _HotRank extends StatelessWidget {
+  const _HotRank({
+    super.key,
+    required this.tab,
+    required this.pager,
+    required this.onSelect,
+    required this.scroll,
+    required this.refreshKey,
+  });
+
+  final HotRankTab tab;
+  final PagingController<Status>? pager;
+  final ValueChanged<HotRankTab> onSelect;
+  final ScrollController scroll;
+  final GlobalKey<InfRefreshIndicatorState> refreshKey;
+
+  static const _capsule = 46.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final top = MediaQuery.paddingOf(context).top;
+    final chrome = InfChrome.of(context);
+    final floating = chrome.extendsBehindBars;
+    final bandTop = floating ? 6.0 : 0.0;
+    final band = floating ? _capsule : 44.0;
+    final listTop = top + (floating ? _capsule + 12 : band);
+    final gutter = contentGutter(context);
+    final current = pager;
+    final Widget list;
+    if (current == null) {
+      list = const StatusListSkeleton(key: ValueKey('rank-loading'));
+    } else {
+      list = PagedStatusList(
+        key: PageStorageKey<String>('home-rank-${tab.gid}'),
+        pager: current,
+        controller: scroll,
+        refreshKey: refreshKey,
+        emptyText: '「${tab.title}」暂时没有微博',
+        // Laid out from the top of the screen like the boards' list, with the chips' room added
+        // here: the bar's own inset is part of [listTop], not something to add twice.
+        underAppBar: false,
+        bottomInset: ShellLayout.clearance(context, 104),
+      );
+    }
+    final chips = HotRankChips(current: tab, onSelect: onSelect, floating: floating);
+    final row = floating
+        ? chrome.floatingPanel(context, radius: BorderRadius.circular(_capsule / 2), child: chips)
+        : ColoredBox(color: Theme.of(context).colorScheme.surface, child: ContentColumn(child: chips));
+    return Stack(
+      children: [
+        Positioned.fill(
+          // The list is laid out from the top of the screen like the boards' list, so it pads by
+          // the bar and the chips itself ([underAppBar] would add the bar's inset a second time).
+          child: Padding(
+            padding: EdgeInsets.only(top: listTop),
+            child: list,
+          ),
+        ),
+        Positioned(
+          left: floating ? 12 + gutter : 0,
+          right: floating ? 12 + gutter : 0,
+          top: top + bandTop,
+          height: band,
+          child: ShellBarBand(travel: top + bandTop + band, child: row),
+        ),
+      ],
+    );
+  }
+}
+
 class _Timeline extends StatefulWidget {
   const _Timeline({
     super.key,
@@ -721,6 +1023,9 @@ class _TimelineState extends State<_Timeline> {
   late final FeedReadingPosition _reading = FeedReadingPosition(_sourceKey);
 
   bool _resuming = false;
+  bool _markerRefreshing = false;
+  bool _userScrolling = false;
+  final ValueNotifier<double> _resumeOpacity = ValueNotifier<double>(1.0);
 
   PagingController<Status>? _listening;
   final Map<String, BuildContext> _rows = {};
@@ -736,6 +1041,7 @@ class _TimelineState extends State<_Timeline> {
     _listening?.removeListener(_onPager);
     _saveTimer?.cancel();
     _savePosition();
+    _resumeOpacity.dispose();
     super.dispose();
   }
 
@@ -752,6 +1058,7 @@ class _TimelineState extends State<_Timeline> {
     final current = _listening;
     if (current == null || !mounted) return;
     final moved = _reading.update(current.items, current.refreshedAt, onRecenter: _recenter);
+    _resumeOpacity.value = _reading.resumeOpacity;
     if (moved) setState(() {});
   }
 
@@ -841,6 +1148,7 @@ class _TimelineState extends State<_Timeline> {
         _reading.canResume = false;
       }
     });
+    _resumeOpacity.value = _reading.resumeOpacity;
     if (found) {
       _recenter(target.id, target.dy);
     } else {
@@ -855,9 +1163,23 @@ class _TimelineState extends State<_Timeline> {
     if (ok && current.items.isNotEmpty) {
       final topId = current.items.first.id;
       setState(() => _reading.toTop(topId));
+      _resumeOpacity.value = _reading.resumeOpacity;
       _recenter(topId, 0);
     }
     return ok;
+  }
+
+  Future<void> _refreshFromMarker(PagingController<Status> current) async {
+    if (_markerRefreshing) return;
+    Haptic.selection.play();
+    setState(() => _markerRefreshing = true);
+    final ok = await _pullRefresh(current);
+    if (!mounted) return;
+    setState(() => _markerRefreshing = false);
+    if (!ok) {
+      Haptic.error.play();
+      showMessage(context, '刷新失败');
+    }
   }
 
   @override
@@ -898,9 +1220,12 @@ class _TimelineState extends State<_Timeline> {
           children: [
             const SizedBox(height: 160),
             EmptyHint(
-              text: widget.controller.source.kind == FeedKind.all
-                  ? '没有微博'
-                  : '「${widget.controller.source.name}」里还没有微博',
+              text: switch (widget.controller.source.kind) {
+                FeedKind.all => '暂时没有最新微博',
+                FeedKind.followingAll => '暂时没有关注的微博',
+                FeedKind.special => '还没有特别关注或暂时没有微博',
+                _ => '「${widget.controller.source.name}」里还没有微博',
+              },
               icon: Icons.forum_outlined,
             ),
           ],
@@ -932,11 +1257,18 @@ class _TimelineState extends State<_Timeline> {
           onTap: _toNewest,
         ),
       if (_reading.canResume)
-        _FeedPill(
-          icon: Icons.arrow_downward_rounded,
-          label: _resuming ? '正在找…' : '上次读到',
-          onTap: _resume,
-          busy: _resuming,
+        ValueListenableBuilder<double>(
+          valueListenable: _resumeOpacity,
+          builder: (context, opacity, child) => Opacity(
+            opacity: _resuming ? 1.0 : opacity,
+            child: child,
+          ),
+          child: _FeedPill(
+            icon: Icons.arrow_downward_rounded,
+            label: _resuming ? '正在找…' : '上次读到',
+            onTap: _resume,
+            busy: _resuming,
+          ),
         ),
     ];
     final pill = pills.isEmpty
@@ -962,8 +1294,19 @@ class _TimelineState extends State<_Timeline> {
           onNotification: (notification) {
             current.onScroll(notification);
             if (notification.depth == 0) {
-              if (notification is ScrollUpdateNotification) _measure();
-              if (notification is ScrollEndNotification) _measure(force: true);
+              if (notification is ScrollStartNotification) {
+                _userScrolling = notification.dragDetails != null;
+              } else if (notification is ScrollUpdateNotification) {
+                _measure();
+                if (_userScrolling && !_resuming && _reading.canResume && notification.scrollDelta != null) {
+                  final dismissed = _reading.trackResumeScroll(notification.scrollDelta!);
+                  _resumeOpacity.value = _reading.resumeOpacity;
+                  if (dismissed) setState(() {});
+                }
+              } else if (notification is ScrollEndNotification) {
+                _userScrolling = false;
+                _measure(force: true);
+              }
             }
             return false;
           },
@@ -1041,7 +1384,11 @@ class _TimelineState extends State<_Timeline> {
         animate: current.fresh.contains(status.id),
         child: Column(
           children: [
-            if (status.id == _reading.markerId && index > 0) const _ReadMarker(),
+            if (status.id == _reading.markerId && index > 0)
+              _ReadMarker(
+                refreshing: _markerRefreshing,
+                onTap: () => _refreshFromMarker(current),
+              ),
             PaneSelected(
               ids: ['status:${status.id}', if (status.repostOf != null) 'status:${status.repostOf!.id}'],
               child: buildStatusCard(context, status, heroScope: '${status.id}-$index'),
@@ -1093,26 +1440,48 @@ class _TrackedState extends State<_Tracked> {
 }
 
 class _ReadMarker extends StatelessWidget {
-  const _ReadMarker();
+  const _ReadMarker({required this.refreshing, required this.onTap});
+
+  final bool refreshing;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final line = Expanded(child: Divider(color: scheme.primary.withValues(alpha: 0.35), height: 1));
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
-      child: Row(
-        children: [
-          line,
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Text(
-              '上次看到这里',
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(color: scheme.primary),
-            ),
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: refreshing ? null : onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          child: Row(
+            children: [
+              line,
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (refreshing) ...[
+                      SizedBox(
+                        width: 11,
+                        height: 11,
+                        child: CircularProgressIndicator(strokeWidth: 1.8, color: scheme.primary),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    Text(
+                      refreshing ? '正在刷新…' : '上次看到这里，点击刷新',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(color: scheme.primary),
+                    ),
+                  ],
+                ),
+              ),
+              line,
+            ],
           ),
-          line,
-        ],
+        ),
       ),
     );
   }

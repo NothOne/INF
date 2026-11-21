@@ -1,7 +1,7 @@
 name: inf_flutter
 description: "INF for Android — 微博第三方客户端（Flutter 重写版）"
 publish_to: "none"
-version: 1.7.2+72
+version: 1.7.8+78
 
 environment:
   sdk: ^3.13.5
@@ -12,6 +12,7 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   flutter_cache_manager: ^3.4.5
+  crypto: ^3.0.6
   cupertino_icons: ^1.0.8
   cached_network_image: ^4.0.4
   dio: ^5.11.1

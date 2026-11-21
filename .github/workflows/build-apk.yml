@@ -30,6 +30,55 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      # Cache ~/.gradle/caches and wrapper so builds don't cold-fetch Maven Central every run.
+      - uses: gradle/actions/setup-gradle@v4
+
+      # GitHub Actions runners occasionally hit HTTP 429 from repo.maven.apache.org;
+      # try Google's Maven Central mirror first and keep upstream repos as fallback.
+      - name: Configure Gradle Maven Central mirror
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cat <<'EOF' > ~/.gradle/init.d/maven-mirror.gradle
+          import org.gradle.api.initialization.resolve.RepositoriesMode
+
+          def mirrorUrl = 'https://maven-central.storage-download.googleapis.com/maven2'
+          def prependMirror = { repos ->
+            def mirror = repos.maven {
+              name = 'GoogleMavenCentralMirror'
+              url = uri(mirrorUrl)
+            }
+            repos.remove(mirror)
+            repos.addFirst(mirror)
+          }
+
+          def allowProjectRepos = new IdentityHashMap()
+
+          beforeSettings { settings ->
+            prependMirror(settings.pluginManagement.repositories)
+          }
+
+          settingsEvaluated { settings ->
+            if (settings.pluginManagement.repositories.size() == 1) {
+              settings.pluginManagement.repositories.gradlePluginPortal()
+            }
+            def mode = settings.dependencyResolutionManagement.repositoriesMode.get()
+            def allow = (mode == RepositoriesMode.PREFER_PROJECT)
+            allowProjectRepos[settings.gradle] = allow
+            if (!allow) {
+              prependMirror(settings.dependencyResolutionManagement.repositories)
+            }
+          }
+
+          allprojects {
+            buildscript {
+              prependMirror(repositories)
+            }
+            if (allowProjectRepos[project.gradle] != false) {
+              prependMirror(repositories)
+            }
+          }
+          EOF
+
       # Uses the image's SDK when it has one, otherwise fetches the command-line tools.
       # flutter.ndkVersion is 28.2.13676358; the runner image only ships 27.3/29/30.
       - name: Android SDK, NDK and CMake
@@ -72,7 +121,18 @@ jobs:
       # describing a tree that no longer exists.
       - run: python3 tools/doc_facts.py --check
 
-      - run: flutter build apk --release --target-platform android-arm64
+      - name: Build release APK
+        run: |
+          for attempt in 1 2; do
+            if flutter build apk --release --target-platform android-arm64; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 2 ]; then
+              exit 1
+            fi
+            echo "APK build failed on attempt $attempt; retrying in 25s..."
+            sleep 25
+          done
 
       - name: Name the APK
         run: |

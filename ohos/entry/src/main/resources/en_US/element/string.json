@@ -11,6 +11,10 @@
     {
       "name": "EntryAbility_label",
       "value": "INF"
+    },
+    {
+      "name": "location_reason",
+      "value": "For the nearby city in 同城微博 and 同城热搜"
     }
   ]
 }

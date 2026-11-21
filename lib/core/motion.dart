@@ -74,7 +74,7 @@ Future<T?> showActionSheet<T>({
     showDragHandle: !own,
     backgroundColor: own ? Colors.transparent : backgroundColor,
     elevation: own ? 0 : null,
-    sheetAnimationStyle: style.sheetMotion,
+    sheetAnimationStyle: frosted ? style.sheetMotion : null,
     builder: (context) => chrome.actionSheet(context, child: builder(context)),
   );
 }

@@ -213,6 +213,7 @@ Future<String?> showMentionPicker(BuildContext context) {
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
+    frosted: false,
     builder: (context) => const MentionPicker(),
   );
 }

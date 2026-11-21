@@ -184,6 +184,8 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
     _entryPagers.clear();
   }
 
+  /// The board asked for in this page's 微博热搜 section; 热搜榜 unless the reader switches it. The
+  /// store is shared with the home page, so a board either has already loaded is shown at once.
   HotBoard _board = shownBoard(HotBoard.realtime);
 
   Future<void> _loadHot() => HotSearchStore.instance.load(board: shownBoard(_board));
@@ -386,7 +388,9 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
             final board = shownBoard(_board);
             final hot = store.entriesOf(board);
             final Widget rows;
-            if (hot == null && store.errorOf(board) != null) {
+            if (hot == null && store.needsLoginOf(board)) {
+              rows = const Padding(padding: EdgeInsets.all(20), child: HotBoardLoginPrompt());
+            } else if (hot == null && store.errorOf(board) != null) {
               rows = Padding(
                 padding: const EdgeInsets.all(28),
                 child: Center(
@@ -399,15 +403,19 @@ class _SearchPageState extends State<SearchPage> with TickerProviderStateMixin {
                 child: Center(child: CircularProgressIndicator()),
               );
             } else if (hot.isEmpty) {
+              // 同城 with no city is the one empty board the reader can do something about.
               rows = Padding(
-                padding: const EdgeInsets.all(30),
-                child: Center(
-                  child: Text('这个榜单暂时是空的', style: TextStyle(color: scheme.onSurfaceVariant)),
-                ),
+                padding: const EdgeInsets.symmetric(vertical: 26),
+                child: board == HotBoard.city
+                    ? const CityPrompt()
+                    : Center(
+                        child: Text('这个榜单暂时是空的', style: TextStyle(color: scheme.onSurfaceVariant)),
+                      ),
               );
             } else {
               rows = Column(
                 children: [
+                  if (board == HotBoard.city) const CityBannerBar(),
                   for (final entry in hot)
                     HotSearchRow(
                       entry: entry,

@@ -1,4 +1,5 @@
 import 'session.dart';
+import 'weibo_com_session.dart';
 
 String sanitizeImageUrl(String? value) => secureUrl(value);
 
@@ -19,10 +20,19 @@ bool signedUrlExpired(String url, DateTime now) {
   return expires != null && expires * 1000 <= now.millisecondsSinceEpoch;
 }
 
-/// sinaimg wants Weibo as the referrer; other sites' covers in link cards (Bilibili's hdslb.com)
-/// refuse exactly that one, so they get none.
+/// sinaimg wants Weibo as the referrer; chat attachments on `upload.api.weibo.com` also need the
+/// signed-in weibo.com Cookie and chat Referer; third-party covers (Bilibili's hdslb.com) refuse
+/// Weibo's referrer and get none.
 Map<String, String> weiboImageHeaders([String? url]) {
   final host = url == null ? null : Uri.tryParse(sanitizeImageUrl(url))?.host.toLowerCase();
+  if (host == 'upload.api.weibo.com') {
+    final cookie = WeiboComSession.instance.cachedCookie;
+    return {
+      'Referer': 'https://api.weibo.com/chat',
+      'User-Agent': Session.instance.userAgent,
+      if (cookie.isNotEmpty) 'Cookie': cookie,
+    };
+  }
   final weibo = host == null || host.endsWith('sinaimg.cn') || host.endsWith('weibo.com') || host.endsWith('weibo.cn');
   return {
     if (weibo) 'Referer': 'https://m.weibo.cn/',

@@ -782,7 +782,25 @@ Comment? toComment(dynamic element, String statusId) {
     replies: replies,
     repliesCount: total > replies.length ? total : replies.length,
     images: images,
+    badges: _commentBadges(json),
   );
+}
+
+List<CommentBadge> _commentBadges(Map<String, dynamic> json) {
+  final result = <CommentBadge>[];
+  for (final raw in asList(json['comment_badge'])) {
+    final map = asMap(raw);
+    if (map == null) continue;
+    final url = textOf(map['pic_url']);
+    if (url == null || !url.startsWith('http')) continue;
+    final aspect = (map['length'] as num?)?.toDouble() ?? 1.33;
+    result.add(CommentBadge(
+      url: url,
+      aspect: aspect > 0.2 && aspect < 8.0 ? aspect : 1.33,
+      name: textOf(map['name']) ?? '',
+    ));
+  }
+  return result;
 }
 
 /// Who a reply answers. m.weibo.cn sends the answered comment as `reply_comment`; older answers
@@ -946,22 +964,177 @@ List<Conversation> parseConversations(dynamic data) {
   return result;
 }
 
+const _chatMssSource = '209678993';
+
+/// Builds the authenticated MSS download URL for a chat attachment `fid` (image or video).
+String chatMssUrl(String fid, {bool imageOrigin = false}) =>
+    'https://upload.api.weibo.com/2/mss/msget?source=$_chatMssSource&fid=${Uri.encodeQueryComponent(fid)}'
+    '${imageOrigin ? '&imageType=origin' : ''}';
+
+String? _firstFid(dynamic raw) {
+  if (raw == null) return null;
+  if (raw is List) {
+    for (final item in raw) {
+      final value = idOf(item);
+      if (value != null && value.isNotEmpty) return value;
+    }
+    return null;
+  }
+  final text = idOf(raw);
+  if (text == null || text.isEmpty) return null;
+  final first = text.split(',').first.trim();
+  return first.isEmpty ? null : first;
+}
+
+Map<String, dynamic>? _asJsonMap(dynamic raw) {
+  final direct = asMap(raw);
+  if (direct != null) return direct;
+  if (raw is String && raw.trim().startsWith('{')) {
+    try {
+      return asMap(jsonDecode(raw));
+    } on FormatException {
+      return null;
+    }
+  }
+  return null;
+}
+
+(int?, int?) _parseDimPair(String? raw, String sep) {
+  if (raw == null || raw.isEmpty) return (null, null);
+  final match = RegExp('(\\d+)$sep(\\d+)').firstMatch(raw);
+  if (match == null) return (null, null);
+  return (int.tryParse(match.group(1)!), int.tryParse(match.group(2)!));
+}
+
+ChatMedia? _parseChatMedia(Map<String, dynamic> msg, int mediaType) {
+  // 1. Sticker / animated GIF carried in `pic_infos` (list or map keyed by pic id).
+  final rawPicInfos = msg['pic_infos'];
+  final picList = rawPicInfos is Map ? rawPicInfos.values.toList() : asList(rawPicInfos);
+  if (picList.isNotEmpty) {
+    final pic = asMap(picList.first);
+    final url = textOf(pic?['original_pic']) ?? textOf(pic?['thumbnail_pic']) ?? textOf(pic?['url']);
+    if (url != null && url.isNotEmpty) {
+      var (w, h) = _parseDimPair(textOf(pic?['thumbnail_size']), r'[*xX]');
+      w ??= intOf(pic?['width']);
+      h ??= intOf(pic?['height']);
+      return ChatMedia(
+        kind: MediaKind.image,
+        url: _https(url),
+        width: w,
+        height: h,
+        isGif: true,
+      );
+    }
+  }
+
+  // 2. MSS attachment fid (`att_ids` or `fids`).
+  final fid = _firstFid(msg['att_ids']) ?? _firstFid(msg['fids']) ?? idOf(msg['fid']);
+  if (fid == null || fid.isEmpty) return null;
+
+  final extText = _asJsonMap(msg['ext_text']);
+  final annotations = _asJsonMap(msg['annotations']);
+  final liveFid = idOf(msg['live_photo_video_fid']) ??
+      idOf(extText?['live_photo_video_fid']) ??
+      idOf(annotations?['live_photo_video_fid']);
+  final coverFid = idOf(msg['ext_text_video_pic_fid']) ??
+      idOf(extText?['video_pic_fid']) ??
+      idOf(annotations?['video_pic_fid']);
+
+  if (mediaType == 10 || (coverFid != null && coverFid.isNotEmpty)) {
+    return ChatMedia(
+      kind: MediaKind.video,
+      fid: fid,
+      url: chatMssUrl(fid),
+      coverFid: coverFid,
+      thumbnailUrl: (coverFid != null && coverFid.isNotEmpty) ? chatMssUrl(coverFid, imageOrigin: true) : null,
+    );
+  }
+  if (mediaType == 1 || (liveFid != null && liveFid.isNotEmpty)) {
+    return ChatMedia(
+      kind: MediaKind.image,
+      fid: fid,
+      url: chatMssUrl(fid, imageOrigin: true),
+      liveVideoUrl: (liveFid != null && liveFid.isNotEmpty) ? chatMssUrl(liveFid) : null,
+    );
+  }
+  return null;
+}
+
+List<ChatLinkMeta> _parseChatLinkMetas(dynamic raw) {
+  final result = <ChatLinkMeta>[];
+  final seen = <String>{};
+  for (final item in asList(raw)) {
+    final map = asMap(item);
+    if (map == null) continue;
+    final info = asMap(map['info']);
+    final shortUrl = textOf(info?['url_short']) ?? textOf(map['url_short']) ?? '';
+    final longUrl = textOf(info?['url_long']) ?? textOf(map['url_long']);
+    final status = toStatus(map['status']);
+    final user = toUser(map['user']);
+    final outerObj = asMap(map['object']);
+    final innerObj = asMap(outerObj?['object']);
+
+    final objUrl = textOf(innerObj?['url']) ?? textOf(outerObj?['url']);
+    final key = shortUrl.isNotEmpty ? shortUrl : (longUrl ?? objUrl ?? '');
+    if (key.isEmpty || !seen.add(key)) continue;
+
+    final image = textOf(asMap(innerObj?['image'])?['url']) ??
+        textOf(asMap(outerObj?['image'])?['url']) ??
+        textOf(innerObj?['url']);
+    final imgUrl = (image != null &&
+            (image.contains('sinaimg') ||
+                image.endsWith('.jpg') ||
+                image.endsWith('.jpeg') ||
+                image.endsWith('.png') ||
+                image.endsWith('.webp') ||
+                image.endsWith('.gif')))
+        ? _https(image)
+        : null;
+
+    result.add(ChatLinkMeta(
+      shortUrl: shortUrl.isNotEmpty ? shortUrl : key,
+      longUrl: (longUrl != null && longUrl.isNotEmpty) ? longUrl : objUrl,
+      title: textOf(innerObj?['display_name']) ?? textOf(outerObj?['display_name']) ?? textOf(innerObj?['title']),
+      description: textOf(innerObj?['summary']) ?? textOf(outerObj?['summary']),
+      imageUrl: imgUrl,
+      site: textOf(innerObj?['title']),
+      status: status,
+      user: user,
+    ));
+  }
+  return result;
+}
+
+String _https(String url) {
+  final trimmed = url.trim();
+  if (trimmed.startsWith('//')) return 'https:$trimmed';
+  if (trimmed.toLowerCase().startsWith('http://')) return 'https://${trimmed.substring(7)}';
+  return trimmed;
+}
+
 DirectMessage? _toMessage(Map<String, dynamic> msg, {Map<String, User>? users}) {
   final fromUser = asMap(msg['from_user']);
-  final senderId = idOf(msg['sender_id']) ?? idOf(fromUser?['id']);
-  final id = idOf(msg['id']);
+  final senderId = idOf(msg['sender_id']) ?? idOf(msg['from_uid']) ?? idOf(fromUser?['id']);
+  final id = idOf(msg['id']) ?? idOf(msg['mid']);
   if (senderId == null || id == null) return null;
   final senderName = textOf(msg['sender_screen_name']) ??
       textOf(fromUser?['screen_name']) ??
       users?[senderId]?.screenName;
+  final rawAvatar = textOf(fromUser?['profile_image_url']) ??
+      textOf(fromUser?['avatar_large']) ??
+      users?[senderId]?.avatarUrl;
+  final mediaType = intOf(msg['media_type']) ?? 0;
+  final rawText = textOf(msg['content']) ?? textOf(msg['text']) ?? '';
   return DirectMessage(
     id: id,
     senderId: senderId,
-    text: weiboHtmlToText(textOf(msg['text']) ?? ''),
+    text: weiboHtmlToText(rawText),
     createdAt: parseWeiboTime(textOf(msg['created_at']) ?? textOf(msg['time'])),
     senderName: (senderName != null && senderName.isNotEmpty) ? senderName : null,
-    senderAvatar: users?[senderId]?.avatarUrl,
-    mediaType: intOf(msg['media_type']) ?? 0,
+    senderAvatar: (rawAvatar != null && rawAvatar.isNotEmpty) ? defaultAvatarFixed(_https(rawAvatar)) : null,
+    mediaType: mediaType,
+    media: _parseChatMedia(msg, mediaType),
+    links: _parseChatLinkMetas(msg['url_objects']),
   );
 }
 
@@ -1009,21 +1182,134 @@ List<DirectMessage> parseGroupChat(dynamic data) {
   return messages;
 }
 
+/// Parses group messages from `api.weibo.com/webim/groupchat/query_messages.json`.
+///
+/// Returned newest-first (matching [parseGroupChat]), along with the `nextCursor` (`minId - 1`)
+/// for paging further back in history.
+PageResult<DirectMessage> parseWebimGroupMessages(Map<String, dynamic>? root, {int requestedCount = 20}) {
+  if (root == null) return const PageResult(<DirectMessage>[], null);
+  final rawList = asList(root['messages']);
+  final messages = <DirectMessage>[];
+  BigInt? minId;
+  for (final element in rawList) {
+    final msg = asMap(element);
+    if (msg == null) continue;
+    final parsed = _toMessage(msg);
+    if (parsed == null) continue;
+    messages.add(parsed);
+    final numeric = BigInt.tryParse(parsed.id);
+    if (numeric != null && (minId == null || numeric < minId)) minId = numeric;
+  }
+  messages.sort((a, b) {
+    final timeCmp = b.createdAt.compareTo(a.createdAt);
+    if (timeCmp != 0) return timeCmp;
+    final ai = BigInt.tryParse(a.id);
+    final bi = BigInt.tryParse(b.id);
+    if (ai != null && bi != null) return bi.compareTo(ai);
+    return b.id.compareTo(a.id);
+  });
+  String? nextCursor;
+  if (messages.length >= requestedCount && minId != null && minId > BigInt.one) {
+    nextCursor = (minId - BigInt.one).toString();
+  }
+  return PageResult(messages, nextCursor);
+}
+
+/// Parses `upload.api.weibo.com/2/mss/meta_query.json` for a chat attachment `fid`.
+ChatMediaMeta? parseChatMediaMeta(Map<String, dynamic>? map, {String fallbackFid = ''}) {
+  if (map == null) return null;
+  final fid = idOf(map['fid']) ?? fallbackFid;
+  if (fid.isEmpty) return null;
+  String? thumb(String key) {
+    final raw = textOf(map[key]);
+    if (raw == null || raw.isEmpty) return null;
+    final url = _https(raw);
+    if (url.contains('source=')) return url;
+    return '$url${url.contains('?') ? '&' : '?'}source=$_chatMssSource';
+  }
+
+  final thumb240 = thumb('thumbnail_240');
+  final thumb600 = thumb('thumbnail_600');
+  var (w, h) = _parseDimPair(textOf(map['videosize']), r'[*xX]');
+  if (w == null || h == null) {
+    (w, h) = _parseDimPair(textOf(map['thumbnail_240']) ?? textOf(map['thumbnail_600']), ',');
+  }
+  return ChatMediaMeta(
+    fid: fid,
+    extension: textOf(map['extension']),
+    thumbnail240: thumb240,
+    thumbnail600: thumb600,
+    width: w,
+    height: h,
+    durationSec: intOf(map['videotime']),
+  );
+}
+
 /// The group's title, which is where m.weibo.cn keeps its name and member count.
 String? groupTitle(dynamic data) {
   final title = textOf(asMap(asMap(data)?['data'])?['title']) ?? textOf(asMap(data)?['title']);
   return (title == null || title.isEmpty) ? null : title;
 }
 
+final _htmlMarkupPattern = RegExp(r'</?(?:a|br|p|div|span|img)\b', caseSensitive: false);
+
 /// The announcement out of a `bulletin`'s content, or null when it says nothing.
 ///
-/// The content is plain text with newlines; it is run through `weiboHtmlToText` all the same, because
-/// some groups keep HTML in it.
+/// Only runs through `weiboHtmlToText` when real HTML tags appear — otherwise plain-text notices
+/// containing `<...>` brackets or comparisons (`a < b ... c > d`) would lose everything between
+/// the angle brackets.
 String? parseGroupNotice(dynamic content) {
   final raw = textOf(content);
   if (raw == null) return null;
-  final text = weiboHtmlToText(raw).trim();
+  final text = _htmlMarkupPattern.hasMatch(raw)
+      ? weiboHtmlToText(raw).trim()
+      : decodeHtmlEntities(raw).replaceAll('\r\n', '\n').replaceAll('\r', '\n').trim();
   return text.isEmpty ? null : text;
+}
+
+String? _pickBulletinNotice(Map<String, dynamic> map, Map<String, dynamic>? bulletin) {
+  String? best;
+  void consider(dynamic raw) {
+    final parsed = parseGroupNotice(raw);
+    if (parsed != null && (best == null || parsed.length > best!.length)) {
+      best = parsed;
+    }
+  }
+
+  if (bulletin != null) {
+    for (final key in const ['full_content', 'long_content', 'content', 'detail', 'text', 'body', 'summary']) {
+      consider(bulletin[key]);
+    }
+  } else if (map['bulletin'] is String) {
+    consider(map['bulletin']);
+  }
+  consider(map['bulletin_content']);
+  consider(map['notice']);
+  return best;
+}
+
+/// Parses group metadata out of either `groupchat/query.json` or `query_group.json`.
+GroupInfo parseGroupInfo(String gid, Map<String, dynamic>? map) {
+  if (map == null) return GroupInfo(gid: gid, name: '');
+  final bulletin = asMap(map['bulletin']);
+  final admins = {for (final id in asList(map['admins'])) idOf(id) ?? ''}..remove('');
+  final rawAvatar = textOf(map['round_avatar']) ?? textOf(map['avatar']);
+  final rawScheme = (textOf(bulletin?['scheme']) ?? textOf(bulletin?['url']) ?? textOf(bulletin?['link']))?.trim();
+  return GroupInfo(
+    gid: gid,
+    name: textOf(map['name']) ?? textOf(map['system_name']) ?? '',
+    avatarUrl: (rawAvatar != null && rawAvatar.isNotEmpty) ? _https(rawAvatar) : null,
+    summary: parseGroupNotice(map['summary']),
+    memberCount: intOf(map['member_count']) ?? 0,
+    maxMembers: intOf(map['max_member']) ?? 0,
+    ownerId: idOf(map['owner']) ?? '',
+    adminIds: admins,
+    notice: _pickBulletinNotice(map, bulletin),
+    noticeScheme: (rawScheme != null && rawScheme.isNotEmpty) ? rawScheme : null,
+    noticeTime: intOf(bulletin?['time']) ?? intOf(bulletin?['update_time']) ?? intOf(bulletin?['create_time']),
+    createdAt: intOf(map['create_time']),
+    place: textOf(asMap(map['position'])?['name']),
+  );
 }
 
 /// The members out of a `query_group.json` answer.
@@ -1044,12 +1330,18 @@ List<GroupMember> parseGroupMembers(Map<String, dynamic>? root) {
         textOf(map['name']) ??
         textOf(map['jp']) ??
         uid;
+    final rawAvatar = textOf(map['profile_image_url']) ??
+        textOf(map['avatar_large']) ??
+        textOf(map['avatar']) ??
+        '';
     members.add(GroupMember(
       uid: uid,
       screenName: name,
-      avatarUrl: textOf(map['profile_image_url']) ?? textOf(map['avatar']) ?? '',
+      avatarUrl: rawAvatar.isEmpty ? '' : defaultAvatarFixed(_https(rawAvatar)),
       verified: boolOf(map['verified']),
       level: intOf(map['level']) ?? 0,
+      jp: textOf(map['jp']) ?? '',
+      qp: textOf(map['qp']) ?? '',
     ));
   }
 
@@ -1156,6 +1448,11 @@ List<HotSearch> parseHotSearch(dynamic data) {
 
 /// weibo.com's `statuses/hot_band`: the same board as m.weibo.cn, with the rank, badge, category
 /// and the time each entry made the list.
+///
+/// 我的热搜 (`statuses/mineBand`) and 同城 (`statuses/city`) answer in the same board shape with a
+/// few fields spelled differently: 我的 lists its rows under `realtime`, 同城 calls the words `query`
+/// and the heat `display_hot` (a string like `12.3万` as often as a number), and the line under a
+/// 同城 entry is `display_info` rather than `category`.
 List<HotSearch> parseHotBand(dynamic data, {HotBoard board = HotBoard.realtime}) {
   final root = asMap(data);
   if (root == null) return const [];
@@ -1171,32 +1468,63 @@ List<HotSearch> parseHotBand(dynamic data, {HotBoard board = HotBoard.realtime})
       pinned: true,
     ));
   }
+  final rows = board == HotBoard.mine ? asList(root['realtime']) : asList(root['band_list']);
   var rank = 0;
-  for (final element in asList(root['band_list'])) {
+  for (final element in rows) {
     final item = asMap(element);
     if (item == null || boolOf(item['is_ad']) || item['topic_ad'] != null && boolOf(item['topic_ad'])) continue;
-    final word = (textOf(item['word']) ?? textOf(item['note']))?.trim();
+    final word = (textOf(item['word']) ?? textOf(item['query']) ?? textOf(item['note']))?.trim();
     if (word == null || word.isEmpty) continue;
     rank++;
     final scheme = textOf(item['word_scheme'])?.trim();
     final topic = boolOf(item['topic_flag']) || (scheme?.startsWith('#') ?? false);
-    final num = intOf(item['num']);
+    // 同城 sends a formatted string; every other board only sends the number.
+    final displayHot = textOf(item['display_hot'])?.trim();
+    final heatValue = displayHot != null && displayHot.isNotEmpty ? countOf(displayHot) : intOf(item['num']);
+    // 同城's string is the board's own wording and is kept as it came; a plain count (a number sent
+    // as text) is formatted the way every other board's heat is.
+    final heatText = displayHot != null && displayHot.isNotEmpty && displayHot != '$heatValue'
+        ? displayHot
+        : (heatValue == null || heatValue <= 0 ? null : compactCount(heatValue));
+    final label = textOf(item['label_name']) ?? textOf(item['icon_desc']) ?? _flagLabel(intOf(item['flag']));
     final onboard = intOf(item['onboard_time']);
     result.add(HotSearch(
       word: word,
       query: topic ? '#${word.replaceAll('#', '')}#' : word,
-      heat: num == null || num <= 0 ? null : compactCount(num),
-      heatValue: num,
+      heat: heatText,
+      heatValue: heatValue,
       rank: rank,
-      label: textOf(item['label_name']) ?? textOf(item['icon_desc']),
+      iconUrl: textOf(item['image_url']),
+      label: label,
       labelColor: _hexColor(textOf(item['icon_desc_color'])),
-      category: textOf(item['category'])?.split(',').first.trim(),
+      category: (textOf(item['category']) ?? textOf(item['display_info']))?.split(',').first.trim(),
       onboardAt: onboard == null || onboard <= 0 ? null : DateTime.fromMillisecondsSinceEpoch(onboard * 1000),
       board: board,
     ));
   }
   final seen = <String>{};
   return result.where((entry) => seen.add(entry.word)).toList();
+}
+
+/// The badge a board row's `flag` stands for, for the rows that carry no `icon_desc` at all:
+/// `hot_band.json` and its other boards write `flag: 1` with 新 and `flag: 2` with 热. Any other
+/// value is left to the icon rather than guessed, since the page colours 新/热 and nothing else.
+String? _flagLabel(int? flag) => switch (flag) {
+      1 => '新',
+      2 => '热',
+      _ => null,
+    };
+
+/// 同城's own answer says which city it drew: `{city_code: …, city_name: …}` below the envelope — the
+/// transport hands a caller the `data` member, which is where these live. Null when it named no city,
+/// which is what a refused or redirected request does.
+CityChoice? parseHotCityMeta(dynamic data) {
+  final root = asMap(data);
+  if (root == null) return null;
+  final code = textOf(root['city_code'])?.trim();
+  final name = textOf(root['city_name'])?.trim();
+  if (code == null || name == null || code.isEmpty || name.isEmpty) return null;
+  return CityChoice(code: code, name: name);
 }
 
 /// weibo.com's `feed/allGroups`: the 推荐 channels are its groups of type 1, 我的频道 then 频道推荐.
@@ -1652,6 +1980,7 @@ String? _searchQueryOf(String? scheme) {
   return null;
 }
 
+/// `m.weibo.cn/api/config/list`: the custom groups a signed-in account has, and nothing else.
 List<FeedSource> parseFeedGroups(dynamic data) {
   final root = asMap(data);
   if (root == null) return const [];
@@ -1665,6 +1994,48 @@ List<FeedSource> parseFeedGroups(dynamic data) {
     result.add(FeedSource(FeedKind.group, name, gid));
   }
   return result;
+}
+
+/// weibo.com's `feed/allGroups` read as the home feed's source list: 全部关注 and 特别关注 from
+/// 默认分组, the account's own groups from 我的分组.
+///
+/// The answer carries both feed groups and 推荐 channels in one list; the `group_type` tells them
+/// apart — 0 is a feed, 1 is a channel — which is the same split [parseRecommendChannels] makes from
+/// the other side.
+({FeedSource? followingAll, FeedSource? special, List<FeedSource> custom}) parseWeiboComFeedGroups(dynamic data) {
+  FeedSource? followingAll;
+  FeedSource? special;
+  final custom = <FeedSource>[];
+  final seen = <String>{};
+  for (final element in asList(asMap(data)?['groups'])) {
+    final group = asMap(element);
+    if (group == null || intOf(group['group_type']) != 0) continue;
+    final own = textOf(group['title'])?.trim() == '我的分组';
+    for (final entry in asList(group['group'])) {
+      final item = asMap(entry);
+      final gid = idOf(item?['gid']);
+      final name = textOf(item?['title'])?.trim();
+      if (gid == null || name == null || name.isEmpty) continue;
+      // The two system feeds are recognised by name wherever they sit: 全部关注 also has the list
+      // id its timeline is asked for, which is the `10001<uid>` prefix.
+      if (followingAll == null && (gid.startsWith('10001') || name == '全部关注')) {
+        followingAll = FeedSource(FeedKind.followingAll, '全部关注', gid);
+        continue;
+      }
+      if (special == null && name == '特别关注') {
+        special = FeedSource(FeedKind.special, '特别关注', gid);
+        continue;
+      }
+      // 最新微博 (11001<uid>) is the chronological feed m.weibo.cn answers, which the app already
+      // lists as 最新, and 互相关注 has no timeline this app reads; neither is a group to offer.
+      if (!own) continue;
+      // 悄悄关注 is its own feed (m.weibo.cn's `feed/private`) and is added beside these, not among
+      // them, so reading it here would list it twice.
+      if (name == '悄悄关注' || idOf(item?['type']) == '5' || gid.startsWith('10005')) continue;
+      if (seen.add(gid)) custom.add(FeedSource(FeedKind.group, name, gid));
+    }
+  }
+  return (followingAll: followingAll, special: special, custom: custom);
 }
 
 PageResult<SuperTopic> parseSuperTopics(dynamic data) {
@@ -1824,4 +2195,146 @@ List<Status> parseFakeTimeline(String source) {
     ));
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Topic suggestions & 微博智搜 (ai.s.weibo.com)
+
+/// Topic name suggestions from `weibo.com/ajax/mblog/topic?q=...`.
+List<String> parseTopicSuggestions(dynamic data) {
+  final seen = <String>{};
+  final result = <String>[];
+  for (final raw in asList(data)) {
+    final name = (asMap(raw)?['topic'] ?? asMap(raw)?['name'] ?? (raw is String ? raw : null))?.toString().trim();
+    if (name == null || name.isEmpty) continue;
+    final clean = name.replaceAll('#', '').trim();
+    if (clean.isEmpty || !seen.add(clean)) continue;
+    result.add(clean);
+  }
+  return result;
+}
+
+final _wbCustomBlockPattern = RegExp(r'```wbCustomBlock\s*(\{[\s\S]*?\})\s*```');
+
+/// Parses an answer from `ai.s.weibo.com/api/wis/show.json` into structured blocks.
+AiSearchResult parseAiSearchResult(dynamic data, String query) {
+  final map = asMap(data);
+  if (map == null) return AiSearchResult(query: query, status: 0);
+  final status = intOf(map['status']) ?? 0;
+  final model = textOf(map['model']);
+  final linkList = [
+    for (final raw in asList(map['link_list']))
+      if (textOf(raw) != null && textOf(raw)!.isNotEmpty) textOf(raw)!,
+  ];
+
+  var body = textOf(map['msg']) ?? '';
+  String? thinking;
+  final thinkStart = body.indexOf('<think>');
+  if (thinkStart >= 0) {
+    final thinkEnd = body.indexOf('</think>', thinkStart + 7);
+    if (thinkEnd >= 0) {
+      final t = body.substring(thinkStart + 7, thinkEnd).trim();
+      if (t.isNotEmpty) thinking = t;
+      body = (body.substring(0, thinkStart) + body.substring(thinkEnd + 8)).trim();
+    } else {
+      final t = body.substring(thinkStart + 7).trim();
+      if (t.isNotEmpty) thinking = t;
+      body = body.substring(0, thinkStart).trim();
+    }
+  }
+
+  final blocks = <AiSearchBlock>[];
+  void appendTextChunk(String chunk) {
+    for (final rawLine in chunk.split('\n')) {
+      final line = rawLine.trim();
+      if (line.isEmpty) continue;
+      final heading = RegExp(r'^(#{1,4})\s+(.+)$').firstMatch(line);
+      if (heading != null) {
+        blocks.add(AiSearchBlock(
+          kind: AiSearchBlockKind.heading,
+          level: heading.group(1)!.length,
+          text: heading.group(2)!.trim(),
+        ));
+        continue;
+      }
+      final bullet = RegExp(r'^[-*•]\s+(.+)$').firstMatch(line);
+      if (bullet != null) {
+        blocks.add(AiSearchBlock(kind: AiSearchBlockKind.bullet, text: bullet.group(1)!.trim()));
+        continue;
+      }
+      blocks.add(AiSearchBlock(kind: AiSearchBlockKind.paragraph, text: line));
+    }
+  }
+
+  var cursor = 0;
+  for (final match in _wbCustomBlockPattern.allMatches(body)) {
+    if (match.start > cursor) {
+      appendTextChunk(body.substring(cursor, match.start));
+    }
+    cursor = match.end;
+    Map<String, dynamic>? payload;
+    try {
+      payload = asMap(jsonDecode(match.group(1)!));
+    } on FormatException {
+      payload = null;
+    }
+    if (payload == null) continue;
+    final kind = textOf(payload['type']);
+    if (kind == 'quoted') {
+      final quotes = <AiSearchQuote>[];
+      for (final item in asList(asMap(payload['data'])?['quote_list'])) {
+        final q = asMap(item);
+        if (q == null) continue;
+        final name = textOf(q['name']) ?? textOf(q['title']) ?? '';
+        final scheme = textOf(q['scheme']) ?? textOf(q['url']) ?? '';
+        if (name.isEmpty && scheme.isEmpty) continue;
+        quotes.add(AiSearchQuote(
+          name: name.isNotEmpty ? name : '来源',
+          scheme: scheme,
+          label: textOf(q['label']),
+        ));
+      }
+      if (quotes.isNotEmpty) {
+        if (blocks.isNotEmpty && blocks.last.kind != AiSearchBlockKind.media) {
+          final prev = blocks.removeLast();
+          blocks.add(AiSearchBlock(
+            kind: prev.kind,
+            text: prev.text,
+            level: prev.level,
+            quotes: [...prev.quotes, ...quotes],
+          ));
+        } else {
+          blocks.add(AiSearchBlock(kind: AiSearchBlockKind.paragraph, quotes: quotes));
+        }
+      }
+    } else if (kind == 'mediablock') {
+      final media = <AiSearchMedia>[];
+      for (final item in asList(payload['data'])) {
+        final m = asMap(item);
+        if (m == null) continue;
+        final img = textOf(m['img']) ?? textOf(m['pic']);
+        if (img == null || !img.startsWith('http')) continue;
+        media.add(AiSearchMedia(
+          imageUrl: img,
+          scheme: textOf(m['scheme']),
+          statusId: idOf(m['cur_mid']) ?? idOf(m['mid']),
+        ));
+      }
+      if (media.isNotEmpty) {
+        blocks.add(AiSearchBlock(kind: AiSearchBlockKind.media, media: media));
+      }
+    }
+  }
+  if (cursor < body.length) {
+    appendTextChunk(body.substring(cursor));
+  }
+
+  return AiSearchResult(
+    query: query,
+    status: status,
+    model: model,
+    thinking: thinking,
+    blocks: blocks,
+    linkList: linkList,
+  );
 }

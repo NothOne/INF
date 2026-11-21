@@ -40,6 +40,26 @@ class StatusMenuGeometry {
     );
   }
 
+  /// A menu horizontally centred like [centred], but vertically centred on [origin]'s finger point,
+  /// clamped inside the safe area so it stays on screen near the top or bottom edge.
+  factory StatusMenuGeometry.atPointer({
+    required Rect origin,
+    required Size screen,
+    required EdgeInsets safe,
+    required Size menu,
+  }) {
+    final width = math.min(menu.width, screen.width - 32);
+    final height = math.min(menu.height, screen.height - safe.top - safe.bottom - 24);
+    final left = (screen.width - width) / 2;
+    final minTop = safe.top + 12;
+    final maxTop = math.max(minTop, screen.height - safe.bottom - 12 - height);
+    final top = (origin.center.dy - height / 2).clamp(minTop, maxTop);
+    return StatusMenuGeometry._(
+      origin: origin,
+      target: Rect.fromLTWH(left, top, width, height),
+    );
+  }
+
   /// A menu that opens beside [origin], against the screen edge that origin sits on.
   ///
   /// For a bar's `⋯`: the button is already where the finger is, and a menu in the middle of the

@@ -28,11 +28,20 @@ enum EndpointHost {
   /// `result: false` rather than `ok: 0`.
   apiWeibo,
 
+  /// `upload.api.weibo.com`, chat attachment metadata and MSS media retrieval.
+  uploadWeibo,
+
+  /// `up.video.weibocdn.com`, chunked chat video upload host.
+  videoUpload,
+
   /// `passport.weibo.com`, which hands out the visitor identity and the login QR code.
   passport,
 
   /// `m.s.weibo.com`, the topic page's data. Answers only with that topic's own page as Referer.
   msWeibo,
+
+  /// `ai.s.weibo.com`, 微博智搜's anonymous AI answer stream.
+  aiWeibo,
 }
 
 /// What a request needs before the host will answer it.
@@ -122,7 +131,8 @@ enum Endpoint {
 
   // ---- weibo.com --------------------------------------------------------------------------
 
-  /// The 热搜 board, which carries rank, badge, category and the time each entry made the list.
+  /// The 热搜 boards, matching weibo.com's `RANK_TAB_GROUP_MAP`.
+  hotBoardMine(EndpointHost.weiboCom, 'statuses/mineBand', EndpointAuth.user),
   hotBand(EndpointHost.weiboCom, 'statuses/hot_band', EndpointAuth.none),
   hotBoardEntertainment(EndpointHost.weiboCom, 'statuses/entertainment', EndpointAuth.visitor),
   hotBoardSocial(EndpointHost.weiboCom, 'statuses/social', EndpointAuth.visitor),
@@ -130,6 +140,11 @@ enum Endpoint {
   hotBoardLife(EndpointHost.weiboCom, 'statuses/life', EndpointAuth.visitor),
   hotBoardSport(EndpointHost.weiboCom, 'statuses/sport', EndpointAuth.visitor),
   hotBoardAcg(EndpointHost.weiboCom, 'statuses/acg', EndpointAuth.visitor),
+  hotBoardCity(EndpointHost.weiboCom, 'statuses/city', EndpointAuth.visitor),
+
+  /// Home ranked following feed (全部关注) and group feeds (特别关注 / 自定义分组) on weibo.com.
+  feedUnreadFriends(EndpointHost.weiboCom, 'feed/unreadfriendstimeline', EndpointAuth.user),
+  feedGroupsTimeline(EndpointHost.weiboCom, 'feed/groupstimeline', EndpointAuth.user),
 
   /// 推荐 channels. The same for every visitor, and answered without one too.
   recommendChannels(EndpointHost.weiboCom, 'feed/allGroups', EndpointAuth.none),
@@ -155,6 +170,13 @@ enum Endpoint {
   /// without the envelope `_post` reads, which is why it cannot raise a captcha.
   hideUser(EndpointHost.weiboCom, 'statuses/filterUser', EndpointAuth.user),
 
+  /// weibo.com's composer writes: support images on repost, visibility, content statement, and video.
+  postStatusCom(EndpointHost.weiboCom, 'statuses/update', EndpointAuth.user),
+  repostCom(EndpointHost.weiboCom, 'statuses/normal_repost', EndpointAuth.user),
+  topicSuggest(EndpointHost.weiboCom, 'mblog/topic', EndpointAuth.visitor),
+  videoDispatch(EndpointHost.weiboCom, 'multimedia/dispatch', EndpointAuth.user),
+  videoOutput(EndpointHost.weiboCom, 'multimedia/output', EndpointAuth.user),
+
   // ---- api.weibo.com: group chat -----------------------------------------------------------
   //
   // None of this exists on m.weibo.cn. The envelope is `result: false`, not `ok: 0`, so none of
@@ -162,9 +184,17 @@ enum Endpoint {
 
   groupInfo(EndpointHost.apiWeibo, 'groupchat/query.json', EndpointAuth.user),
   groupMembers(EndpointHost.apiWeibo, 'query_group.json', EndpointAuth.user),
+  groupMessages(EndpointHost.apiWeibo, 'groupchat/query_messages.json', EndpointAuth.user),
+  sendGroupWebimMessage(EndpointHost.apiWeibo, 'groupchat/send_message.json', EndpointAuth.user),
   groupMuted(EndpointHost.apiWeibo, '2/notice_center/discussion_group/push_settings.json', EndpointAuth.user),
   updateGroupMuted(EndpointHost.apiWeibo, '2/notice_center/discussion_group/set_push_settings.json', EndpointAuth.user),
   updateGroupNotice(EndpointHost.apiWeibo, 'groupchat/send_bulletin.json', EndpointAuth.user),
+  deleteGroupNotice(EndpointHost.apiWeibo, 'groupchat/delete_bulletin.json', EndpointAuth.user),
+  uploadChatMedia(EndpointHost.apiWeibo, 'uploadx.json', EndpointAuth.user),
+  initChatVideo(EndpointHost.apiWeibo, '2/multimedia/init.json', EndpointAuth.user),
+  queryChatVideoTrans(EndpointHost.apiWeibo, '2/mss/query_video_trans.json', EndpointAuth.user),
+  chatMediaMeta(EndpointHost.uploadWeibo, '2/mss/meta_query.json', EndpointAuth.user),
+  chatVideoUpload(EndpointHost.videoUpload, '2/multimedia/upload.json', EndpointAuth.user),
 
   // ---- passport ---------------------------------------------------------------------------
 
@@ -178,7 +208,12 @@ enum Endpoint {
   // ---- m.s.weibo.com ----------------------------------------------------------------------
 
   topicDetail(EndpointHost.msWeibo, 'ajax_topic/detail', EndpointAuth.none),
-  topicTrend(EndpointHost.msWeibo, 'ajax_topic/trend', EndpointAuth.none);
+  topicTrend(EndpointHost.msWeibo, 'ajax_topic/trend', EndpointAuth.none),
+
+  // ---- ai.s.weibo.com ---------------------------------------------------------------------
+
+  /// 微博智搜: anonymous polling answer for a topic or search query.
+  aiSearch(EndpointHost.aiWeibo, 'api/wis/show.json', EndpointAuth.none);
 
   const Endpoint(this.host, this.path, this.auth, {this.captchaRisk = false, this.cached = false});
 

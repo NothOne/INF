@@ -26,6 +26,7 @@ Future<void> showRecommendChannels(
   return showActionSheet<void>(
     context: context,
     isScrollControlled: true,
+    frosted: false,
     builder: (sheetContext) => _ChannelSheet(
       current: current,
       onSelect: (channel) {

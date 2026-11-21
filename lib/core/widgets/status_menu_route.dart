@@ -11,6 +11,10 @@ enum StatusMenuPlacement {
   /// The middle of the screen. For a card held in a list.
   centred,
 
+  /// Horizontally centred like [centred], vertically centred on the press point. For a long-pressed
+  /// comment row so the menu opens right under the finger.
+  atPointer,
+
   /// Beside the widget it came from. For a page bar's `⋯`.
   anchored,
 }
@@ -169,6 +173,12 @@ class StatusMenuRoute<T> extends PopupRoute<T> {
     final menu = Size(menuWidth, _estimatedHeight);
     final geometry = switch (placement) {
       StatusMenuPlacement.centred => StatusMenuGeometry.centred(
+          origin: origin,
+          screen: media.size,
+          safe: media.padding,
+          menu: menu,
+        ),
+      StatusMenuPlacement.atPointer => StatusMenuGeometry.atPointer(
           origin: origin,
           screen: media.size,
           safe: media.padding,

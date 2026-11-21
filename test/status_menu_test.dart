@@ -313,6 +313,31 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+
+  group('atPointer keeps horizontal centering and vertically centres on the finger', () {
+    const screen = Size(400, 800);
+    const safe = EdgeInsets.only(top: 48, bottom: 24);
+    const menu = Size(268, 140);
+
+    test('matches centred horizontal geometry and aligns vertical centre with the press point', () {
+      final point = menuOriginAt(const Offset(95, 520));
+      final g = StatusMenuGeometry.atPointer(origin: point, screen: screen, safe: safe, menu: menu);
+      final centred = StatusMenuGeometry.centred(origin: point, screen: screen, safe: safe, menu: menu);
+      expect(g.target.left, closeTo(centred.target.left, 1e-9));
+      expect(g.target.width, closeTo(centred.target.width, 1e-9));
+      expect(g.target.center.dy, closeTo(520, 1e-9));
+    });
+
+    test('clamps inside the top and bottom safe areas near screen edges', () {
+      final topPoint = menuOriginAt(const Offset(200, 70));
+      final topMenu = StatusMenuGeometry.atPointer(origin: topPoint, screen: screen, safe: safe, menu: menu);
+      expect(topMenu.target.top, closeTo(safe.top + 12, 1e-9));
+
+      final bottomPoint = menuOriginAt(const Offset(200, 770));
+      final bottomMenu = StatusMenuGeometry.atPointer(origin: bottomPoint, screen: screen, safe: safe, menu: menu);
+      expect(bottomMenu.target.bottom, closeTo(screen.height - safe.bottom - 12, 1e-9));
+    });
+  });
 }
 
 Future<void> _noop() async {}

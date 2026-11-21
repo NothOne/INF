@@ -14,7 +14,6 @@ import '../../core/layout.dart';
 import '../../core/models.dart';
 import '../../core/native.dart';
 import '../../core/prefs.dart';
-import '../../core/session.dart';
 import '../../core/share.dart';
 import '../../core/temp_files.dart';
 import '../../core/touches.dart';
@@ -42,14 +41,14 @@ class _VideoPageState extends State<VideoPage> with WidgetsBindingObserver {
   bool _refreshed = false;
   late VideoPlayerController _controller = _newController(preferredVideoView());
 
-  VideoPlayerController _newController(VideoViewType viewType) => VideoPlayerController.networkUrl(
-        Uri.parse(secureUrl(_url)),
-        httpHeaders: {
-          'Referer': 'https://m.weibo.cn/',
-          'User-Agent': Session.instance.userAgent,
-        },
-        viewType: viewType,
-      );
+  VideoPlayerController _newController(VideoViewType viewType) {
+    final clean = secureUrl(_url);
+    return VideoPlayerController.networkUrl(
+      Uri.parse(clean),
+      httpHeaders: weiboImageHeaders(clean),
+      viewType: viewType,
+    );
+  }
   bool _ready = false;
   bool _error = false;
   bool _controls = true;

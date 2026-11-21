@@ -29,13 +29,41 @@ class _DraftsPageState extends State<DraftsPage> {
     setState(() => _busy.add(draft.id));
     try {
       if (draft.type == DraftType.original) {
+        final videoPath = draft.videoPath;
+        if (videoPath != null && videoPath.isNotEmpty) {
+          // A draft that carries a video sends only the video: Weibo does not take both.
+          final video = await WeiboApi.instance.uploadVideo(File(videoPath));
+          await WeiboApi.instance.postStatus(
+            draft.text.trim(),
+            const [],
+            visibility: draft.visibility,
+            statement: draft.statement,
+            video: video,
+          );
+        } else {
+          final ids = <String>[];
+          for (final path in draft.images) {
+            ids.add(await WeiboApi.instance.uploadImage(File(path)));
+          }
+          await WeiboApi.instance.postStatus(
+            draft.text.trim(),
+            ids,
+            visibility: draft.visibility,
+            statement: draft.statement,
+          );
+        }
+      } else {
         final ids = <String>[];
         for (final path in draft.images) {
           ids.add(await WeiboApi.instance.uploadImage(File(path)));
         }
-        await WeiboApi.instance.postStatus(draft.text.trim(), ids);
-      } else {
-        await WeiboApi.instance.repost(draft.statusId ?? '', draft.text.trim(), draft.crossPost);
+        await WeiboApi.instance.repost(
+          draft.statusId ?? '',
+          draft.text.trim(),
+          draft.crossPost,
+          picIds: ids,
+          visibility: draft.visibility,
+        );
       }
       final drafts = Prefs.instance.drafts.where((d) => d.id != draft.id).toList();
       await Prefs.instance.saveDrafts(drafts);
@@ -139,9 +167,7 @@ class _DraftsPageState extends State<DraftsPage> {
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
-                                      draft.images.isEmpty
-                                          ? relativeTime(draft.updatedAt)
-                                          : '图片 ${draft.images.length} 张 · ${relativeTime(draft.updatedAt)}',
+                                      _metaOf(draft),
                                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
                                             color: scheme.onSurfaceVariant,
                                           ),
@@ -198,6 +224,20 @@ class _DraftsPageState extends State<DraftsPage> {
         DraftType.original => '原创',
         DraftType.repost => '转发',
       };
+
+  /// What a draft carries besides its words: the media it has, and a visibility that is not the
+  /// default — resending it will use both, so the tile says so before the reader taps send.
+  String _metaOf(Draft draft) {
+    final parts = <String>[
+      if (draft.videoPath != null && draft.videoPath!.isNotEmpty)
+        '[视频]'
+      else if (draft.images.isNotEmpty)
+        '图片 ${draft.images.length} 张',
+      if (draft.visibility != PostVisibility.public) draft.visibility.label,
+      relativeTime(draft.updatedAt),
+    ];
+    return parts.join(' · ');
+  }
 }
 
 class _StateChip extends StatelessWidget {

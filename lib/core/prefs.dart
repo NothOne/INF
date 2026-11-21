@@ -120,6 +120,7 @@ class Prefs extends ChangeNotifier {
   /// never rebuilds unrelated status lists or top bars.
   final ValueNotifier<int> blockedNotifier = ValueNotifier(0);
   final ValueNotifier<int> hotBoardsNotifier = ValueNotifier(0);
+  final ValueNotifier<int> cityNotifier = ValueNotifier(0);
   final ValueNotifier<int> draftsNotifier = ValueNotifier(0);
   final ValueNotifier<int> viewedNotifier = ValueNotifier(0);
 
@@ -338,6 +339,54 @@ class Prefs extends ChangeNotifier {
     if (boards.isEmpty) return;
     await _prefs.setStringList('hot_boards', [for (final board in boards) board.name]);
     hotBoardsNotifier.value++;
+  }
+
+  /// Last opened top-level view under the home 热搜 tab (first launch defaults to 热搜).
+  HotSection get hotSection => HotSection.named(_prefs.getString('hot_section'));
+
+  Future<void> setHotSection(HotSection section) async {
+    await _prefs.setString('hot_section', section.name);
+    notifyListeners();
+  }
+
+  /// Last opened sub-board under 微博热搜 (first launch defaults to 我的).
+  HotBoard get hotBoard => HotBoard.named(_prefs.getString('hot_board') ?? '') ?? HotBoard.mine;
+
+  Future<void> setHotBoard(HotBoard board) async {
+    await _prefs.setString('hot_board', board.name);
+    notifyListeners();
+  }
+
+  /// Last opened sub-tab under 热门榜单 (first launch defaults to 小时榜).
+  HotRankTab get hotRankTab => HotRankTab.byGid(_prefs.getString('hot_rank_tab'));
+
+  Future<void> setHotRankTab(HotRankTab tab) async {
+    await _prefs.setString('hot_rank_tab', tab.gid);
+    notifyListeners();
+  }
+
+  /// City chosen manually or resolved from device coordinates, shared by 同城微博 and 同城热搜.
+  CityChoice? get cityChoice {
+    try {
+      final json = jsonDecode(_prefs.getString('city_choice') ?? 'null');
+      return CityChoice.fromJson(json is Map<String, dynamic> ? json : null);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> setCityChoice(CityChoice? city) async {
+    // The city is written from several places (the picker, the reverse geocoding, a 同城 answer
+    // naming its own city) and each write drops the 同城 boards so they are asked for again. Writing
+    // the city that is already saved would make that a loop.
+    final next = city == null ? null : jsonEncode(city.toJson());
+    if (next == _prefs.getString('city_choice')) return;
+    if (next == null) {
+      await _prefs.remove('city_choice');
+    } else {
+      await _prefs.setString('city_choice', next);
+    }
+    cityNotifier.value++;
   }
 
   /// People whose posts lists leave out. Weibo's web API has no block call, so this stays on the

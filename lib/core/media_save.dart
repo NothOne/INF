@@ -44,7 +44,8 @@ String exportName(String extension) => 'INF-${DateTime.now().millisecondsSinceEp
 /// The copy goes in [TempFiles]: the caller is done with it once the gallery or the share sheet
 /// has it, and [TempFiles.sweep] takes anything a crash left behind.
 Future<({String path, String name, String mime})> exportImage(String url) async {
-  final cached = await InfImageCache.manager.getSingleFile(sanitizeImageUrl(url), headers: weiboImageHeaders());
+  final clean = sanitizeImageUrl(url);
+  final cached = await InfImageCache.manager.getSingleFile(clean, headers: weiboImageHeaders(clean));
   final type = await imageTypeOf(cached);
   final name = exportName(type.extension);
   final file = await TempFiles.file(name);
@@ -68,9 +69,10 @@ Future<SaveAllResult> saveImagesToGallery(List<Media> images, {void Function(int
       String? result;
       if (image.isLive) {
         try {
+          final liveUrl = sanitizeImageUrl(image.liveUrl!);
           final clip = await InfImageCache.manager.getSingleFile(
-            sanitizeImageUrl(image.liveUrl!),
-            headers: weiboImageHeaders(),
+            liveUrl,
+            headers: weiboImageHeaders(liveUrl),
           );
           result = await Native.saveMotionPhoto(file.path, clip.path, file.name.replaceFirst(RegExp(r'\.\w+$'), '.jpg'));
         } catch (error) {

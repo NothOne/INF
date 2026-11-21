@@ -1,16 +1,24 @@
 package app.inf.flutter
 
+import android.Manifest
 import android.app.PictureInPictureParams
 import android.content.ActivityNotFoundException
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.CancellationSignal
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.provider.Settings
 import android.util.Log
@@ -35,6 +43,18 @@ class MainActivity : FlutterActivity() {
 
     /** The link an intent brought (`inf://open?url=…`, a Weibo address, shared text), until Dart takes it. */
     private var pendingLink: String? = null
+
+    /** A coarse location asked for while the permission dialog was up; at most one at a time. */
+    private var pendingLocation: MethodChannel.Result? = null
+
+    private companion object {
+        /** A fix younger than this is the same city, so asking for another only makes the user wait. */
+        const val FRESH_FIX_NANOS = 30L * 60 * 1000 * 1000 * 1000
+
+        /** How long a fresh fix may take before the last known one has to do. */
+        const val LOCATION_TIMEOUT_MS = 4000L
+        const val LOCATION_REQUEST_CODE = 41
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Run before the engine so Dart's first cookie read sees a seeded session.
@@ -300,6 +320,7 @@ class MainActivity : FlutterActivity() {
                         "haptic" -> result.success(
                             window.decorView.performHapticFeedback(hapticConstant(call.argument<String>("kind")))
                         )
+                        "currentLocation" -> requestLocation(result)
                         else -> result.notImplemented()
                     }
                 } catch (error: Throwable) {
@@ -331,6 +352,91 @@ class MainActivity : FlutterActivity() {
             "success" -> if (sdk >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.VIRTUAL_KEY
             "error" -> if (sdk >= 30) HapticFeedbackConstants.REJECT else HapticFeedbackConstants.LONG_PRESS
             else -> HapticFeedbackConstants.CLOCK_TICK
+        }
+    }
+
+    /**
+     * The device's city, coarsely. The permission is asked for here and a refusal answers null as
+     * well: the picker offers the manual list in either case.
+     */
+    private fun requestLocation(result: MethodChannel.Result) {
+        if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            // A second ask while the dialog is still up: neither can be answered, so the newer one
+            // takes the callback and the older one is told there is nothing.
+            pendingLocation?.success(null)
+            pendingLocation = result
+            requestPermissions(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION), LOCATION_REQUEST_CODE)
+            return
+        }
+        coarseLocation(result)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != LOCATION_REQUEST_CODE) return
+        val result = pendingLocation ?: return
+        pendingLocation = null
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            coarseLocation(result)
+        } else {
+            result.success(null)
+        }
+    }
+
+    /**
+     * A coarse fix from the network provider — Wi-Fi and cell towers, never GPS, so the answer is a
+     * city and not a street. A fix younger than half an hour is that same city already. Otherwise the
+     * last known one is held as the fallback and a fresh one is waited for; whatever comes first, or
+     * the deadline, answers once.
+     */
+    private fun coarseLocation(result: MethodChannel.Result) {
+        val manager = getSystemService(LocationManager::class.java)
+        val handler = Handler(Looper.getMainLooper())
+        var answered = false
+
+        fun answer(location: Location?) {
+            if (answered) return
+            answered = true
+            handler.removeCallbacksAndMessages(null)
+            result.success(location?.let { mapOf("lat" to it.latitude, "lon" to it.longitude) })
+        }
+
+        val last = try {
+            manager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+        } catch (error: SecurityException) {
+            null
+        }
+        if (last != null && SystemClock.elapsedRealtimeNanos() - last.elapsedRealtimeNanos < FRESH_FIX_NANOS) {
+            answer(last)
+            return
+        }
+        val provider = when {
+            manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
+            manager.isProviderEnabled(LocationManager.PASSIVE_PROVIDER) -> LocationManager.PASSIVE_PROVIDER
+            else -> null
+        }
+        if (provider == null) {
+            answer(last)
+            return
+        }
+        handler.postDelayed({ answer(last) }, LOCATION_TIMEOUT_MS)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                manager.getCurrentLocation(provider, CancellationSignal(), mainExecutor) { answer(it ?: last) }
+            } else {
+                manager.requestSingleUpdate(provider, object : LocationListener {
+                    override fun onLocationChanged(location: Location) = answer(location)
+
+                    @Deprecated("Required by the interface")
+                    override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+
+                    override fun onProviderEnabled(provider: String) {}
+
+                    override fun onProviderDisabled(provider: String) = answer(last)
+                }, Looper.getMainLooper())
+            }
+        } catch (error: Exception) {
+            answer(last)
         }
     }
 

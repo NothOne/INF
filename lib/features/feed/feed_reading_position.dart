@@ -40,6 +40,30 @@ class FeedReadingPosition {
   /// The saved post lies beyond the loaded pages.
   bool canResume = false;
 
+  /// Cumulative vertical scroll distance (logical pixels) over which the 「上次读到」 pill fades
+  /// out as the reader scrolls up or down the feed.
+  static const double resumeFadeDistance = 260.0;
+
+  double _resumeScroll = 0;
+
+  /// Current opacity of the 「上次读到」 pill: 1 when freshly offered, falling linearly to 0 as
+  /// the reader scrolls.
+  double get resumeOpacity =>
+      !canResume ? 0.0 : (1.0 - _resumeScroll / resumeFadeDistance).clamp(0.0, 1.0);
+
+  /// Records user scrolling while 「上次读到」 is on screen. Returns true once the pill has faded
+  /// all the way out and [canResume] has been cleared.
+  bool trackResumeScroll(double delta) {
+    if (!canResume || delta == 0) return false;
+    _resumeScroll += delta.abs();
+    if (_resumeScroll >= resumeFadeDistance) {
+      canResume = false;
+      _resumeScroll = 0;
+      return true;
+    }
+    return false;
+  }
+
   /// The ids the list showed last time; the sliver above the centre is built from them.
   List<String> ids = const [];
 
@@ -72,7 +96,10 @@ class FeedReadingPosition {
       final previous = position;
       onRecenter(next.first, 0);
       centerId = next.first;
-      if (previous != null && !next.contains(previous.id)) canResume = true;
+      if (previous != null && !next.contains(previous.id)) {
+        canResume = true;
+        _resumeScroll = 0;
+      }
       moved = true;
     }
     _refreshedAt = refreshedAt;
@@ -130,6 +157,7 @@ class FeedReadingPosition {
       centerId = items.first.id;
       onRecenter(items.first.id, 0);
       canResume = saved.id != items.first.id;
+      _resumeScroll = 0;
     }
     final head = saved.head;
     final at = head == null ? -1 : items.indexWhere((status) => status.id == head);
@@ -150,28 +178,37 @@ class FeedReadingPosition {
   /// Returns whether the pills changed and the caller has to rebuild.
   bool record({required String id, required int index, required double dy}) {
     position = (id: id, dy: dy);
-    if (id == _savedId) canResume = false;
+    if (id == _savedId) {
+      canResume = false;
+      _resumeScroll = 0;
+    }
     final next = unread > index ? index : unread;
     // Reading down through the posts that arrived means the reader has taken to the new list, so
     // the way back stops being what they want. A refresh that lost the place counts no new posts,
-    // and there the offer is the only way back — it stays until it is used.
+    // and there the offer is the only way back — it stays until it is used or scrolled away.
     final dropResume = canResume && unread > 0 && index >= 3;
     if (next == unread && !dropResume) return false;
     unread = next;
-    if (dropResume) canResume = false;
+    if (dropResume) {
+      canResume = false;
+      _resumeScroll = 0;
+    }
     return true;
   }
 
   /// A refresh the reader pulled asks for the newest posts, so they land on them.
+  ///
+  /// Keeps [markerId] so the 「上次看到这里」 divider still marks where the previous batch began
+  /// as the reader scrolls down through the newly arrived posts.
   void toTop([String? topId]) {
     if (topId != null) {
       centerId = topId;
       position = (id: topId, dy: 0);
     }
-    markerId = null;
     unread = 0;
     unreadOpen = false;
     canResume = false;
+    _resumeScroll = 0;
   }
 
   /// Moves the list's anchor to a saved post found by paging down.
@@ -179,6 +216,7 @@ class FeedReadingPosition {
     centerId = id;
     position = (id: id, dy: dy);
     canResume = false;
+    _resumeScroll = 0;
   }
 
   /// Writes the position down. [items] is the list as it stands: the newest post actually seen

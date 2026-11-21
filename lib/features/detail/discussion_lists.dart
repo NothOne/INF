@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../core/api.dart';
 import '../../core/comment_store.dart';
 import '../../core/error_text.dart';
 import '../../core/layout.dart';
@@ -8,12 +7,10 @@ import '../../core/models.dart';
 import '../../core/motion.dart';
 import '../../core/navigation.dart';
 import '../../core/paging.dart';
-import '../../core/status_store.dart';
 import '../../core/widgets/comment_sheet.dart';
 import '../../core/widgets/comment_tile.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/pager_tail.dart';
-import '../../core/widgets/refresh.dart';
 import '../../core/widgets/repost_tile.dart';
 import '../../core/widgets/transitions.dart';
 
@@ -35,7 +32,6 @@ class DiscussionLists extends StatefulWidget {
     required this.onShowReposts,
     required this.onShowComments,
     required this.onComment,
-    required this.onStatusRefreshed,
   });
 
   final Status status;
@@ -47,9 +43,6 @@ class DiscussionLists extends StatefulWidget {
   final VoidCallback onShowReposts;
   final VoidCallback onShowComments;
   final void Function(BuildContext anchor) onComment;
-
-  /// A pull brought the post back from the server; the page shows that copy from then on.
-  final ValueChanged<Status>? onStatusRefreshed;
 
   @override
   State<DiscussionLists> createState() => _DiscussionListsState();
@@ -163,53 +156,26 @@ class _DiscussionListsState extends State<DiscussionLists> {
     final comments = widget.comments;
     final reposts = widget.reposts;
     // This is the body of the page's NestedScrollView: the post and the two tabs are its header,
-    // and only these rows scroll under them.
+    // and only these rows scroll under them. The list directly beneath sits at depth 0 here.
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
-        // The outer header also scrolls. Only the list underneath should turn the page.
-        if (notification.depth == 0) return false;
+        if (notification.depth != 0) return false;
         (widget.showingReposts ? reposts : comments).onScroll(notification);
         return false;
       },
-      child: InfRefreshIndicator(
-        notificationPredicate: nestedScrollRefreshPredicate,
-        onRefresh: _refresh,
-        child: GestureDetector(
-          // Opaque so a drag that starts on the empty tail of a short list still counts.
-          behavior: HitTestBehavior.opaque,
-          onHorizontalDragDown: _startSwipe,
-          onHorizontalDragUpdate: _trackSwipe,
-          onHorizontalDragEnd: _endSwipe,
-          onHorizontalDragCancel: () => _swipeDistance = 0,
-          child: _DiscussionCrossfade(
-            showingReposts: widget.showingReposts,
-            page: _page,
-          ),
+      child: GestureDetector(
+        // Opaque so a drag that starts on the empty tail of a short list still counts.
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragDown: _startSwipe,
+        onHorizontalDragUpdate: _trackSwipe,
+        onHorizontalDragEnd: _endSwipe,
+        onHorizontalDragCancel: () => _swipeDistance = 0,
+        child: _DiscussionCrossfade(
+          showingReposts: widget.showingReposts,
+          page: _page,
         ),
       ),
     );
-  }
-
-  /// The post is asked for beside the list, and its answer is the one the page shows: it used to be
-  /// fetched and then thrown away, so pulling to refresh brought new comments under a header whose
-  /// counts and text were still the ones from when the page opened.
-  Future<Object?> _refresh() async {
-    final status = widget.status;
-    final listRefresh = widget.showingReposts ? widget.reposts.refresh() : widget.comments.refresh();
-    // Fetch the post alongside the list without letting a transient status error fail the list pull.
-    final statusFetch = WeiboApi.instance.status(status.id).then<Status?>((value) => value, onError: (_, _) => null);
-    final results = await Future.wait<Object?>([listRefresh, statusFetch]);
-    if (!mounted) return results.first;
-    final fresh = results[1] as Status?;
-    if (fresh != null) {
-      StatusStore.instance.remember(fresh, notify: true);
-      // The comments refresh has already settled what its own page contains (see
-      // `StatusDetailPage._commentsPager`); this covers the pull made on the repost tab, where no
-      // comment page was fetched at all.
-      if (widget.showingReposts) CommentStore.instance.settle(fresh.id);
-      widget.onStatusRefreshed?.call(fresh);
-    }
-    return results.first;
   }
 
   /// The list for a tab: `reposts` is which list, `primary` whether it drives the scroll.
@@ -337,9 +303,17 @@ class _DiscussionListsState extends State<DiscussionLists> {
                 onOpenUrl: (url) => openLink(context, url),
                 onOpenFloor: awaitable ? () {} : () => openCommentFloor(context, status: status, root: item),
                 onReply: awaitable ? (_) {} : (anchor) => _reply(anchor, item),
-                onTap: awaitable
+                onTap: awaitable ? null : (anchor) => _reply(anchor, item),
+                onLongPress: awaitable
                     ? null
-                    : (anchor) => showCommentActions(context, item, anchor: anchor, onReply: () => _reply(anchor, item)),
+                    : (anchor, point) => showCommentActions(
+                          context,
+                          comment: item,
+                          status: status,
+                          anchor: anchor,
+                          pointer: point,
+                          onReply: () => _reply(anchor, item),
+                        ),
                 onOpenImage: (images, imageIndex, tag) {
                   openImage(context, media: images, index: imageIndex, heroTag: tag);
                 },
@@ -362,7 +336,15 @@ class _DiscussionListsState extends State<DiscussionLists> {
                 onOpenUrl: (url) => openLink(context, url),
                 onOpenFloor: () => openCommentFloor(context, status: status, root: comment),
                 onReply: (anchor) => _reply(anchor, comment),
-                onTap: (anchor) => showCommentActions(context, comment, anchor: anchor, onReply: () => _reply(anchor, comment)),
+                onTap: (anchor) => _reply(anchor, comment),
+                onLongPress: (anchor, point) => showCommentActions(
+                  context,
+                  comment: comment,
+                  status: status,
+                  anchor: anchor,
+                  pointer: point,
+                  onReply: () => _reply(anchor, comment),
+                ),
                 onOpenImage: (images, imageIndex, tag) {
                   openImage(context, media: images, index: imageIndex, heroTag: tag);
                 },

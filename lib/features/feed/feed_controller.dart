@@ -47,7 +47,9 @@ class FeedController extends ChangeNotifier {
     if (cachedSource.kind == FeedKind.card) return;
     final saved = Prefs.instance.feedSourceKey;
     if (saved == null ? cachedSource.kind != FeedKind.all : cachedSource.key != saved) return;
-    source = cachedSource;
+    // The cache also names the feed; 最新 was 全部关注 under an older name, and the cached copy
+    // would otherwise put the old one on the bar until the group list arrives.
+    source = cachedSource.kind == FeedKind.all ? FeedSource.all : cachedSource;
     mode = FeedMode.timeline;
     _pagerKey = '${cachedSource.key}|${Session.instance.cacheScope ?? ''}';
     pager = PagingController<Status>(

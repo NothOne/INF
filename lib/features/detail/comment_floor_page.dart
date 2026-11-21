@@ -98,9 +98,21 @@ class _CommentFloorPageState extends State<CommentFloorPage> {
       imagesAsLinks: !root,
       showReplies: false,
       onReply: awaitable ? (_) {} : (anchor) => _reply(anchor, comment),
-      onTap: awaitable
+      onTap: awaitable ? null : (anchor) => _reply(anchor, comment),
+      onLongPress: awaitable
           ? null
-          : (anchor) => showCommentActions(context, comment, anchor: anchor, onReply: () => _reply(anchor, comment)),
+          : (anchor, point) => showCommentActions(
+                context,
+                comment: comment,
+                status: widget.status,
+                // Forwarding a reply quotes the comment it answers and the comment its thread hangs
+                // off; the thread's own comment is that second one on this page already, so it is
+                // not repeated there.
+                rootComment: root || comment.id == _root?.id ? null : _root,
+                anchor: anchor,
+                pointer: point,
+                onReply: () => _reply(anchor, comment),
+              ),
       onOpenImage: (images, imageIndex, tag) {
         openImage(context, media: images, index: imageIndex, heroTag: tag);
       },

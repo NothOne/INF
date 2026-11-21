@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -70,8 +71,18 @@ void main() {
     expect(items.single.region, '发布于 浙江');
   });
 
-  test('recommend channel survives a round trip', () {
-    const channel = RecommendChannel(gid: '1028034388', containerId: '102803_ctg1_4388_-_ctg1_4388', title: '搞笑');
+  test('the same allGroups answer gives the feeds as well as the channels', () {
+    // One answer carries both; `group_type` is what tells them apart. Reading only one of them out
+    // is why the feed's 全部关注 used to have no list id to ask its timeline with.
+    final root = jsonDecode(File('test/fixtures/all_groups.json').readAsStringSync());
+    final feeds = parseWeiboComFeedGroups(root);
+    expect(feeds.followingAll?.name, '全部关注');
+    expect(feeds.followingAll?.id, isNotEmpty);
+    expect(parseRecommendChannels(root).any((channel) => channel.title == '全部关注'), isFalse);
+    expect(parseRecommendChannels(root).any((channel) => channel.gid == feeds.followingAll!.id), isFalse);
+  });
+
+  test('recommend channel survives a round trip', () {    const channel = RecommendChannel(gid: '1028034388', containerId: '102803_ctg1_4388_-_ctg1_4388', title: '搞笑');
     final back = RecommendChannel.fromJson(channel.toJson());
     expect(back?.gid, channel.gid);
     expect(back?.containerId, channel.containerId);

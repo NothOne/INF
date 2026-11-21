@@ -13,6 +13,44 @@ extension WeiboApiSearchTopic on WeiboApi {
     return parseSearchSuggestions(data);
   }
 
+  /// Topic autocomplete for `#` in the composer and comment sheet (`weibo.com/ajax/mblog/topic`).
+  Future<List<String>> topicSuggestions(String query) async {
+    final q = query.trim();
+    if (q.isEmpty) return const [];
+    return _getWeiboComOrVisitor(
+      (cookie, xsrf) async => parseTopicSuggestions(await _getPublic(
+        'https://weibo.com/ajax/mblog/topic',
+        query: {'q': q},
+        referer: 'https://weibo.com/',
+        cookie: cookie,
+        xsrf: xsrf,
+      )),
+    );
+  }
+
+  /// 微博智搜 (`ai.s.weibo.com/api/wis/show.json`), polled with incrementing [loopNum] while
+  /// `result.isGenerating` is true.
+  Future<AiSearchResult> aiSearch(
+    String query, {
+    required String requestId,
+    int loopNum = 1,
+    String? model,
+  }) async {
+    final data = await _postPublicForm(
+      'https://ai.s.weibo.com/api/wis/show.json',
+      {
+        'query': query,
+        'content_type': 'loop',
+        'request_id': requestId,
+        'cot': '1',
+        'loop_num': '$loopNum',
+        if (model != null && model.isNotEmpty) 'model': model,
+      },
+      referer: 'https://s.weibo.com/',
+    );
+    return parseAiSearchResult(data, query);
+  }
+
   /// One page of a search channel's posts, and on the first page the channels the search offers.
   Future<(PageResult<Status>, List<SearchChannel>?)> searchStatuses(String query, int type, String? cursor) async {
     final page = int.tryParse(cursor ?? '') ?? 1;

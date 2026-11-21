@@ -2,12 +2,15 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' show PlatformDispatcher;
 
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 
 import 'emoji.dart';
 import 'cached_page.dart';
 import 'models.dart';
+import 'native.dart';
 import 'parse.dart';
+import 'prefs.dart';
 import 'session.dart';
 import 'weibo_com_session.dart';
 
@@ -147,7 +150,13 @@ class WeiboApi {
   // ---- feeds --------------------------------------------------------------------------------
 
   PageResult<Status> _parseFeed(FeedKind kind, dynamic data, int page) => switch (kind) {
-        FeedKind.all || FeedKind.group || FeedKind.circle || FeedKind.private => parseFriendsFeed(data),
+        FeedKind.all ||
+        FeedKind.followingAll ||
+        FeedKind.special ||
+        FeedKind.group ||
+        FeedKind.circle ||
+        FeedKind.private =>
+          parseFriendsFeed(data),
         _ => parseContainerStatuses(data, page),
       };
 
@@ -278,13 +287,18 @@ class WeiboApi {
     Map<String, String>? query,
     String? referer,
     String? cookie,
+    String? xsrf,
     bool whole = false,
   }) async {
     try {
       final response = await _publicDio.get(
         url,
         queryParameters: query,
-        options: Options(headers: {'Referer': referer ?? 'https://weibo.com/', 'Cookie': ?cookie}),
+        options: Options(headers: {
+          'Referer': referer ?? 'https://weibo.com/',
+          'Cookie': ?cookie,
+          'X-XSRF-TOKEN': ?xsrf,
+        }),
       );
       return _publicEnvelope(response, whole);
     } on DioException catch (error) {
@@ -304,21 +318,53 @@ class WeiboApi {
     }
     // weibo.com answers {ok: 1}, m.s.weibo.com {code: "100000"}; passport's {retcode} is read
     // by its parser, since a QR code still waiting for its scan is an answer too.
+    if (map != null && intOf(map['ok']) == -100) {
+      throw LoginRequiredException(textOf(map['url']));
+    }
     final passport = map != null && map.containsKey('retcode');
     if (map == null || (!passport && intOf(map['ok']) != 1 && textOf(map['code']) != '100000')) {
-      throw ApiException(textOf(map?['msg']) ?? '接口返回格式错误');
+      throw ApiException(
+        textOf(map?['msg']) ?? textOf(map?['message']) ?? textOf(map?['error']) ?? '接口返回格式错误',
+      );
     }
     return whole ? map : map['data'];
   }
 
   /// weibo.com as the signed-in account: the WebView's weibo.com cookies, which the passport
   /// login set alongside m.weibo.cn's.
-  Future<dynamic> _getWeiboCom(String path, Map<String, String> query, {required String referer}) async {
-    final (cookie, _) = await WeiboComSession.instance.cookie();
-    return _getPublic('https://weibo.com/ajax/$path', query: query, referer: referer, cookie: cookie);
+  Future<dynamic> _getWeiboCom(
+    String path,
+    Map<String, String> query, {
+    required String referer,
+    bool whole = false,
+  }) async {
+    final (cookie, xsrf) = await WeiboComSession.instance.cookie();
+    return _getPublic(
+      'https://weibo.com/ajax/$path',
+      query: query,
+      referer: referer,
+      cookie: cookie,
+      xsrf: xsrf,
+      whole: whole,
+    );
   }
 
-  /// weibo.com's writes are JSON and check `X-XSRF-TOKEN` against the `XSRF-TOKEN` cookie.
+  /// Uses the signed-in weibo.com cookie when present, otherwise falls back to a visitor cookie.
+  Future<T> _getWeiboComOrVisitor<T>(
+    Future<T> Function(String cookie, String? xsrf) request, {
+    bool Function(T value)? accept,
+  }) async {
+    final (cookie, xsrf) = await WeiboComSession.instance.cookie();
+    if (WeiboComSession.hasAuth(cookie)) {
+      try {
+        final value = await request(cookie, xsrf);
+        if (accept == null || accept(value)) return value;
+      } catch (_) {}
+    }
+    return _asVisitor((visitorCookie) => request(visitorCookie, null), accept: accept);
+  }
+
+  /// weibo.com's JSON writes check `X-XSRF-TOKEN` against the `XSRF-TOKEN` cookie.
   Future<dynamic> _postWeiboCom(String path, Map<String, Object> body, {required String referer}) async {
     final (cookie, xsrf) = await WeiboComSession.instance.cookie();
     try {
@@ -327,10 +373,72 @@ class WeiboApi {
         data: jsonEncode(body),
         options: Options(
           contentType: Headers.jsonContentType,
-          headers: {'Referer': referer, 'Origin': 'https://weibo.com', 'Cookie': cookie, 'X-XSRF-TOKEN': xsrf},
+          headers: {
+            'Referer': referer,
+            'Origin': 'https://weibo.com',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Cookie': cookie,
+            'X-XSRF-TOKEN': xsrf,
+          },
         ),
       );
       return _publicEnvelope(response, true);
+    } on DioException catch (error) {
+      throw _dioError(error);
+    }
+  }
+
+  /// weibo.com's form-encoded writes (`statuses/update`, `statuses/normal_repost`, etc.).
+  Future<dynamic> _postWeiboComForm(
+    String path,
+    Map<String, String> fields, {
+    required String referer,
+  }) async {
+    final (cookie, xsrf) = await WeiboComSession.instance.cookie();
+    try {
+      final response = await _publicDio.post(
+        'https://weibo.com/ajax/$path',
+        data: fields,
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+          headers: {
+            'Referer': referer,
+            'Origin': 'https://weibo.com',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Cookie': cookie,
+            'X-XSRF-TOKEN': xsrf,
+          },
+        ),
+      );
+      return _publicEnvelope(response, true);
+    } on DioException catch (error) {
+      throw _dioError(error);
+    }
+  }
+
+  /// Form POST to an anonymous public endpoint (such as `ai.s.weibo.com`) returning raw JSON.
+  Future<dynamic> _postPublicForm(
+    String url,
+    Map<String, String> fields, {
+    String? referer,
+  }) async {
+    try {
+      final response = await _publicDio.post(
+        url,
+        data: fields,
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+          headers: {'Referer': ?referer},
+        ),
+      );
+      final status = response.statusCode ?? 0;
+      if (status >= 400) throw ApiException('HTTP $status');
+      final body = response.data;
+      try {
+        return body is String ? jsonDecode(body) : body;
+      } on FormatException {
+        throw ApiException('接口返回格式错误', kind: FailureKind.parse);
+      }
     } on DioException catch (error) {
       throw _dioError(error);
     }
@@ -486,10 +594,15 @@ class WeiboApi {
     ProgressCallback? onReceiveProgress,
   }) async {
     final uri = Uri.tryParse(url);
+    final isUploadWeibo = uri?.host == 'upload.api.weibo.com';
+    final weiboCookie = isUploadWeibo ? (await WeiboComSession.instance.cookie()).$1 : '';
     final headers = <String, String>{
-      'Referer': '$_web/',
+      'Referer': isUploadWeibo ? 'https://api.weibo.com/chat' : '$_web/',
       'User-Agent': session.userAgent,
-      if (uri?.host == 'm.weibo.cn' && session.cookieHeader.isNotEmpty) 'Cookie': session.cookieHeader,
+      if (isUploadWeibo && weiboCookie.isNotEmpty)
+        'Cookie': weiboCookie
+      else if (uri?.host == 'm.weibo.cn' && session.cookieHeader.isNotEmpty)
+        'Cookie': session.cookieHeader,
     };
     try {
       await _publicDio.download(

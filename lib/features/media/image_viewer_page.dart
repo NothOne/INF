@@ -148,7 +148,7 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
       _originalProgress = null;
     });
     try {
-      final stream = InfImageCache.manager.getFileStream(url, headers: weiboImageHeaders(), withProgress: true);
+      final stream = InfImageCache.manager.getFileStream(url, headers: weiboImageHeaders(url), withProgress: true);
       await for (final response in stream) {
         if (!mounted) return;
         if (response is FileInfo) break;
@@ -198,10 +198,13 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
   }
 
   /// The live photo's motion clip, from the same disk cache its playback reads.
-  Future<File> _liveClip(int index) => InfImageCache.manager.getSingleFile(
-        sanitizeImageUrl(_images[index].liveUrl!),
-        headers: weiboImageHeaders(),
-      );
+  Future<File> _liveClip(int index) {
+    final url = sanitizeImageUrl(_images[index].liveUrl!);
+    return InfImageCache.manager.getSingleFile(
+      url,
+      headers: weiboImageHeaders(url),
+    );
+  }
 
   /// A live photo saves as a Motion Photo unless [as] asks for one half of it.
   Future<void> _saveImage(int index, {_SaveAs? as}) async {
@@ -1039,9 +1042,10 @@ class _LiveOverlayState extends State<_LiveOverlay> {
       if (_loading) return;
       _loading = true;
       try {
+        final clean = sanitizeImageUrl(widget.url);
         final file = await InfImageCache.manager.getSingleFile(
-          sanitizeImageUrl(widget.url),
-          headers: weiboImageHeaders(),
+          clean,
+          headers: weiboImageHeaders(clean),
         );
         if (!mounted) return;
         final first = controller = VideoPlayerController.file(file, viewType: preferredVideoView());

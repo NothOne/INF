@@ -4,9 +4,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:inf_flutter/core/models.dart';
 import 'package:inf_flutter/core/paging.dart';
 import 'package:inf_flutter/core/prefs.dart';
+import 'package:inf_flutter/core/widgets/comment_sheet.dart';
 import 'package:inf_flutter/core/widgets/comment_tile.dart';
 import 'package:inf_flutter/core/widgets/detail_bottom_bar.dart';
+import 'package:inf_flutter/core/widgets/status_card_host.dart';
 import 'package:inf_flutter/features/detail/discussion_lists.dart';
+import 'package:inf_flutter/features/detail/status_detail_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// The discussion as a widget, after it was split out of `status_detail_page.dart`.
@@ -64,7 +67,6 @@ void main() {
           onShowReposts: () {},
           onShowComments: () {},
           onComment: (_) {},
-          onStatusRefreshed: null,
         ),
       ),
     );
@@ -139,5 +141,77 @@ void main() {
     );
     await tester.tap(find.text('写评论…'));
     expect(asked, 1);
+  });
+
+  testWidgets('tapping a comment opens the reply sheet directly; long pressing opens the action menu at the finger', (tester) async {
+    final pager = comments([comment('1', '这是一条测试评论')])..refresh();
+    await tester.pumpWidget(host(comments: pager));
+    await tester.pump();
+
+    // Tap opens the comment reply sheet directly instead of the action menu.
+    await tester.tap(find.text('这是一条测试评论', findRichText: true));
+    await tester.pumpAndSettle();
+    expect(find.byType(CommentSheet), findsOneWidget);
+    expect(find.text('复制评论正文'), findsNothing);
+
+    // Dismiss the sheet, then long-press the comment to open the 「评论 / 复制」 action menu.
+    Navigator.of(tester.element(find.byType(CommentSheet))).pop();
+    await tester.pumpAndSettle();
+    expect(find.byType(CommentSheet), findsNothing);
+
+    await tester.longPress(find.text('这是一条测试评论', findRichText: true));
+    await tester.pumpAndSettle();
+    expect(find.text('复制'), findsOneWidget);
+    expect(find.text('回复'), findsWidgets);
+    expect(find.text('转发'), findsWidgets);
+    expect(find.text('点赞'), findsOneWidget);
+    expect(find.text('投诉'), findsOneWidget);
+    expect(find.textContaining('分享'), findsNothing);
+  });
+
+  testWidgets('feed card comment button opens CommentSheet when 0 comments, and StatusDetailPage(jumpToComments) when >0', (tester) async {
+    final zero = Status(
+      id: '101',
+      author: const User(id: 'u1', screenName: '甲'),
+      text: '零评论微博',
+      createdAt: DateTime(2026),
+      commentsCount: 0,
+    );
+    final withComments = Status(
+      id: '102',
+      author: const User(id: 'u2', screenName: '乙'),
+      text: '有评论微博',
+      createdAt: DateTime(2026),
+      commentsCount: 5,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ListView(
+            children: [
+              Builder(builder: (context) => buildStatusCard(context, zero, heroScope: 'z')),
+              Builder(builder: (context) => buildStatusCard(context, withComments, heroScope: 'w')),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // 0 comments -> opens CommentSheet directly.
+    await tester.tap(find.text('评论'));
+    await tester.pumpAndSettle();
+    expect(find.byType(CommentSheet), findsOneWidget);
+    Navigator.of(tester.element(find.byType(CommentSheet))).pop();
+    await tester.pumpAndSettle();
+
+    // >0 comments -> opens StatusDetailPage with jumpToComments: true.
+    await tester.tap(find.text('5'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byType(CommentSheet), findsNothing);
+    final page = tester.widget<StatusDetailPage>(find.byType(StatusDetailPage));
+    expect(page.jumpToComments, isTrue);
   });
 }

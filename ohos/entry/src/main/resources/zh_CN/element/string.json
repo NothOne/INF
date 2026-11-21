@@ -11,6 +11,10 @@
     {
       "name": "EntryAbility_label",
       "value": "INF"
+    },
+    {
+      "name": "location_reason",
+      "value": "用于同城微博和同城热搜判断所在城市"
     }
   ]
 }

@@ -17,9 +17,10 @@ import '../../core/widgets/hot_search_row.dart';
 import '../../core/widgets/paged_status_list.dart';
 import '../../core/widgets/refresh.dart';
 import '../../core/widgets/smart_image.dart';
+import 'ai_search_view.dart';
 
 /// A hashtag or a hot-search keyword: what the board and the topic head say about it, related
-/// searches and accounts, then its posts by stream.
+/// searches and accounts, then its posts by stream — and, on 智搜, what 微博智搜 makes of it.
 class HotTopicPage extends StatefulWidget {
   const HotTopicPage({super.key, required this.query, this.entry});
 
@@ -36,14 +37,20 @@ class _HotTopicPageState extends State<HotTopicPage> with SingleTickerProviderSt
 
   late final TabController _tabController = TabController(length: _tabs.length, vsync: this);
   final ScrollController _outer = ScrollController();
+
+  /// One pager per post stream. 智搜 is not a stream: its `type == 0` is not a container feed, so
+  /// asking `hotTopicPage` for it would only come back empty.
   late final Map<HotTopicTab, PagingController<Status>> _pagers = {
     for (final tab in _tabs)
-      tab: PagingController<Status>(
-        fetch: (cursor) => _fetch(tab, cursor),
-        id: (status) => status.id,
-        remember: StatusStore.instance.remember,
-      ),
+      if (!tab.isAi)
+        tab: PagingController<Status>(
+          fetch: (cursor) => _fetch(tab, cursor),
+          id: (status) => status.id,
+          remember: StatusStore.instance.remember,
+        ),
   };
+  final AiSearchController _aiController = AiSearchController();
+  late HotTopicTab _active = _tabs[_tabController.index];
   final Set<HotTopicTab> _started = {};
   late HotSearch? _entry = widget.entry ?? HotSearchStore.instance.lookup(widget.query);
   TopicInfo? _head;
@@ -77,6 +84,7 @@ class _HotTopicPageState extends State<HotTopicPage> with SingleTickerProviderSt
     _tabController.removeListener(_tabChanged);
     _tabController.dispose();
     _outer.dispose();
+    _aiController.dispose();
     for (final pager in _pagers.values) {
       pager.dispose();
     }
@@ -85,10 +93,14 @@ class _HotTopicPageState extends State<HotTopicPage> with SingleTickerProviderSt
 
   void _tabChanged() {
     if (_tabController.indexIsChanging) Haptic.selection.play();
-    _start(_tabs[_tabController.index]);
+    final tab = _tabs[_tabController.index];
+    _start(tab);
+    // 智搜 learns that it is the tab being read from this, and only then makes its request.
+    if (tab != _active) setState(() => _active = tab);
   }
 
   void _start(HotTopicTab tab) {
+    if (tab.isAi) return;
     if (_started.add(tab)) _pagers[tab]!.refresh();
   }
 
@@ -126,16 +138,18 @@ class _HotTopicPageState extends State<HotTopicPage> with SingleTickerProviderSt
   }
 
   Future<bool> _refresh() async {
-    final tab = _tabs[_tabController.index];
+    final tab = _active;
     _loadDetail();
-    final results = await Future.wait<bool>([
-      _pagers[tab]!.refresh(),
-      HotSearchStore.instance.load(force: true).then((ok) {
-        final found = HotSearchStore.instance.lookup(widget.query);
-        if (found != null && mounted) setState(() => _entry = found);
-        return ok;
-      }),
-    ]);
+    final head = HotSearchStore.instance.load(force: true).then((ok) {
+      final found = HotSearchStore.instance.lookup(widget.query);
+      if (found != null && mounted) setState(() => _entry = found);
+      return ok;
+    });
+    if (tab.isAi) {
+      final results = await Future.wait<bool>([_aiController.reload(), head]);
+      return results.first;
+    }
+    final results = await Future.wait<bool>([_pagers[tab]!.refresh(), head]);
     return results.first;
   }
 
@@ -164,6 +178,7 @@ class _HotTopicPageState extends State<HotTopicPage> with SingleTickerProviderSt
         ],
       ),
       body: InfRefreshIndicator(
+        notificationPredicate: nestedScrollRefreshPredicate,
         onRefresh: _refresh,
         child: NestedScrollView(
           controller: _outer,
@@ -191,8 +206,13 @@ class _HotTopicPageState extends State<HotTopicPage> with SingleTickerProviderSt
                   divider: scheme.outlineVariant.withValues(alpha: 0.5),
                   tabBar: TabBar(
                     controller: _tabController,
+                    // Six labels do not fit across a narrow phone: they scroll instead of
+                    // shrinking to an ellipsis or pushing a TabBar over its width.
+                    isScrollable: true,
+                    tabAlignment: TabAlignment.start,
                     indicatorSize: TabBarIndicatorSize.label,
                     dividerHeight: 0,
+                    labelPadding: const EdgeInsets.symmetric(horizontal: 14),
                     tabs: [for (final tab in _tabs) Tab(height: 44, text: tab.label)],
                   ),
                 ),
@@ -203,18 +223,31 @@ class _HotTopicPageState extends State<HotTopicPage> with SingleTickerProviderSt
             controller: _tabController,
             children: [
               for (final tab in _tabs)
-                KeepAlivePage(
-                  child: Builder(
-                    builder: (context) => PagedStatusList(
-                      key: PageStorageKey<String>('topic-${tab.name}'),
-                      pager: _pagers[tab]!,
-                      nested: true,
-                      underAppBar: false,
-                      refreshable: false,
-                      emptyText: tab == HotTopicTab.video ? '还没有相关视频' : '还没有相关微博',
-                    ),
-                  ),
-                ),
+                tab.isAi
+                    // 智搜 keeps its answer across tab switches; `active` is what tells it the
+                    // tab is the one being read, so opening a topic does not start generating.
+                    ? AiSearchView(
+                        key: const PageStorageKey<String>('topic-ai'),
+                        query: _name,
+                        active: _active == tab,
+                        controller: _aiController,
+                      )
+                    : KeepAlivePage(
+                        child: Builder(
+                          builder: (context) => PagedStatusList(
+                            key: PageStorageKey<String>('topic-${tab.name}'),
+                            pager: _pagers[tab]!,
+                            nested: true,
+                            underAppBar: false,
+                            refreshable: false,
+                            emptyText: switch (tab) {
+                              HotTopicTab.video => '还没有相关视频',
+                              HotTopicTab.picture => '还没有相关图片',
+                              _ => '还没有相关微博',
+                            },
+                          ),
+                        ),
+                      ),
             ],
           ),
         ),

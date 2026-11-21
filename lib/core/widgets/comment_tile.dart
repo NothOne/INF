@@ -7,7 +7,10 @@ import '../../core/container_route.dart';
 import '../../core/haptics.dart';
 import '../../core/image_url.dart';
 import '../../core/models.dart';
+import '../../core/navigation.dart' show openCompose, openWeb;
 import '../../core/parse.dart';
+import '../../core/session.dart';
+import '../../core/share.dart' show commentReportLink, commentRepostText;
 import '../../core/status_store.dart';
 import 'avatar.dart';
 import 'common.dart';
@@ -45,6 +48,7 @@ class CommentTile extends StatelessWidget {
     this.imagesAsLinks = false,
     this.showReplies = true,
     this.onTap,
+    this.onLongPress,
     this.awaitable = false,
   });
 
@@ -60,6 +64,7 @@ class CommentTile extends StatelessWidget {
   /// Off where the replies are listed in full right below, as on the floor page.
   final bool showReplies;
   final void Function(BuildContext anchor)? onTap;
+  final void Function(BuildContext anchor, Offset globalPosition)? onLongPress;
 
   /// One of this device's own comments, shown before the server has returned it: the reply and the
   /// like that would act on an id the server does not know yet are left out, and it says so.
@@ -95,6 +100,12 @@ class CommentTile extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       // The row's own context is the anchor its card grows out of and returns into.
       onTap: onTap == null ? null : () => onTap!(context),
+      onLongPressStart: onLongPress == null
+          ? null
+          : (details) {
+              Haptic.longPress.play();
+              onLongPress!(context, details.globalPosition);
+            },
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
         child: Row(
@@ -109,14 +120,32 @@ class CommentTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  GestureDetector(
-                    onTap: awaitable ? null : () => onOpenUser(comment.author.id),
-                    child: Text(
-                      comment.author.screenName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(fontSize: 14),
-                    ),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: GestureDetector(
+                          onTap: awaitable ? null : () => onOpenUser(comment.author.id),
+                          child: Text(
+                            comment.author.screenName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleSmall?.copyWith(fontSize: 14),
+                          ),
+                        ),
+                      ),
+                      // 金粉 / 铁粉 / 钻粉 / 博主: Weibo's own pictures, drawn slightly taller than the
+                      // name because the PNG assets carry transparent top/bottom padding.
+                      for (final badge in comment.badges) ...[
+                        const SizedBox(width: 5),
+                        SmartImage(
+                          url: badge.url,
+                          width: 19 * badge.aspect,
+                          height: 19,
+                          fit: BoxFit.contain,
+                          placeholderColor: Colors.transparent,
+                        ),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: 3),
                   RichStatusText(
@@ -392,43 +421,71 @@ class _ReplyPreview extends StatelessWidget {
   }
 }
 
-/// The 「评论 / 复制」 card a tap on a comment opens, grown out of the row that was tapped.
-enum CommentAction { reply, copy }
-
+/// The card a long press on a comment opens: 复制, 回复, 转发, 点赞 and 投诉, vertically centred on the
+/// press point when [pointer] is supplied.
+///
+/// [status] is the post the comment is under: a repost of a comment forwards the post, and the
+/// pre-filled text names the comment, its thread ([rootComment]) and the post.
 Future<void> showCommentActions(
-  BuildContext context,
-  Comment comment, {
-  required BuildContext anchor,
-  required Future<void> Function() onReply,
-}) async {
-  final picked = await showGlassActions(
+  BuildContext context, {
+  required Comment comment,
+  required Status status,
+  Comment? rootComment,
+  required VoidCallback onReply,
+  BuildContext? anchor,
+  Offset? pointer,
+}) {
+  // Read when the menu opens, so the row says what a tap will do from the state on screen.
+  final liked = StatusStore.instance.applyComment(comment).liked;
+  final own = comment.author.id == Session.instance.uid;
+  return showGlassActions(
     context,
-    anchor: anchor,
-    originRadius: 14,
+    anchor: anchor ?? context,
+    origin: pointer == null ? null : menuOriginAt(pointer),
+    originRadius: pointer == null ? 14 : 10,
+    placement: pointer == null ? StatusMenuPlacement.centred : StatusMenuPlacement.atPointer,
     actions: [
-      StatusAction(
-        icon: Icons.reply_rounded,
-        label: '评论',
-        detail: '回复 @${comment.author.screenName}',
-        returns: CommentAction.reply,
-      ),
       StatusAction(
         icon: Icons.copy_rounded,
         label: '复制',
-        detail: '复制评论正文',
-        returns: CommentAction.copy,
+        run: () async {
+          await Clipboard.setData(ClipboardData(text: comment.text));
+          Haptic.selection.play();
+          if (context.mounted) showMessage(context, '已复制评论');
+        },
       ),
+      StatusAction(
+        icon: Icons.chat_bubble_outline_rounded,
+        label: '回复',
+        run: () async => onReply(),
+      ),
+      StatusAction(
+        icon: Icons.repeat_rounded,
+        label: '转发',
+        run: () async => openCompose(
+          context,
+          type: DraftType.repost,
+          statusId: status.id,
+          initialText: commentRepostText(comment, status, rootComment: rootComment),
+        ),
+      ),
+      StatusAction(
+        icon: liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+        label: liked ? '取消赞' : '点赞',
+        run: () async {
+          final failure = await StatusStore.instance.toggleCommentLike(comment);
+          if (failure != null && context.mounted) showMessage(context, failure);
+        },
+      ),
+      // Nothing to 投诉 on something this device wrote.
+      if (!own)
+        StatusAction(
+          icon: Icons.flag_outlined,
+          label: '投诉',
+          destructive: true,
+          startsGroup: true,
+          run: () async => openWeb(context, commentReportLink(comment.id)),
+        ),
     ],
   );
-  if (!context.mounted) return;
-  switch (picked) {
-    case CommentAction.reply:
-      await onReply();
-    case CommentAction.copy:
-      await Clipboard.setData(ClipboardData(text: comment.text));
-      Haptic.success.play();
-      if (context.mounted) showMessage(context, '评论已复制');
-    case null:
-      return;
-  }
 }
