@@ -245,4 +245,49 @@ void main() {
     final imageTop = tester.getTopLeft(find.byType(SmartImage).first).dy - tester.getTopLeft(find.byType(RichText).first).dy;
     expect(imageTop, greaterThanOrEqualTo(firstLine.bottom));
   });
+
+  test('an all-video post keeps every video, and page_info does not repeat one', () {
+    String src(String id) => 'https://f.video.weibocdn.com/o0/$id.mp4?label=mp4_720p&Expires=1&ssig=a';
+    Map<String, dynamic> entry(String id, int seconds, String pid) => {
+          'pid': pid,
+          'type': 'video',
+          'duration': seconds,
+          'url': 'https://wx2.sinaimg.cn/orj360/$pid.jpg',
+          'videoSrc': src(id),
+          'large': {
+            'url': 'https://wx2.sinaimg.cn/large/$pid.jpg',
+            'geo': {'width': 1280, 'height': 720},
+          },
+        };
+
+    // The shape m.weibo.cn gives 5368185423403074: five videos in pics, and page_info naming the
+    // first one again at another rendition (same path, other label and signature).
+    final status = toStatus({
+      'id': '5368185423403074',
+      'text': '多视频',
+      'created_at': 'Sun Nov 22 22:43:00 +0800 2026',
+      'user': {'id': 'u1', 'screen_name': '作者'},
+      'is_all_video': true,
+      'pic_num': 0,
+      'pics': [
+        entry('p7yLL2', 8, 'pid0'),
+        entry('cUNfJ', 27, 'pid1'),
+        entry('ZocS7', 45, 'pid2'),
+        entry('4Y9MB', 12, 'pid3'),
+        entry('8zvj2', 12, 'pid4'),
+      ],
+      'page_info': {
+        'type': 'video',
+        'object_type': 'video',
+        'page_pic': {'url': 'https://wx2.sinaimg.cn/orj480/pid0.jpg'},
+        'urls': {'mp4_720p_mp4': 'https://f.video.weibocdn.com/o0/p7yLL2.mp4?label=mp4_hd&Expires=9&ssig=zzz'},
+      },
+    })!;
+
+    expect(status.media, hasLength(5));
+    expect(status.media.every((media) => media.kind == MediaKind.video), isTrue);
+    expect(status.media.map((media) => media.durationMs), [8000, 27000, 45000, 12000, 12000]);
+    expect(status.media.first.url, contains('p7yLL2'));
+    expect(status.media.first.previewUrl, contains('orj360'));
+  });
 }

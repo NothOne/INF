@@ -79,7 +79,7 @@ Status? toStatus(dynamic element) {
     media = <Media>[...images];
   }
   final video = _videoFrom(pageInfo);
-  if (video != null && !media.any((m) => m.kind == MediaKind.video && m.url == video.url)) {
+  if (video != null && !media.any((m) => m.kind == MediaKind.video && _videoKey(m.url) == _videoKey(video.url))) {
     media.add(video);
   }
 
@@ -150,6 +150,19 @@ List<Media> _imagesFromPics(Map<String, dynamic> json) {
     final url = (largeUrl != null && largeUrl.isNotEmpty) ? largeUrl : preview;
     if (url == null || url.isEmpty) continue;
     final geo = asMap(large?['geo']) ?? asMap(pic['geo']);
+    // An all-video post lists one entry per video here, `type: video`, each with its own playable
+    // address and length; the post's `page_info` names one of them again at another rendition.
+    if (textOf(pic['type']) == 'video') {
+      final playable = textOf(pic['videoSrc']);
+      if (playable != null && playable.isNotEmpty) {
+        result.add(Media.video(
+          playable,
+          previewUrl: (preview != null && preview.isNotEmpty) ? preview : url,
+          durationMs: ((doubleOf(pic['duration']) ?? 0) * 1000).round(),
+        ));
+        continue;
+      }
+    }
     result.add(Media.image(
       url,
       previewUrl: (preview != null && preview.isNotEmpty) ? preview : url,
@@ -186,7 +199,7 @@ void _applyPicVideo(List<Media> images, String? picVideo) {
     final fid = pair.substring(colon + 1).trim();
     if (index == null || index < 0 || index >= images.length || fid.isEmpty) continue;
     final image = images[index];
-    if (image.isLive) continue;
+    if (image.kind != MediaKind.image || image.isLive) continue;
     images[index] = Media.image(
       image.url,
       previewUrl: image.previewUrl,
@@ -415,6 +428,13 @@ Status mergeStatusDetails(Status base, Status supplemental) {
     return base;
   }
   return base.copyWith(media: media, links: links, repostOf: repost);
+}
+
+/// The same video served at another rendition: the CDN address differs only in `label` and the
+/// signature, so everything before the query is what identifies it.
+String _videoKey(String url) {
+  final uri = Uri.tryParse(url);
+  return uri == null ? url : '${uri.host}${uri.path}';
 }
 
 Media? _videoFrom(Map<String, dynamic>? pageInfo) {
